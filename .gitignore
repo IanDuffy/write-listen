@@ -1,0 +1,20 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+
+# Environment
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Run outputs: the transcript is copyrighted and every output derives from it.
+# Keep them local and private.
+runs/*
+!runs/.gitkeep
+compare/
+
+# Generated audio
+voice_test/*.mp3
+voice_test/*.wav
