@@ -20,6 +20,7 @@ cost_guard_usd: 5.00
 # expected_* feed the cost guard's estimate only.
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
+  smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
   angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
   research_plan:      {max_tokens: 32000, effort: high, expected_output_tokens: 8000}

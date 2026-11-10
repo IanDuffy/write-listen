@@ -27,7 +27,11 @@ Each milestone stops for Ian.
 
 1. **Skeleton.** `python cli.py ping` makes one tiny Haiku call and checks the
    ElevenLabs key (it prints the plan and character quota). Both are logged to
-   `runs/ping/log.jsonl`.
+   `runs/ping/log.jsonl`. Then `python cli.py smoketest` (about $0.10) checks
+   every API assumption the pipeline rests on: that search and fetch results
+   come back in the shape we parse, that fetched page text is captured for the
+   quote check, that the narration model and voice exist, and that responses
+   carry the request id that stitching needs. It prints PASS or FAIL for each.
 2. **Voice test.** `python cli.py voices` lists the models and voices on the
    account. `python cli.py voicetest` narrates `voice_test/sample.md` (about
    300 words on Diotima, naming Weil, Boethius and Aquinas) in each voice under

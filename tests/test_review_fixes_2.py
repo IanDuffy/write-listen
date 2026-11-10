@@ -162,3 +162,26 @@ def test_partial_narration_never_becomes_the_chapter(run, cfg, fake_tts):
     narrate.run(run, cfg, segments="2")
     assert not run.path("chapter_mp3").exists()
     assert (run.path("audio_dir") / "segments_2.mp3").exists()
+
+
+def test_smoketest_offline(run, cfg, monkeypatch, fake_tts):
+    from fakes import PAGE_TEXT, text_block, usage
+
+    from stages import smoketest, tts
+
+    def respond(kwargs):
+        return NS(content=[
+            NS(type="server_tool_use", id="s1", name="web_search", input={"query": "q"}),
+            NS(type="web_search_tool_result", tool_use_id="s1",
+               content=[NS(type="web_search_result", url=smoketest.URL, title="Plato")]),
+            NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
+                type="web_fetch_result", url=smoketest.URL,
+                content=NS(type="document", title="Plato", source=NS(type="text", data=PAGE_TEXT)))),
+            text_block('"He who has been instructed thus far in the things of love"')],
+            stop_reason="end_turn", usage=usage(searches=1, fetches=1), model=kwargs["model"],
+            stop_details=None)
+
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(respond))
+    monkeypatch.setattr(tts, "model_char_limit", lambda m: 10000)
+    smoketest.run(run, cfg)
+    assert (run.root / "smoketest.wav").exists()

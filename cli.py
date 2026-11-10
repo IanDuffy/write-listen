@@ -32,6 +32,7 @@ Utilities:
     status <run>                 which outputs exist, the next step, and the cost so far
     estimate [run]               forecast the cost of the rest of the run (or a whole run)
     ping                         one tiny call to each API (milestone 1)
+    smoketest                    live check of every API assumption (~$0.10): run before real work
     voices [--search TEXT]       list ElevenLabs models and voices on the account
     voicetest [--voices A,B,C]   narrate voice_test/sample.md in each candidate voice
 
@@ -112,6 +113,10 @@ def main(argv: list[str] | None = None) -> int:
         if st == "ping":
             from stages import ping
             ping.run(Run.open(args.run or "ping", create=True, yes=args.yes), cfg)
+            return 0
+        if st == "smoketest":
+            from stages import smoketest
+            smoketest.run(Run.open(args.run or "smoketest", create=True, yes=args.yes), cfg)
             return 0
         if st == "estimate":
             from stages import estimate
