@@ -14,8 +14,28 @@ without `--force`.
 
 ```bash
 uv sync                       # creates .venv with the pinned versions in uv.lock
-cp .env.example .env          # then add ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
+
+## API keys
+
+Two keys: an Anthropic API key (console.anthropic.com, Settings, API Keys,
+in the organization that holds the credits) and an ElevenLabs API key
+(elevenlabs.io, profile, API Keys, with text to speech and read access to
+voices, models and user).
+
+**In a Claude Code cloud session** (the `write-listen` environment):
+
+- ElevenLabs: saved as a network secret for `api.elevenlabs.io`. The session's
+  proxy adds it to every request, so no variable is needed.
+- Anthropic: an environment variable named `WRITE_LISTEN_ANTHROPIC_API_KEY`,
+  added in the environment's settings (the cloud environment menu in the
+  session's title bar, then Edit, then environment variables). Requests to
+  Anthropic don't pass through the proxy, so a network secret can't be used.
+  The pipeline reads its own variable name so that it never touches the key
+  Claude Code itself uses. The variable is picked up when a session starts.
+
+**On your own machine:** `cp .env.example .env` and fill in
+`ANTHROPIC_API_KEY` and `ELEVENLABS_API_KEY`. `.env` is gitignored.
 
 Needs Python 3.12+, `ffmpeg`, and ideally `pdftotext` (poppler); `pypdf` is the
 fallback for PDF text. `.env` and everything under `runs/` are gitignored: the

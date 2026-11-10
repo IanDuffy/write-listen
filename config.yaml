@@ -87,15 +87,13 @@ pricing:
 
 narration:
   provider: elevenlabs
-  # Highest-quality narration model as of November 2026, per ElevenLabs' docs
-  # as summarized by search (elevenlabs.io could not be fetched directly).
-  # `python cli.py voices` lists the models on your account with their live
-  # per-request limits; the narrate stage also reads the limit at runtime.
+  # Highest-quality narration model as of November 2026. Confirmed on the
+  # account on 2026-11-10: eleven_v4, 10,000 characters per request.
+  # `python cli.py voices` lists the models and voices on the account.
   model_id: eleven_v4
   voice_id: null              # set after the voice test (milestone 2)
   candidate_voices:
-    # ElevenLabs premade voices. IDs not yet confirmed against the account:
-    # run `python cli.py voices` and replace any that are missing.
+    # ElevenLabs premade voices, all three confirmed on the account.
     - {name: George, voice_id: JBFqnCBsd6RMkjVDRZzb}
     - {name: Brian, voice_id: nPczCjzI2devNBz1zQrb}
     - {name: Sarah, voice_id: EXAVITQu4vr4xnSDxMaL}

@@ -31,9 +31,9 @@ def elevenlabs_client():
         from elevenlabs.client import ElevenLabs
 
         load_dotenv(ROOT / ".env")
-        key = os.environ.get("ELEVENLABS_API_KEY")
-        if not key:
-            raise StageError("ELEVENLABS_API_KEY is not set. Copy .env.example to .env and add it.")
+        # In a cloud session the network proxy injects the saved key into every request
+        # to api.elevenlabs.io and overwrites this header, so a placeholder is enough.
+        key = os.environ.get("ELEVENLABS_API_KEY") or "proxy-injected"
         # Pass the key explicitly: the SDK's default is read at import time.
         _el_client = ElevenLabs(api_key=key, timeout=300)
     return _el_client
@@ -47,7 +47,9 @@ def el_call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except ApiError as e:
-        raise StageError(f"ElevenLabs error {e.status_code}: {e.body}") from None
+        hint = (" Check the ElevenLabs key: ELEVENLABS_API_KEY in .env locally, or the saved "
+                "network secret for api.elevenlabs.io in a cloud session.") if e.status_code in (401, 403) else ""
+        raise StageError(f"ElevenLabs error {e.status_code}: {e.body}.{hint}") from None
     except httpx.HTTPError as e:
         raise StageError(f"Could not reach ElevenLabs: {e}") from None
 

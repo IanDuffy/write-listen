@@ -23,9 +23,14 @@ def get_client():
         from dotenv import load_dotenv
 
         load_dotenv(ROOT / ".env")
-        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-            raise StageError("ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add it.")
-        _client = anthropic.Anthropic(max_retries=4)
+        # The pipeline's own variable comes first, so it never picks up (or clobbers)
+        # a key that a host app such as Claude Code uses for itself.
+        key = os.environ.get("WRITE_LISTEN_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise StageError("No Anthropic API key. Set WRITE_LISTEN_ANTHROPIC_API_KEY in the environment, "
+                             "or ANTHROPIC_API_KEY in .env (see README, 'API keys').")
+        # Explicit key and URL: the client then ignores any other ANTHROPIC_* settings around it.
+        _client = anthropic.Anthropic(api_key=key, base_url="https://api.anthropic.com", max_retries=4)
     return _client
 
 
