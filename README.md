@@ -94,10 +94,18 @@ The source check at the end of the dossier lists:
 
 Topic files are kept once paid for. A re-run researches only the topics that
 have no findings yet, so a failed agent costs one retry, not the whole stage.
-`--topics T3,T5` redoes specific topics. `--force` rebuilds the dossier from
-what is on disk. Before starting, the stage asks once for its whole estimated
-budget, and no new follow-up round starts once spend passes
-`research.max_usd`.
+The critic rounds also pick up where they stopped.
+
+- `--topics T3,T5` redoes specific topics, and runs no critic rounds.
+- `--force` rebuilds the dossier from what is on disk.
+- `--replan` moves `04_research/` aside and plans again. The plan records a
+  hash of the angle and the map, so after either changes the stage refuses to
+  reuse the old plan until you choose.
+
+Before starting, the stage asks once for its estimated budget. Every agent
+request then checks the running spend, and the stage stops at
+`research.max_usd` (default $40). Finished topics are kept. Dropped streams and
+overloaded-API errors are retried twice before an agent gives up.
 
 All the knobs are under `research:` in `config.yaml`: topic counts, budgets
 per agent, parallel agents, rounds and the spend cap.
@@ -107,7 +115,8 @@ per agent, parallel agents, rounds and the spend cap.
 - **Prompts** are plain markdown in `prompts/`, one per stage, with their inputs
   listed above a `---` line. Only the part below the line is sent.
   `prompts/style_guide.md` is the house style for draft, revise, edit and the
-  baseline. Where it disagrees with the brief's style section, it wins.
+  baseline. The brief adds a style section for its chapter, which wins where
+  the two disagree, because that is the version Ian edits.
 - **Claim markers.** Every dossier claim is numbered `[C1]`, `[C2]`, ... with a
   source URL. The draft and revise stages tag every factual sentence with its
   claim number.

@@ -208,13 +208,20 @@ def parse_range(spec: str | None, available: list[int]) -> list[int]:
     if not spec:
         return available
     out: list[int] = []
-    for part in spec.split(","):
-        part = part.strip()
-        if "-" in part:
-            a, b = part.split("-", 1)
-            out.extend(range(int(a), int(b) + 1))
-        elif part:
-            out.append(int(part))
+    try:
+        for part in re.sub(r"(?i)seg(ment)?s?\s*", "", spec).split(","):
+            part = part.strip()
+            if "-" in part:
+                a, b = part.split("-", 1)
+                if int(b) < int(a):
+                    raise ValueError
+                out.extend(range(int(a), int(b) + 1))
+            elif part:
+                out.append(int(part))
+    except ValueError:
+        raise StageError(f"Bad --segments value {spec!r}; use e.g. 1-2 or 1,3.") from None
+    if not out:
+        raise StageError(f"--segments {spec!r} selects nothing.")
     bad = [n for n in out if n not in available]
     if bad:
         raise StageError(f"Segment(s) {bad} not in the brief (has {available}).")
@@ -228,7 +235,7 @@ DOSSIER_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[C(\d+)\]\**", re.M
 def claim_numbers(text: str) -> list[int]:
     """'C3, C7', 'C3-C5', '[C3][C7]', 'C3; C7' -> sorted unique claim numbers, ranges expanded."""
     nums: set[int] = set()
-    for a, b in re.findall(r"C(\d+)(?:\s*[-–—]\s*C?(\d+))?", text):
+    for a, b in re.findall(r"C(\d+)(?:[ \t]*[-–—][ \t]*C?(\d+))?", text):  # a range stays on one line
         lo, hi = int(a), int(b or a)
         if hi < lo or hi - lo > 200:
             hi = lo

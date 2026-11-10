@@ -2,7 +2,7 @@
 
 from . import llm
 from .common import Run, StageError
-from .tts import elevenlabs_client
+from .tts import el_call, elevenlabs_client
 
 
 def run(r: Run, cfg: dict, anthropic: bool = True, elevenlabs: bool = True):
@@ -17,7 +17,7 @@ def run(r: Run, cfg: dict, anthropic: bool = True, elevenlabs: bool = True):
             print(f"  Claude: {e}")
     if elevenlabs:
         try:
-            sub = elevenlabs_client().user.subscription.get()
+            sub = el_call(elevenlabs_client().user.subscription.get)
             used, limit = sub.character_count, sub.character_limit
             print(f"  ElevenLabs: plan {sub.tier!r}, {used:,} of {limit:,} characters used this period.")
             r.log({"stage": "ping", "provider": "elevenlabs", "tier": sub.tier,

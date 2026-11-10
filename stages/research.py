@@ -23,8 +23,12 @@ without findings. --topics T3,T5 redoes those topics. --force only allows
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import io
 import json
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -33,10 +37,12 @@ from . import llm
 from .common import DOSSIER_ENTRY as ENTRY
 from .common import Run, StageError, claims_section, load_prompt
 
-URL_IN_TEXT = re.compile(r"https?://[^\s)\]>\"'`]+")
+# URLs may hold balanced parentheses (Wikipedia), but a markdown link's closing ')' is not part of one.
+URL_IN_TEXT = re.compile(r"https?://(?:[^\s()\]>\"'`]|\([^\s()]*\))+")
 TOPIC_HEADING = re.compile(r"^##\s+T(\d+)\s*[:.\-–—]\s*(.+)$", re.M)
 TOPIC_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[T(\d+)\.(\d+)\]\**", re.M)
-QUOTE = re.compile(r"[\"“]([^\"”]{25,})[\"”]")
+QUOTE = re.compile(r"[\"“]([^\"”]*)[\"”]")  # pairs marks in order; short pairs are dropped later
+EPISODE_SOURCE = re.compile(r"Source:\s*(the\s+)?(podcast\s+)?episode\b", re.I)
 
 
 # --- tools and what they returned ---------------------------------------------
@@ -75,7 +81,11 @@ def retrieved(content: list) -> dict:
                 title = getattr(doc, "title", "") or ""
                 urls[url] = title or urls.get(url, "")
                 src = getattr(doc, "source", None)
-                text = getattr(src, "data", None) if getattr(src, "type", None) == "text" else None
+                text = None
+                if getattr(src, "type", None) == "text":
+                    text = getattr(src, "data", None)
+                elif getattr(src, "type", None) == "base64":  # a fetched PDF
+                    text = _pdf_text(getattr(src, "data", "") or "")
                 if text:
                     fetched.append({"url": url, "title": title, "text": text})
         elif btype == "text":
@@ -83,6 +93,16 @@ def retrieved(content: list) -> dict:
                 if getattr(c, "url", None):
                     urls.setdefault(c.url, getattr(c, "title", "") or "")
     return {"urls": urls, "fetched": fetched}
+
+
+def _pdf_text(b64: str) -> str | None:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(base64.b64decode(b64)))
+        return "\n".join(p.extract_text() or "" for p in reader.pages) or None
+    except Exception:  # an unreadable PDF just can't be quote-checked
+        return None
 
 
 def retrieved_urls(content: list) -> set[str]:
@@ -144,8 +164,11 @@ def topic_paths(r: Run, n: int) -> tuple[Path, Path]:
     return d / f"T{n:02d}.md", d / f"T{n:02d}.sources.json"
 
 
-def run_topic(r: Run, cfg: dict, topic: dict, angle: str, episode_map: str, plan: str) -> dict:
+def run_topic(r: Run, cfg: dict, topic: dict, angle: str, episode_map: str, plan: str,
+              check_spend=None) -> dict:
     rc = cfg["research"]
+    if check_spend:
+        check_spend()  # a queued agent does not start once the cap is reached
     others = "\n".join(f"- T{t['id']}: {t['title']}" for t in parse_topics(plan) if t["id"] != topic["id"])
     prompt = load_prompt(
         "research_topic", angle=angle, map=episode_map, topic=topic["text"], n=topic["id"],
@@ -155,7 +178,7 @@ def run_topic(r: Run, cfg: dict, topic: dict, angle: str, episode_map: str, plan
         r, cfg, "research_topic", role="researcher", label=f"research T{topic['id']}",
         messages=[{"role": "user", "content": prompt}],
         tools=web_tools(cfg, rc["searches_per_topic"], rc["fetches_per_topic"]),
-        expected_searches=rc["searches_per_topic"], preapproved=True,
+        expected_searches=rc["searches_per_topic"], preapproved=True, before_request=check_spend,
     )
     md_path, src_path = topic_paths(r, topic["id"])
     got = retrieved(res.content)
@@ -170,13 +193,14 @@ def run_topic(r: Run, cfg: dict, topic: dict, angle: str, episode_map: str, plan
         raise StageError(f"T{topic['id']}: no <findings> block; raw output saved to "
                          f"04_research/topics/_partial_T{topic['id']:02d}.md") from None
     md_path.write_text(findings + "\n", encoding="utf-8")
-    n_claims = len(TOPIC_ENTRY.findall(findings))
+    n_claims = len(topic_claims(findings))
     print(f"  T{topic['id']} done: {n_claims} claims, {res.usage.web_searches} searches, "
           f"{len(got['fetched'])} pages read, ${res.usage.cost_usd:.2f}")
     return {"id": topic["id"], "claims": n_claims, "cost": res.usage.cost_usd}
 
 
-def run_topics(r: Run, cfg: dict, todo: list[dict], angle: str, episode_map: str, plan: str) -> list[str]:
+def run_topics(r: Run, cfg: dict, todo: list[dict], angle: str, episode_map: str, plan: str,
+               check_spend=None) -> list[str]:
     """Research topics in parallel. Returns error messages for topics that failed;
     the others are saved, so a re-run picks up only what is missing."""
     errors = []
@@ -184,7 +208,7 @@ def run_topics(r: Run, cfg: dict, todo: list[dict], angle: str, episode_map: str
     print(f"  researching {len(todo)} topic(s), {workers} agents at a time: "
           + ", ".join(f"T{t['id']}" for t in todo))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_topic, r, cfg, t, angle, episode_map, plan): t for t in todo}
+        futures = {pool.submit(run_topic, r, cfg, t, angle, episode_map, plan, check_spend): t for t in todo}
         for f in as_completed(futures):
             t = futures[f]
             try:
@@ -242,6 +266,12 @@ def _entries(text: str, pattern: re.Pattern) -> list[tuple[re.Match, str]]:
     return out
 
 
+def topic_claims(findings: str) -> list[tuple[re.Match, str]]:
+    """The [Tn.k] entries in a topic's '## Claims' section. Citations of claims in
+    its other sections ('[T3.2] and [T3.3] disagree') are not entries."""
+    return _entries(_section(findings, "Claims") or findings, TOPIC_ENTRY)
+
+
 def _section(text: str, name: str) -> str:
     m = re.search(rf"^##\s+{name}\b.*$", text, re.M | re.I)
     if not m:
@@ -267,10 +297,14 @@ def merge_claims(r: Run, topics: list[dict]) -> tuple[str, dict[str, int], dict]
             seen["urls"].update(s.get("urls", {}))
             seen["fetched"].extend(s.get("fetched", []))
         lines = [f"### T{t['id']}: {t['title']}", ""]
-        for m, entry in _entries(findings, TOPIC_ENTRY):
+        for m, entry in topic_claims(findings):
+            tag = f"T{m.group(1)}.{m.group(2)}"
+            if tag in mapping:
+                print(f"  warning: {tag} appears twice in T{t['id']}'s claims; keeping the first")
+                continue
             n += 1
-            mapping[f"T{m.group(1)}.{m.group(2)}"] = n
-            body = entry[m.end() - m.start():].strip()
+            mapping[tag] = n
+            body = TOPIC_ENTRY.sub("", entry, count=1).strip()
             lines.append(f"[C{n}] {body}")
         blocks.append("\n".join(lines))
         if c := _section(findings, "Conflicts"):
@@ -330,7 +364,9 @@ def quote_check(dossier: str, fetched: list[dict]) -> tuple[list[str], list[str]
     every_page = [t for texts in by_url.values() for t in texts]
     ok, missing, unchecked = [], [], []
     for m, entry in _entries(claims_section(dossier), ENTRY):
-        quotes = QUOTE.findall(entry)
+        if EPISODE_SOURCE.search(entry):
+            continue  # episode quotes are listed separately, for checking against the transcript
+        quotes = [q for q in QUOTE.findall(re.split(r"\bSource:", entry, maxsplit=1)[0]) if len(q) >= 25]
         if not quotes:
             continue
         urls = [_norm(u) for u in URL_IN_TEXT.findall(entry)]
@@ -363,7 +399,7 @@ def source_check(dossier: str, seen: set[str], fetched: list[dict] | None = None
     no_url, episode_only = [], []
     entries = _entries(claims_section(dossier), ENTRY)
     for m, entry in entries:
-        if re.search(r"Source:\s*episode\b", entry, re.I):
+        if EPISODE_SOURCE.search(entry):
             episode_only.append(f"C{m.group(1)}")
         elif not URL_IN_TEXT.search(entry):
             no_url.append(f"C{m.group(1)}")
@@ -398,32 +434,61 @@ def source_check(dossier: str, seen: set[str], fetched: list[dict] | None = None
 
 # --- the stage ----------------------------------------------------------------------------------
 
-def estimate(cfg: dict, n_topics: int) -> float:
-    """Upper-end cost of the whole research stage, for the cost guard."""
+def estimate(cfg: dict, n_topics: int, critic_rounds: int | None = None) -> float:
+    """Upper-end cost of the research still to do, for the cost guard."""
     rc, st = cfg["research"], cfg["stages"]
     agent = llm.estimate_call(cfg, cfg["models"]["researcher"], st["research_topic"]["expected_input_tokens"],
                               st["research_topic"]["expected_output_tokens"], rc["searches_per_topic"])
     critic = llm.estimate_call(cfg, cfg["models"]["writer"], 80_000, st["research_critic"]["expected_output_tokens"])
     synth = llm.estimate_call(cfg, cfg["models"]["writer"], 60_000, st["research_synthesis"]["expected_output_tokens"])
-    rounds = rc["rounds"]
-    followups = (rounds - 1) * rc["max_followups"]
-    return (n_topics + followups) * agent + (rounds - 1) * critic + synth
+    rounds = rc["rounds"] - 1 if critic_rounds is None else critic_rounds
+    return (n_topics + rounds * rc["max_followups"]) * agent + rounds * critic + synth
 
 
-def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None):
+def _inputs_hash(angle: str, episode_map: str) -> str:
+    return hashlib.sha256((angle + "\0" + episode_map).encode()).hexdigest()[:12]
+
+
+INPUTS_LINE = re.compile(r"^<!-- research inputs: (\w+) -->$", re.M)
+
+
+def _rounds_done(r: Run) -> tuple[int, bool]:
+    """(last critic round run, whether the critic has declared the research complete)."""
+    last, complete = 1, False
+    for p in sorted(r.path("research_dir").glob("critic_round*.md"),
+                    key=lambda p: int(re.search(r"(\d+)", p.stem).group(1))):
+        last = int(re.search(r"(\d+)", p.stem).group(1))
+        complete = not parse_topics(p.read_text(encoding="utf-8"))
+    return last, complete
+
+
+def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None, replan: bool = False):
     angle = r.read("angle")
     episode_map = r.read("map")
     if r.path("dossier").exists() and not r.force and not plan_only:
         raise StageError("Output already exists: 04_dossier.md. Use --force to rebuild it "
                          "(topic findings already paid for are kept).")
-    r.path("topics_dir").mkdir(parents=True, exist_ok=True)
     rc = cfg["research"]
+    if replan and r.path("research_dir").exists():
+        old = r.root / f"04_research.old-{time.strftime('%Y%m%d-%H%M%S')}"
+        shutil.move(str(r.path("research_dir")), old)
+        print(f"  moved the old research to {old.name}/")
+    r.path("topics_dir").mkdir(parents=True, exist_ok=True)
 
+    inputs = _inputs_hash(angle, episode_map)
     if r.path("research_plan").exists():
         plan = r.read("research_plan")
+        m = INPUTS_LINE.search(plan)
+        if m and m.group(1) != inputs:
+            raise StageError("03_angle.md or 01_map.md has changed since the research plan was made. "
+                             "Run research --replan to start over (the old research is moved aside, not "
+                             "deleted), or delete the 'research inputs' line at the end of "
+                             "04_research/plan.md to keep the plan.")
         print("  using the existing 04_research/plan.md")
     else:
         plan = make_plan(r, cfg, angle, episode_map)
+        plan = plan.rstrip() + f"\n\n<!-- research inputs: {inputs} -->\n"
+        r.path("research_plan").write_text(plan, encoding="utf-8")
     all_topics = parse_topics(plan)
     if not all_topics:
         raise StageError("04_research/plan.md has no '## T1: Title' topics.")
@@ -441,25 +506,32 @@ def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None):
             raise StageError(f"Topics not in the plan: {sorted(unknown)}")
     todo = [t for t in all_topics if t["id"] in redo or not topic_paths(r, t["id"])[0].exists()]
 
-    est = estimate(cfg, len(todo))
-    llm.guard(r, cfg, f"research ({len(todo)} topics now, up to {rc['rounds']} rounds)", est)
-    spent_before = sum(rec.get("cost_usd", 0) or 0 for rec in r.read_log() if rec.get("stage", "").startswith("research"))
+    # Critic rounds pick up where earlier runs stopped, and never run for an explicit --topics redo.
+    last_round, complete = _rounds_done(r)
+    rounds_left = 0 if (topics or complete) else max(0, rc["rounds"] - last_round)
+
     cap = rc["max_usd"]
+    if todo or rounds_left:
+        est = estimate(cfg, len(todo), rounds_left)
+        llm.guard(r, cfg, f"research ({len(todo)} topics now, up to {rounds_left} critic round(s); "
+                          f"hard stop at ${cap:.2f})", est)
+    spent_before = _research_spend(r)
 
     def spent() -> float:
-        return sum(rec.get("cost_usd", 0) or 0 for rec in r.read_log()
-                   if rec.get("stage", "").startswith("research")) - spent_before
+        return _research_spend(r) - spent_before
+
+    def check_spend(_in_call: float = 0.0) -> None:
+        if spent() >= cap:
+            raise StageError(f"research has spent ${spent():.2f}, the research.max_usd cap. Finished "
+                             "topics are saved; raise the cap in config.yaml and re-run to continue.")
 
     t0 = time.monotonic()
-    errors = run_topics(r, cfg, todo, angle, episode_map, plan) if todo else []
+    errors = run_topics(r, cfg, todo, angle, episode_map, plan, check_spend) if todo else []
     if errors:
         raise StageError("some research agents failed; their topics will be retried on the next run:\n  "
                          + "\n  ".join(errors))
 
-    # Follow-up rounds: only when this run did new research.
-    for round_no in range(2, rc["rounds"] + 1):
-        if not todo:
-            break
+    for round_no in range(last_round + 1, last_round + 1 + rounds_left):
         if spent() >= cap:
             print(f"  stopping follow-ups: research has spent ${spent():.2f} of the ${cap:.2f} cap")
             break
@@ -467,7 +539,7 @@ def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None):
         if not new:
             break
         plan = r.read("research_plan")
-        errors = run_topics(r, cfg, new, angle, episode_map, plan)
+        errors = run_topics(r, cfg, new, angle, episode_map, plan, check_spend)
         if errors:
             raise StageError("some follow-up agents failed; re-run research to retry them:\n  "
                              + "\n  ".join(errors))
@@ -478,3 +550,7 @@ def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None):
           f"{(time.monotonic() - t0) / 60:.1f} min, ${spent():.2f} this run. "
           "See the source check at the end of 04_dossier.md.")
     return out
+
+
+def _research_spend(r: Run) -> float:
+    return sum(rec.get("cost_usd", 0) or 0 for rec in r.read_log() if rec.get("stage", "").startswith("research"))

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from . import llm
-from .common import (PROMPTS_DIR, Run, StageError, join_script_segments, load_prompt,
+from .common import (Run, StageError, join_script_segments, load_prompt,
                      split_script_segments, word_count)
 
 # '## Global', '## seg01', '## Segment 1: Title', '## **seg01**'
@@ -58,7 +58,7 @@ def run(r: Run, cfg: dict):
 
     system = load_prompt(
         "revise_context",
-        style_guide=(PROMPTS_DIR / "style_guide.md").read_text(encoding="utf-8"),
+        style_guide=load_prompt("style_guide"),
         brief=brief, dossier=dossier, draft=draft, global_notes=global_notes or "(none)",
     )
     st = cfg["stages"]["revise"]

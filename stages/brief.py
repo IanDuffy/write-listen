@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from . import llm
-from .common import PROMPTS_DIR, Run, StageError, claim_numbers, load_prompt
+from .common import Run, StageError, claim_numbers, load_prompt
 
 SEGMENT_HEADING = re.compile(r"^##\s+Segment\s+(\d+)\s*[:.\-–—]?\s*(.*)$", re.M | re.I)
 # '- Claims: C3, C7', '**Claims:** C3-C5', 'Claims: [C3], [C7]'. Stays on its own line.
@@ -33,6 +33,11 @@ def parse_segments(brief: str) -> list[dict]:
         body = brief[m.start():end].strip()
         claims_m = CLAIMS_LINE.search(body)
         claims = claim_numbers(claims_m.group(1)) if claims_m else []
+        if claims_m and not claims:
+            # 'Claims:' with the list on the following lines, as a sub-list.
+            rest = body[claims_m.end():]
+            label = re.search(r"^[ \t]*[-*]?[ \t]*\**[A-Z][\w ]{1,30}\**[ \t]*:", rest, re.M)
+            claims = claim_numbers(rest[:label.start()] if label else rest)
         target_m = TARGET_LINE.search(body)
         segs.append({
             "n": int(m.group(1)),
@@ -54,7 +59,7 @@ def run(r: Run, cfg: dict):
     ch = cfg["chapter"]
     prompt = load_prompt(
         "brief", angle=angle, dossier=dossier,
-        style_guide=(PROMPTS_DIR / "style_guide.md").read_text(encoding="utf-8"),
+        style_guide=load_prompt("style_guide"),
         target_words=ch["target_words"], target_minutes=ch["target_minutes"],
         min_segments=ch["min_segments"], max_segments=ch["max_segments"],
     )
@@ -64,6 +69,10 @@ def run(r: Run, cfg: dict):
         segs = parse_segments(res.text)
         total = sum(s["target_words"] or 0 for s in segs)
         print(f"  {len(segs)} segments, {total:,} target words.")
+        empty = [f"Segment {s['n']}" for s in segs if not s["claims"]]
+        if empty:
+            print(f"  Warning: no claims parsed for {', '.join(empty)}. The drafter will get no dossier "
+                  "entries for them; check the 'Claims:' lines.")
         if not segs:
             print("  Warning: no '## Segment N: Title' headings found. The draft stage needs them.")
     except StageError as e:

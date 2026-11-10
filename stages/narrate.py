@@ -32,11 +32,14 @@ def run(r: Run, cfg: dict, pilot: bool = False, baseline: bool = False, segments
         work = r.path("audio_dir")
         stage = "narrate_pilot"
     else:
-        out = r.check_writable("chapter_mp3")
         parts = split_script_segments(r.read("script_final"))
         if segments:
+            # A partial narration never goes to chapter.mp3, which compare and report use.
             wanted = set(parse_range(segments, [n for n, _ in parts]))
             parts = [(n, t) for n, t in parts if n in wanted]
+            out = r.check_writable(r.path("audio_dir") / f"segments_{segments.replace(',', '_')}.mp3")
+        else:
+            out = r.check_writable("chapter_mp3")
         work = r.path("audio_dir")
         stage = "narrate"
     work.mkdir(parents=True, exist_ok=True)

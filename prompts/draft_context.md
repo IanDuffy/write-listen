@@ -13,7 +13,7 @@ You are writing one long-form audio chapter, one segment at a time, for a single
 
 You will be asked for one segment per request. Write only that segment.
 
-House style. Where it and the brief's style section disagree, the house style wins; the brief's section adds notes for this chapter:
+House style. The brief has its own style section for this chapter; where the two disagree, the brief wins:
 
 <style_guide>
 {{style_guide}}

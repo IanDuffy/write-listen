@@ -6,7 +6,8 @@ Inputs:
 - {{style_guide}}: prompts/style_guide.md, the same house style the pipeline uses
 - {{target_words}}, {{target_minutes}}: config.yaml
 
-Tools: web search and web fetch, same caps as the research stage.
+Tools: web search and web fetch, with the baseline caps in config.yaml
+({{searches}} searches, {{fetches}} fetches).
 Output: baseline/script.md (the text between the <script> tags).
 
 This is the comparison: the best one prompt can do with the same angle. Keep it
@@ -28,7 +29,7 @@ And takes this angle, chosen by the commissioning editor, with their notes:
 
 The listener is a curious non-specialist who may have heard the episode and expects the primary texts to be over their head. The chapter should go further than the episode did and take them into the texts themselves.
 
-You can search the web and fetch pages. Research what you need first, especially the primary texts, then write.
+You can search the web and fetch pages: about {{searches}} searches and {{fetches}} page fetches in total, so plan before you search. Research what you need first, especially the primary texts, then write.
 
 Write in this house style:
 

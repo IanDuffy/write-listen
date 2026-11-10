@@ -68,16 +68,18 @@ max_pause_continuations: 8
 
 pricing:
   # USD per million tokens, from the Claude API pricing page (checked 2026-11-09).
+  # cache_read is the cache-hit rate; where absent, input x cache_read_multiplier.
   # A model not listed here is charged at the most expensive listed rate.
   models:
-    claude-opus-5-5:   {input: 4.00, output: 20.00}
+    claude-opus-5-5:   {input: 4.00, output: 20.00, cache_read: 0.20}
+    claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_read: 0.10}
     claude-haiku-5-5:  {input: 0.10, output: 0.50}
     # Possible server-side fallback targets:
-    claude-opus-5:     {input: 5.00, output: 25.00}
-    claude-opus-4-8:   {input: 5.00, output: 25.00}
-    claude-sonnet-5-5: {input: 2.00, output: 10.00}
-    claude-fable-5-2:  {input: 8.00, output: 40.00}
-  cache_read_multiplier: 0.05       # Opus 5.5 cache hits: $0.20 / MTok
+    claude-sonnet-5:   {input: 2.00, output: 10.00, cache_read: 0.20}
+    claude-opus-5:     {input: 5.00, output: 25.00, cache_read: 0.50}
+    claude-opus-4-8:   {input: 5.00, output: 25.00, cache_read: 0.50}
+    claude-fable-5-2:  {input: 8.00, output: 40.00, cache_read: 0.20}
+  cache_read_multiplier: 0.1
   cache_write_5m_multiplier: 1.25
   cache_write_1h_multiplier: 2.0
   web_search_per_1000: 10.00

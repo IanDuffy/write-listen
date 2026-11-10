@@ -12,6 +12,7 @@ Stages, in order ([Ian] marks where the pipeline stops for you):
     research <run> [--plan-only] -> 04_research/ (plan, one agent per topic, critic rounds)
                                     -> 04_dossier.md
     research <run> --topics T3,T5   redo those topics (others are kept), rebuild with --force
+    research <run> --replan         move 04_research/ aside and plan again (after an angle change)
     brief <run>                  -> 05_brief.md
                                  [Ian] edit 05_brief.md
     draft <run> [--segments 1-2] -> 06_segments/segNN.md
@@ -101,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, help="report: seed for the claim sample")
     ap.add_argument("--plan-only", action="store_true", help="research: write the plan and stop")
     ap.add_argument("--topics", help="research: topics to redo, e.g. T3,T5")
+    ap.add_argument("--replan", action="store_true",
+                    help="research: move the old research aside and plan again")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -143,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             ingest.run(r, cfg, source=args.source)
         elif st == "research":
             from stages import research
-            research.run(r, cfg, plan_only=args.plan_only, topics=args.topics)
+            research.run(r, cfg, plan_only=args.plan_only, topics=args.topics, replan=args.replan)
         elif st in ("map", "angles", "brief", "assemble", "edit", "revise",
                     "baseline", "compare"):
             import importlib

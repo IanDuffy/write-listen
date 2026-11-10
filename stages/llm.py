@@ -47,7 +47,7 @@ def token_cost(cfg: dict, model: str, *, input_tokens: int = 0, output_tokens: i
     return (
         input_tokens * p["input"]
         + output_tokens * p["output"]
-        + cache_read * p["input"] * cfg["pricing"]["cache_read_multiplier"]
+        + cache_read * p.get("cache_read", p["input"] * cfg["pricing"]["cache_read_multiplier"])
         + cache_write_5m * p["input"] * cfg["pricing"]["cache_write_5m_multiplier"]
         + cache_write_1h * p["input"] * cfg["pricing"]["cache_write_1h_multiplier"]
     ) / per
@@ -170,6 +170,72 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", None) == "text")
 
 
+RETRY_DELAYS = (5, 20)  # seconds; a stream that drops or an overloaded API gets two more tries
+
+
+def _retryable(e: Exception) -> bool:
+    import anthropic
+    import httpx2
+
+    if isinstance(e, (anthropic.APIConnectionError, httpx2.TransportError)):
+        return True
+    if isinstance(e, anthropic.APIStatusError):
+        # A 200 here is an error event inside the stream (e.g. overloaded_error).
+        return e.status_code == 200 or e.status_code >= 500 or e.status_code == 429
+    return False
+
+
+def _send_with_retries(run, stream_fn, kwargs, label, stage, model, show_tools, all_content, total):
+    """One request, streamed, retried on dropped connections and overloads.
+    A retry resends the same request: earlier content is only added after success."""
+    import anthropic
+
+    for i in range(len(RETRY_DELAYS) + 1):
+        try:
+            with stream_fn(**kwargs) as stream:
+                if show_tools:
+                    # Show each search and fetch as it happens: tool loops run for minutes.
+                    for event in stream:
+                        if getattr(event, "type", None) == "content_block_stop":
+                            _show_tool_use(label, getattr(event, "content_block", None))
+                message = stream.get_final_message()
+                return message, getattr(stream, "request_id", None)
+        except Exception as e:
+            if not isinstance(e, anthropic.APIError) and not _retryable(e):
+                raise
+            status = getattr(e, "status_code", None)
+            run.log({"stage": stage, "label": label, "provider": "anthropic", "model": model,
+                     "error": f"{status or 'connection'}: {getattr(e, 'message', e)}",
+                     "request_id": getattr(e, "request_id", None), "cost_usd": 0, "retry": i})
+            if _retryable(e) and i < len(RETRY_DELAYS):
+                print(f"  [{label}] API error ({status or 'connection'}), retrying in {RETRY_DELAYS[i]}s")
+                time.sleep(RETRY_DELAYS[i])
+                continue
+            if all_content:
+                (run.root / f"_partial_{label}.md").write_text(_text_of(all_content), encoding="utf-8")
+            raise StageError(f"{label}: Claude API error {status or '(connection)'}: "
+                             f"{getattr(e, 'message', e)}. Earlier continuations cost ${total.cost_usd:.2f}.") from None
+    raise AssertionError("unreachable")
+
+
+def echo_after_fallback(content: list) -> list:
+    """Content to send back when resuming a paused turn. After a mid-output refusal
+    fallback, the API's echo rules drop thinking, tool_use and unpaired
+    server_tool_use blocks that came before the last fallback block."""
+    idx = max((i for i, b in enumerate(content) if getattr(b, "type", None) == "fallback"), default=-1)
+    if idx < 0:
+        return list(content)
+    result_ids = {getattr(b, "tool_use_id", None) for b in content if getattr(b, "tool_use_id", None)}
+    kept = []
+    for i, b in enumerate(content):
+        t = getattr(b, "type", None)
+        if i < idx and (t in ("thinking", "redacted_thinking", "tool_use")
+                        or (t == "server_tool_use" and b.id not in result_ids)):
+            continue
+        kept.append(b)
+    return kept
+
+
 def _show_tool_use(label: str, block) -> None:
     if getattr(block, "type", None) != "server_tool_use":
         return
@@ -209,6 +275,7 @@ def call(
     expected_output_tokens: int | None = None,
     expected_searches: int = 0,
     preapproved: bool = False,
+    before_request=None,
 ) -> Result:
     """Send one request (plus any pause_turn continuations) and log it.
 
@@ -216,7 +283,9 @@ def call(
     or "cheap" (Haiku). Stage settings (max_tokens, effort, max_continuations)
     come from config unless overridden. `preapproved` skips the cost guard,
     for stages that guard their whole budget up front (research runs agents in
-    parallel threads, where a prompt for input would be lost).
+    parallel threads, where a prompt for input would be lost). `before_request`
+    is called before every request, continuations included, and may raise
+    StageError to stop (research uses it for its spend cap).
     """
     model = cfg["models"][role]
     st = cfg["stages"].get(stage, {})
@@ -231,9 +300,6 @@ def call(
                         expected_searches)
     if not preapproved:
         guard(run, cfg, f"{label or stage} ({model})", est)
-
-    import anthropic
-    import httpx2
 
     client = get_client()
     kwargs: dict = {
@@ -266,29 +332,13 @@ def call(
     message = None
     overrun_approved = False
     request_id = None
+    base_messages = list(messages)
     for attempt in range(max_continuations + 1):
+        if before_request:
+            before_request()
         t0 = time.monotonic()
-        try:
-            with stream_fn(**kwargs) as stream:
-                if tools:
-                    # Show each search and fetch as it happens: tool loops run for minutes.
-                    for event in stream:
-                        if getattr(event, "type", None) == "content_block_stop":
-                            _show_tool_use(label or stage, getattr(event, "content_block", None))
-                message = stream.get_final_message()
-                request_id = getattr(stream, "request_id", None)
-        except anthropic.APIStatusError as e:
-            run.log({"stage": stage, "label": label or stage, "provider": "anthropic", "model": model,
-                     "error": f"{e.status_code} {e.message}", "request_id": e.request_id, "cost_usd": 0})
-            raise StageError(f"{label or stage}: Claude API error {e.status_code}: {e.message}") from None
-        except (anthropic.APIConnectionError, httpx2.TransportError) as e:
-            # A dropped stream mid-way: keep what earlier continuations produced.
-            if all_content:
-                (run.root / f"_partial_{label or stage}.md").write_text(_text_of(all_content), encoding="utf-8")
-            run.log({"stage": stage, "label": label or stage, "provider": "anthropic", "model": model,
-                     "error": f"connection: {e}", "cost_usd": 0})
-            raise StageError(f"{label or stage}: lost the connection to the Claude API ({e}). "
-                             f"Earlier continuations cost ${total.cost_usd:.2f}.") from None
+        message, request_id = _send_with_retries(run, stream_fn, kwargs, label or stage, stage, model,
+                                                 bool(tools), all_content, total)
         seconds = round(time.monotonic() - t0, 1)
 
         u = usage_and_cost(cfg, model, message)
@@ -320,9 +370,10 @@ def call(
         })
 
         if message.stop_reason == "pause_turn":
-            # Server-side tool loop paused: send the paused turn back and the API resumes.
-            kwargs["messages"] = kwargs["messages"] + [
-                {"role": "assistant", "content": message.content}
+            # Server-side tool loop paused: send the whole turn so far back as one
+            # assistant message and the API resumes it.
+            kwargs["messages"] = base_messages + [
+                {"role": "assistant", "content": echo_after_fallback(all_content)}
             ]
             # Tools stay byte-identical across continuations: editing them would
             # break the API's check on the earlier turn's thinking blocks. So

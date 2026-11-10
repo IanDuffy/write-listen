@@ -10,8 +10,7 @@ from pathlib import Path
 
 from .common import Run, claim_numbers, dossier_entries, spoken_text, word_count
 
-# A sentence plus any claim markers right after it: '... Mantinea. [C1][C4]'
-SENTENCE = re.compile(r"[^.!?]*[.!?]+[\"'”’)]*(?:\s*\[C\d+[^\]]*\])*", re.S)
+MARKERS = re.compile(r"(?:\s*\[C\d+[^\]]*\])+")
 
 
 def duration_seconds(mp3: Path) -> float | None:
@@ -34,14 +33,19 @@ def fmt_duration(s: float | None) -> str:
 
 def claim_sentences(script: str) -> list[tuple[str, list[int]]]:
     """Sentences that carry a [Cn] marker, with the claim numbers they cite."""
+    # Anchored on the markers, not on sentence boundaries, so 'St. Augustine' or
+    # '3.5' never cuts a sample short: each sample is the text since the previous
+    # marker (or the paragraph start) up to this run of markers.
     body = re.sub(r"<!--.*?-->", "", script, flags=re.S)
     out = []
     for para in body.split("\n\n"):
-        for m in SENTENCE.finditer(para):
-            s = m.group(0).strip()
-            refs = claim_numbers(" ".join(re.findall(r"\[(C\d+[^\]]*)\]", s)))
-            if refs:
-                out.append((spoken_text(s), refs))
+        start = 0
+        for m in MARKERS.finditer(para):
+            text = spoken_text(para[start:m.start()])
+            refs = claim_numbers(m.group(0))
+            if text and refs:
+                out.append((text, refs))
+            start = m.end()
     return out
 
 

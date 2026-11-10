@@ -6,7 +6,7 @@ the pipeline chapter has to beat it in a blind listen.
 """
 
 from . import llm
-from .common import PROMPTS_DIR, Run, StageError, load_prompt, word_count
+from .common import Run, StageError, load_prompt, word_count
 from .research import tools as research_tools
 
 
@@ -16,7 +16,8 @@ def run(r: Run, cfg: dict):
     r.check_writable("baseline_script")
     ch = cfg["chapter"]
     prompt = load_prompt("baseline", transcript=transcript, angle=angle,
-                         style_guide=(PROMPTS_DIR / "style_guide.md").read_text(encoding="utf-8"),
+                         style_guide=load_prompt("style_guide"),
+                         searches=cfg["baseline"]["max_searches"], fetches=cfg["baseline"]["max_fetches"],
                          target_words=ch["target_words"], target_minutes=ch["target_minutes"])
     res = llm.call(r, cfg, "baseline", messages=[{"role": "user", "content": prompt}],
                    tools=research_tools(cfg), expected_searches=cfg["baseline"]["max_searches"])

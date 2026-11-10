@@ -49,7 +49,7 @@ The first thirty seconds, described concretely: the scene, image or question tha
 The last sentence or two, written out, and what it should leave the listener with.
 
 ## Style guide for the ear
-What this chapter adds to the house style guide: its recurring images, the names that need introducing and how, and any tone notes. Don't copy out the house rules; the writer sees the house guide alongside this brief, and the house guide wins where the two disagree.
+What this chapter adds to the house style guide: its recurring images, the names that need introducing and how, and any tone notes. Don't copy out the house rules: the writer sees the house guide alongside this brief. Where your section disagrees with the house guide, yours wins, so only write a rule that differs if you mean to override it.
 
 ## Arc
 Three or four sentences on how the segments build: where the turn comes, and where the chapter is hardest and needs the most care.

@@ -1,8 +1,11 @@
-# Style guide for the ear
+# House style guide for the ear
 
-This is the starting point. The brief stage copies it into 05_brief.md and may
-adapt it to the chapter; the draft, edit and revise stages read both this file
-and the brief. Edit it after the pilot listen.
+Read by the brief, draft, edit, revise and baseline stages. The brief adds a
+style section for its chapter; where the two disagree, the brief wins, since it
+is the version Ian edits. Edit this file after the pilot listen.
+
+Everything above the line of three dashes is notes for Ian and is not sent.
+---
 
 - Written for the ear: short sentences, one idea each. Signpost between sections so a listener always knows where they are and why.
 - Second person and concrete examples over abstraction. Every philosopher arrives with a scene or an image: a place, a year, a person doing something.

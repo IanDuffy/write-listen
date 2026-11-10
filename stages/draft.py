@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from . import llm
 from .brief import parse_segments
-from .common import (PROMPTS_DIR, Run, StageError, dossier_entries, load_prompt, parse_range,
+from .common import (Run, StageError, dossier_entries, load_prompt, parse_range,
                      word_count)
 
 
@@ -24,7 +24,7 @@ def context_block(style_guide: str, brief: str, dossier: str) -> str:
 def run(r: Run, cfg: dict, segments: str | None = None):
     brief = r.read("brief")
     dossier = r.read("dossier")
-    style_guide = (PROMPTS_DIR / "style_guide.md").read_text(encoding="utf-8")
+    style_guide = load_prompt("style_guide")
     segs = parse_segments(brief)
     if not segs:
         raise StageError("05_brief.md has no '## Segment N: Title' headings.")
@@ -56,6 +56,8 @@ def run(r: Run, cfg: dict, segments: str | None = None):
             earlier.append(p.read_text(encoding="utf-8").strip())
 
         seg = by_n[n]
+        if not seg["claims"]:
+            print(f"  seg{n:02d}: warning, the brief lists no claims for this segment")
         missing = [c for c in seg["claims"] if c not in entries]
         if missing:
             print(f"  seg{n:02d}: warning, brief cites claims not in the dossier: "

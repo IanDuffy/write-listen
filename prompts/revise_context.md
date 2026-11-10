@@ -9,7 +9,7 @@ Identical for every segment call, so it is cached after the first.
 ---
 You are revising an audio chapter one segment at a time, applying an editor's notes. You write for the ear, for a single narrator.
 
-House style. Where it and the brief's style section disagree, the house style wins:
+House style. Where it and the brief's style section disagree, the brief wins:
 
 <style_guide>
 {{style_guide}}

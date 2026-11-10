@@ -39,6 +39,19 @@ def elevenlabs_client():
     return _el_client
 
 
+def el_call(fn, *args, **kwargs):
+    """Call the ElevenLabs SDK, turning its errors into a StageError with a readable message."""
+    import httpx
+    from elevenlabs.core.api_error import ApiError
+
+    try:
+        return fn(*args, **kwargs)
+    except ApiError as e:
+        raise StageError(f"ElevenLabs error {e.status_code}: {e.body}") from None
+    except httpx.HTTPError as e:
+        raise StageError(f"Could not reach ElevenLabs: {e}") from None
+
+
 @dataclass
 class Synth:
     audio: bytes      # raw PCM s16le mono when the format is pcm_*, else encoded audio
@@ -67,14 +80,11 @@ def synthesize(text: str, *, voice_id: str, ncfg: dict,
         kwargs["previous_text"] = previous_text
     if next_text:
         kwargs["next_text"] = next_text
-    from elevenlabs.core.api_error import ApiError
-
-    try:
+    def convert():
         with client.text_to_speech.with_raw_response.convert(voice_id, **kwargs) as resp:
-            audio = b"".join(resp.data)
-            request_id = resp.headers.get("request-id") or resp.headers.get("x-request-id")
-    except ApiError as e:
-        raise StageError(f"ElevenLabs error {e.status_code}: {e.body}") from None
+            return b"".join(resp.data), resp.headers.get("request-id") or resp.headers.get("x-request-id")
+
+    audio, request_id = el_call(convert)
     if not audio:
         raise StageError("ElevenLabs returned no audio.")
     return Synth(audio=audio, request_id=request_id)

@@ -117,8 +117,8 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
             reason = "page counter"
         elif URL.fullmatch(line) or (URL.search(line) and len(URL.sub("", line).strip()) < 15):
             reason = "url"
-        elif line.lower().rstrip(".:") in CHROME_LINES:
-            reason = "site chrome"
+        elif line[:1].isupper() and line.lower().rstrip(".:") in CHROME_LINES:
+            reason = "site chrome"  # UI labels are capitalized; a wrapped "listen." is dialogue
         if reason:
             removed.append(f"[{reason}] {line}")
         else:
@@ -128,7 +128,13 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
 
 
 def reflow(lines: list[str]) -> str:
-    """Join hard-wrapped lines into paragraphs. A blank line or a speaker label starts a new one."""
+    """Join hard-wrapped lines into paragraphs. A blank line or a speaker label starts a new one.
+
+    A word split by a hyphen at a line end ('Dio-' / 'tima') is re-joined without
+    the hyphen only when the joined word appears elsewhere in the text; otherwise
+    it is a real compound ('well-' / 'known') and keeps its hyphen.
+    """
+    vocab = {w.lower() for ln in lines for w in re.findall(r"[A-Za-z']+", ln)}
     paras: list[str] = []
     cur = ""
     for line in lines:
@@ -141,7 +147,10 @@ def reflow(lines: list[str]) -> str:
             paras.append(cur)
             cur = line
         elif cur.endswith("-") and not cur.endswith(" -") and line[:1].islower():
-            cur = cur[:-1] + line  # re-join a word hyphenated across a line break
+            head = re.search(r"([A-Za-z']+)-$", cur)
+            tail = re.match(r"[A-Za-z']+", line)
+            joined = (head.group(1) + tail.group(0)).lower() if head and tail else ""
+            cur = cur[:-1] + line if joined in vocab else cur + line
         else:
             cur = f"{cur} {line}" if cur else line
     if cur:
