@@ -29,7 +29,9 @@ CHROME_LINES = {
 
 # A heading that starts a trailing block of related links. Everything from the
 # first such heading in the final 15% of the document (at least its last 60
-# lines) to the end is dropped.
+# lines) to the end is dropped. To count as a heading the line must start with
+# a capital, not be a speaker turn, not end like a sentence, and follow a line
+# that ended a sentence (so a hard-wrapped line of dialogue never matches).
 TAIL_MARKERS = re.compile(
     r"^(more from|related podcasts|related|most popular|explore more topics|"
     r"about the author|listen and subscribe|you may also like|recommended reading)\b",
@@ -40,6 +42,15 @@ PRINT_HEADER = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2}(\s*[AP]M)
 PAGE_COUNTER = re.compile(r"^(page\s+)?\d+\s*(/|of)\s*\d+$", re.I)
 URL = re.compile(r"(https?://|www\.)\S+", re.I)
 SPEAKER = re.compile(r"^[A-Z][A-Za-z.'\- ]{1,40}:\s")
+
+
+def is_tail_heading(line: str, prev: str) -> bool:
+    return bool(
+        line and len(line) < 60 and line[0].isupper() and TAIL_MARKERS.match(line)
+        and not SPEAKER.match(line)
+        and not re.search(r"[.,;:!?]$", line)
+        and (not prev or re.search(r"[.!?\"'”’)]$", prev))
+    )
 
 
 def extract_pdf_text(pdf: Path) -> list[str]:
@@ -63,10 +74,13 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
     removed: list[str] = []
     n_pages = len(pages)
 
-    # Short lines that recur on many pages are running headers or footers.
+    # Short lines that recur at the top or bottom of many pages are running
+    # headers or footers. Speaker turns ("Scarry: Yes.") never count.
     per_page = Counter()
     for page in pages:
-        for line in {ln.strip() for ln in page.splitlines() if 0 < len(ln.strip()) < 100}:
+        body = [ln.strip() for ln in page.splitlines() if ln.strip()]
+        edges = {ln for ln in body[:3] + body[-3:] if len(ln) < 100 and not SPEAKER.match(ln)}
+        for line in edges:
             per_page[line] += 1
     repeated = {ln for ln, c in per_page.items() if n_pages >= 3 and c >= max(3, n_pages // 2)}
 
@@ -78,13 +92,16 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
     nonblank = [i for i, ln in enumerate(lines) if ln and ln not in repeated]
     if nonblank:
         cutoff = nonblank[max(0, min(int(len(nonblank) * 0.85), len(nonblank) - 60))]
-        for i in range(cutoff, len(lines)):
+        prev = ""
+        for i in range(len(lines)):
             ln = lines[i]
-            # A heading, not a sentence: short, and not ending like one.
-            if ln and len(ln) < 60 and not ln.endswith((".", ",")) and TAIL_MARKERS.match(ln):
+            if i >= cutoff and is_tail_heading(ln, prev):
                 removed.extend(f"[trailing related block] {ln}" for ln in lines[i:] if ln)
                 lines = lines[:i]
                 break
+            if ln and ln not in repeated and ln.lower().rstrip(".:") not in CHROME_LINES \
+                    and not URL.search(ln):
+                prev = ln
 
     kept: list[str] = []
     for line in lines:
@@ -144,25 +161,29 @@ def run(r: Run, cfg: dict, source: str | None = None) -> Path:
     src_dir.mkdir(exist_ok=True)
     out = r.check_writable("transcript")
 
-    if source:
+    raw_txt = src_dir / "transcript_raw.txt"
+    use = None
+    if source:  # an explicit --source is what gets ingested
         sp = Path(source).expanduser()
         if not sp.exists():
             raise StageError(f"Source file not found: {sp}")
         if sp.suffix.lower() == ".pdf":
-            dest = r.path("transcript_pdf")
-            if sp.resolve() != dest.resolve():
-                shutil.copyfile(sp, dest)
+            use = r.path("transcript_pdf")
         elif sp.suffix.lower() in (".txt", ".md"):
-            dest = src_dir / "transcript_raw.txt"
-            shutil.copyfile(sp, dest)
+            use = raw_txt
         else:
             raise StageError("Source must be a .pdf, .txt or .md file.")
-
-    raw_txt = src_dir / "transcript_raw.txt"
-    if r.path("transcript_pdf").exists():
-        pages = extract_pdf_text(r.path("transcript_pdf"))
+        if sp.resolve() != use.resolve():
+            shutil.copyfile(sp, use)
+    elif r.path("transcript_pdf").exists():
+        use = r.path("transcript_pdf")
     elif raw_txt.exists():
-        pages = raw_txt.read_text(encoding="utf-8").split("\f")
+        use = raw_txt
+
+    if use is not None and use.suffix == ".pdf":
+        pages = extract_pdf_text(use)
+    elif use is not None:
+        pages = use.read_text(encoding="utf-8").split("\f")
     else:
         raise StageError(
             "Missing input: put the transcript at 00_source/transcript.pdf, or pass "

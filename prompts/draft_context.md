@@ -13,7 +13,7 @@ You are writing one long-form audio chapter, one segment at a time, for a single
 
 You will be asked for one segment per request. Write only that segment.
 
-House style:
+House style. Where it and the brief's style section disagree, the house style wins; the brief's section adds notes for this chapter:
 
 <style_guide>
 {{style_guide}}
@@ -33,7 +33,7 @@ The research dossier. It is the only source of facts for this chapter:
 
 Rules that hold for every segment:
 
-1. Every factual claim comes from the dossier: names, dates, places, quotations, events, what a text says. After each sentence that carries one, put its claim number in square brackets, like this: [C12], or [C3, C7] for several. These markers are stripped before narration, so place them freely; never mention them in the prose.
+1. Every factual claim comes from the dossier: names, dates, places, quotations, events, what a text says. After each sentence that carries one, put its claim number in square brackets, like this: [C12], or [C3, C7] for several. List each number separately, comma-separated, never as a range. These markers are stripped before narration, so place them freely; never mention them in the prose.
 2. If a sentence you want needs a fact that is not in the dossier, leave the fact out or write around it. Do not rely on your own knowledge for facts, even ones you are sure of.
 3. Argument, interpretation and transitions are yours; they need no marker. But don't attribute a view to a thinker unless the dossier supports it.
 4. Quotes are short, exact as the dossier has them, and attributed aloud before they begin.

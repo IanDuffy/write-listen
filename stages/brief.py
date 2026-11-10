@@ -10,11 +10,14 @@ from __future__ import annotations
 import re
 
 from . import llm
-from .common import PROMPTS_DIR, Run, StageError, load_prompt
+from .common import PROMPTS_DIR, Run, StageError, claim_numbers, load_prompt
 
 SEGMENT_HEADING = re.compile(r"^##\s+Segment\s+(\d+)\s*[:.\-–—]?\s*(.*)$", re.M | re.I)
-CLAIMS_LINE = re.compile(r"^\s*[-*]?\s*\**Claims\**\s*:\s*(.*)$", re.M | re.I)
-TARGET_LINE = re.compile(r"^\s*[-*]?\s*\**Target words\**\s*:\s*~?\s*(\d[\d,]*)", re.M | re.I)
+# '- Claims: C3, C7', '**Claims:** C3-C5', 'Claims: [C3], [C7]'. Stays on its own line.
+CLAIMS_LINE = re.compile(r"^[ \t]*[-*]?[ \t]*\**Claims\**[ \t]*:[ \t]*\**[ \t]*(.*)$", re.M | re.I)
+TARGET_LINE = re.compile(
+    r"^[ \t]*[-*]?[ \t]*\**Target words\**[ \t]*:[ \t]*\**[ \t]*(?:about|around|approx\.?|~)?[ \t]*(\d[\d,]*)",
+    re.M | re.I)
 
 
 def parse_segments(brief: str) -> list[dict]:
@@ -29,7 +32,7 @@ def parse_segments(brief: str) -> list[dict]:
             end = m.end() + nxt.start()
         body = brief[m.start():end].strip()
         claims_m = CLAIMS_LINE.search(body)
-        claims = [int(n) for n in re.findall(r"C?(\d+)", claims_m.group(1))] if claims_m else []
+        claims = claim_numbers(claims_m.group(1)) if claims_m else []
         target_m = TARGET_LINE.search(body)
         segs.append({
             "n": int(m.group(1)),

@@ -49,7 +49,7 @@ The first thirty seconds, described concretely: the scene, image or question tha
 The last sentence or two, written out, and what it should leave the listener with.
 
 ## Style guide for the ear
-The house style guide, adapted to this chapter: add the chapter's recurring images, the names that need introducing, and any tone notes. Keep every rule from the house guide unless the angle notes say otherwise.
+What this chapter adds to the house style guide: its recurring images, the names that need introducing and how, and any tone notes. Don't copy out the house rules; the writer sees the house guide alongside this brief, and the house guide wins where the two disagree.
 
 ## Arc
 Three or four sentences on how the segments build: where the turn comes, and where the chapter is hardest and needs the most care.
@@ -57,7 +57,7 @@ Three or four sentences on how the segments build: where the turn comes, and whe
 ## Segment 1: a short title
 - Purpose: what this segment does for the argument, in one sentence.
 - Target words: a number
-- Claims: C3, C7, C12
+- Claims: C3, C7, C12 (each number listed separately on this one line, no ranges)
 - Beats: the moves of the segment in order, as short sentences.
 - Opens with: how it picks up from the previous segment (for segment 1, the hook).
 - Hands off to: the question or image that pulls the listener into the next segment.

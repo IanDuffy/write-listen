@@ -156,7 +156,6 @@ def load_prompt(name: str, **values: str) -> str:
 
 # --- text helpers ----------------------------------------------------------
 
-CLAIM_REF = re.compile(r"\[C(\d+)\]")
 SEGMENT_MARKER = re.compile(r"^<!--\s*seg(\d+)\s*-->\s*$", re.M)
 
 
@@ -168,7 +167,7 @@ def word_count(text: str) -> int:
 def spoken_text(text: str) -> str:
     """Strip everything that is for Ian, not for the ear."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    text = re.sub(r"\s*\[C\d+(?:\s*,\s*C?\d+)*\]", "", text)
+    text = re.sub(r"\s*\[C\d+[^\]]*\]", "", text)  # [C3], [C3, C7], [C3-C5], [C3; C7]
     text = re.sub(r"^#+\s.*$", "", text, flags=re.M)  # stray headings
     text = text.replace("**", "").replace("__", "")
     text = re.sub(r"[ \t]+", " ", text)
@@ -185,6 +184,10 @@ def split_script_segments(script: str) -> list[tuple[int, str]]:
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(script)
         out.append((int(m.group(1)), script[m.end():end].strip()))
+    # Text above the first marker (say, an opening Ian added by hand) belongs to the first segment.
+    lead = script[:marks[0].start()].strip()
+    if lead:
+        out[0] = (out[0][0], f"{lead}\n\n{out[0][1]}".strip())
     return out
 
 
@@ -210,7 +213,19 @@ def parse_range(spec: str | None, available: list[int]) -> list[int]:
     return out
 
 
-DOSSIER_ENTRY = re.compile(r"^\**\[C(\d+)\]\**", re.M)
+# '[C12]', '**[C12]**', '- [C12]' or '1. [C12]' at the start of a line.
+DOSSIER_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[C(\d+)\]\**", re.M)
+
+
+def claim_numbers(text: str) -> list[int]:
+    """'C3, C7', 'C3-C5', '[C3][C7]', 'C3; C7' -> sorted unique claim numbers, ranges expanded."""
+    nums: set[int] = set()
+    for a, b in re.findall(r"C(\d+)(?:\s*[-–—]\s*C?(\d+))?", text):
+        lo, hi = int(a), int(b or a)
+        if hi < lo or hi - lo > 200:
+            hi = lo
+        nums.update(range(lo, hi + 1))
+    return sorted(nums)
 
 
 def dossier_entries(dossier: str) -> dict[int, str]:

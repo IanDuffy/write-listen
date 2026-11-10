@@ -41,7 +41,7 @@ As a listener, look for:
 - What to cut: anything that slows the chapter without earning it, including throat-clearing, recaps and a second example where one would do.
 - What to add: a missing step in the argument, a thinker who appears without a scene, a place where the listener will lose the thread.
 - Order: anything that should move, and where to.
-- Repetition across segments: the same point, phrase, image or quote used twice.
+- Repetition across segments: the same point, phrase, image or quote used twice. Restating the chapter's central question in new words, as the style guide asks, is not repetition.
 - Pacing: sections that drag or rush, and paragraphs that try to do two things.
 - Tone drift: lecturing, performed enthusiasm, hedging, or a shift in register between segments.
 - The ear: long sentences, lists, asides, or words a narrator would stumble on.

@@ -8,9 +8,10 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
-from .common import CLAIM_REF, Run, dossier_entries, spoken_text, word_count
+from .common import Run, claim_numbers, dossier_entries, spoken_text, word_count
 
-SENTENCE = re.compile(r"[^.!?]*[.!?]+[\"'”’)]*(?:\s*\[C[\dC,\s]+\])?", re.S)
+# A sentence plus any claim markers right after it: '... Mantinea. [C1][C4]'
+SENTENCE = re.compile(r"[^.!?]*[.!?]+[\"'”’)]*(?:\s*\[C\d+[^\]]*\])*", re.S)
 
 
 def duration_seconds(mp3: Path) -> float | None:
@@ -38,10 +39,9 @@ def claim_sentences(script: str) -> list[tuple[str, list[int]]]:
     for para in body.split("\n\n"):
         for m in SENTENCE.finditer(para):
             s = m.group(0).strip()
-            refs = [int(n) for ref in re.findall(r"\[(C[\dC,\s]+)\]", s)
-                    for n in re.findall(r"\d+", ref)]
+            refs = claim_numbers(" ".join(re.findall(r"\[(C\d+[^\]]*)\]", s)))
             if refs:
-                out.append((spoken_text(s), sorted(set(refs))))
+                out.append((spoken_text(s), refs))
     return out
 
 

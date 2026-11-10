@@ -13,7 +13,8 @@ from . import llm
 from .common import (PROMPTS_DIR, Run, StageError, join_script_segments, load_prompt,
                      split_script_segments, word_count)
 
-NOTES_HEADING = re.compile(r"^##\s+(Global|seg\s*(\d+))\b.*$", re.M | re.I)
+# '## Global', '## seg01', '## Segment 1: Title', '## **seg01**'
+NOTES_HEADING = re.compile(r"^##\s+\**\s*(Global|seg(?:ment)?\s*0*(\d+))\b.*$", re.M | re.I)
 
 
 def parse_notes(notes: str) -> tuple[str, dict[int, str]]:
@@ -47,6 +48,13 @@ def run(r: Run, cfg: dict):
     unknown = sorted(set(per_seg) - {n for n, _ in segments})
     if unknown:
         print(f"  warning: notes for segments not in the draft: {unknown}")
+    missing = [n for n, _ in segments if n not in per_seg]
+    if missing and not r.force:
+        raise StageError(
+            "08_edit_notes.md has no section for segment(s) "
+            f"{', '.join(f'seg{n:02d}' for n in missing)}. The editor is asked for one per segment, so this "
+            "usually means a heading the parser could not read. Fix the headings ('## seg01'), "
+            "or use --force to revise those segments with the global notes only.")
 
     system = load_prompt(
         "revise_context",

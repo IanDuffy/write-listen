@@ -195,11 +195,14 @@ def join_to_mp3(parts: list[Path | int], out_mp3: Path, work: Path, bitrate: str
     lines = []
     for p in parts:
         if isinstance(p, int):
-            sil = work / f"silence_{p}ms.wav"
+            with wave.open(str(wavs[0]), "rb") as w:
+                fmt = f"{w.getframerate()}_{w.getsampwidth()}_{w.getnchannels()}"
+            sil = work / f"silence_{p}ms_{fmt}.wav"
             if not sil.exists():
                 silence_wav(sil, p, wavs[0])
             p = sil
-        lines.append(f"file '{p.resolve()}'")
+        quoted = str(p.resolve()).replace("'", "'\\''")  # ffmpeg concat-list quoting
+        lines.append(f"file '{quoted}'")
     listing.write_text("\n".join(lines) + "\n", encoding="utf-8")
     joined = work / "joined.wav"
     ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(joined)])

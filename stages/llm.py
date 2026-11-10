@@ -170,21 +170,6 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", None) == "text")
 
 
-def _shrink_caps(current: list | None, original: list | None, used: Usage) -> list | None:
-    """Lower web tool max_uses by what earlier continuations already spent.
-    The API needs max_uses >= 1, so the cap can overshoot by at most one per continuation."""
-    if not current or not original:
-        return current
-    spent = {"web_search": used.web_searches, "web_fetch": used.web_fetches}
-    out = []
-    for cur, orig in zip(current, original):
-        t = dict(cur)
-        if t.get("name") in spent and "max_uses" in orig:
-            t["max_uses"] = max(1, orig["max_uses"] - spent[t["name"]])
-        out.append(t)
-    return out
-
-
 def _system_blocks(system: str | list | None, cache: bool):
     if system is None:
         return None
@@ -231,6 +216,7 @@ def call(
     guard(run, cfg, f"{label or stage} ({model})", est)
 
     import anthropic
+    import httpx2
 
     client = get_client()
     kwargs: dict = {
@@ -243,6 +229,9 @@ def call(
         kwargs["system"] = sys_blocks
     if tools:
         kwargs["tools"] = tools
+        # Server tool loops resend the growing context on every iteration and
+        # continuation; automatic caching makes those re-reads cheap.
+        kwargs["cache_control"] = {"type": "ephemeral"}
     if effort:
         kwargs["output_config"] = {"effort": effort}
 
@@ -258,17 +247,26 @@ def call(
     all_content: list = []
     max_continuations = cfg.get("max_pause_continuations", 8)
     message = None
+    overrun_approved = False
+    request_id = None
     for attempt in range(max_continuations + 1):
         t0 = time.monotonic()
         try:
             with stream_fn(**kwargs) as stream:
                 message = stream.get_final_message()
+                request_id = getattr(stream, "request_id", None)
         except anthropic.APIStatusError as e:
             run.log({"stage": stage, "label": label or stage, "provider": "anthropic", "model": model,
                      "error": f"{e.status_code} {e.message}", "request_id": e.request_id, "cost_usd": 0})
             raise StageError(f"{label or stage}: Claude API error {e.status_code}: {e.message}") from None
-        except anthropic.APIConnectionError as e:
-            raise StageError(f"{label or stage}: could not reach the Claude API ({e}).") from None
+        except (anthropic.APIConnectionError, httpx2.TransportError) as e:
+            # A dropped stream mid-way: keep what earlier continuations produced.
+            if all_content:
+                (run.root / f"_partial_{label or stage}.md").write_text(_text_of(all_content), encoding="utf-8")
+            run.log({"stage": stage, "label": label or stage, "provider": "anthropic", "model": model,
+                     "error": f"connection: {e}", "cost_usd": 0})
+            raise StageError(f"{label or stage}: lost the connection to the Claude API ({e}). "
+                             f"Earlier continuations cost ${total.cost_usd:.2f}.") from None
         seconds = round(time.monotonic() - t0, 1)
 
         u = usage_and_cost(cfg, model, message)
@@ -286,7 +284,7 @@ def call(
             "provider": "anthropic",
             "model": model,
             "served_by": u.served_by,
-            "request_id": getattr(message, "_request_id", None),
+            "request_id": request_id or getattr(message, "_request_id", None),
             "stop_reason": message.stop_reason,
             "input_tokens": u.input_tokens,
             "output_tokens": u.output_tokens,
@@ -304,8 +302,16 @@ def call(
             kwargs["messages"] = kwargs["messages"] + [
                 {"role": "assistant", "content": message.content}
             ]
-            # max_uses counts per request, so carry the cap across continuations.
-            kwargs["tools"] = _shrink_caps(kwargs.get("tools"), tools, total)
+            # Tools stay byte-identical across continuations: editing them would
+            # break the API's check on the earlier turn's thinking blocks. So
+            # max_uses caps each request, and spend is watched here instead.
+            next_input = u.input_tokens + u.cache_read + u.cache_write_5m + u.cache_write_1h + u.output_tokens
+            projected = total.cost_usd + token_cost(cfg, model, input_tokens=next_input,
+                                                    output_tokens=st.get("expected_output_tokens", 8000))
+            if not overrun_approved and projected > cfg["cost_guard_usd"]:
+                guard(run, cfg, f"{label or stage} after {attempt + 1} continuation(s), "
+                      f"${total.cost_usd:.2f} spent so far,", projected)
+                overrun_approved = True
             continue
         break
     else:

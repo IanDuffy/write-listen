@@ -18,7 +18,7 @@ cost_guard_usd: 5.00
 # streams, so large values are safe. Effort: low | medium | high | xhigh | max.
 # expected_* feed the cost guard's estimate only.
 stages:
-  ping:     {max_tokens: 64, expected_output_tokens: 20}
+  ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
   map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
   angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
   research: {max_tokens: 64000, effort: high, expected_output_tokens: 40000, expected_input_tokens: 300000}
@@ -45,6 +45,8 @@ tools:
   web_fetch: web_fetch_20260209
 
 # Server-side tool loops can pause; each pause is resumed with a new request.
+# max_uses (above) applies per request, so the prompt states the search budget
+# and the cost guard re-checks total spend before each continuation.
 max_pause_continuations: 8
 
 pricing:

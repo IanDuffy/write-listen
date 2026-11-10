@@ -61,6 +61,8 @@ Each milestone stops for Ian.
 
 - **Prompts** are plain markdown in `prompts/`, one per stage, with their inputs
   listed above a `---` line. Only the part below the line is sent.
+  `prompts/style_guide.md` is the house style for draft, revise, edit and the
+  baseline. Where it disagrees with the brief's style section, it wins.
 - **Claim markers.** The research stage numbers every claim `[C1]`, `[C2]`, ...
   with a source URL, then checks every cited URL against the URLs that search
   and fetch actually returned. The result is appended to `04_dossier.md`. The
@@ -76,7 +78,14 @@ Each milestone stops for Ian.
   records tokens, cache reads and writes, searches, the model that actually
   served the call, and the cost in USD from the prices in `config.yaml`.
   Before any call or multi-call stage estimated above $5, the tool stops and
-  asks. `--yes` pre-approves.
+  asks. `--yes` pre-approves. Research and baseline run server-side tool loops
+  that can pause and resume. Before each resume the tool re-checks total spend
+  and asks once if the projection passes $5.
+- **The 30-search cap** is set as the tool's `max_uses` and stated in the
+  prompt. The API applies `max_uses` per request, and the tool list has to stay
+  byte-identical across resumes (changing it breaks Opus 5.5's check on the
+  earlier thinking). So a run with many resumes could exceed 30 searches. The
+  log records the real count, and the cost guard bounds the spend.
 - **Narration** sits behind one function, `stages/tts.py:synthesize`. Chunks
   split at paragraph breaks, then at sentences, below the model's per-request
   limit, which is read live from the account. They are stitched with

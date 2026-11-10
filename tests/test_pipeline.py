@@ -33,8 +33,8 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     assert "Claims with no source URL: C5" in dossier  # C3 cites the episode, which is allowed
     first, second = responder.calls[-2:]
     assert second["messages"][-1]["role"] == "assistant"  # paused turn sent back
-    search_tool = next(t for t in second["tools"] if t["name"] == "web_search")
-    assert search_tool["max_uses"] == cfg["research"]["max_searches"] - 4
+    assert second["tools"] == first["tools"]  # tools must not change between continuations
+    assert first["cache_control"] == {"type": "ephemeral"}
     assert first["fallbacks"] == "default" and first["betas"] == ["server-side-fallback-2026-07-01"]
 
     brief.run(r, cfg)

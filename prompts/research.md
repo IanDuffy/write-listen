@@ -37,7 +37,7 @@ Rules for the dossier:
 - Only cite a URL that a search returned or you fetched in this session. Never write a URL from memory.
 - Each claim is one fact or one short quote, small enough to check in a minute.
 - Number claims [C1], [C2], ... in order, each at the start of its own line.
-- Every claim ends with its source. Claims that come only from the podcast episode say "Source: episode" and nothing else.
+- Every claim ends with its source. Claims that come only from the podcast episode say "Source: episode" and nothing else. You have the map, not the transcript, so an episode quote must repeat a line from the map's short quotable lines word for word.
 - Quotes are exact, under 40 words, in quotation marks, with the translator if it is a translation.
 - If sources disagree, record both claims and say they conflict.
 - Note what you looked for and could not establish. That tells the writer what not to say.

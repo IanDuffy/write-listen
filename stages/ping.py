@@ -9,7 +9,7 @@ def run(r: Run, cfg: dict, anthropic: bool = True, elevenlabs: bool = True):
     ok = True
     if anthropic:
         try:
-            res = llm.call(r, cfg, "ping", role="cheap", max_tokens=64,
+            res = llm.call(r, cfg, "ping", role="cheap",
                            messages=[{"role": "user", "content": "Reply with the single word: ready"}])
             print(f"  Claude ({cfg['models']['cheap']}): {res.text!r}. Logged to {r.path('log').relative_to(r.root.parent.parent)}")
         except StageError as e:
