@@ -20,7 +20,7 @@ def run(r: Run, cfg: dict, pilot: bool = False, baseline: bool = False, segments
     if baseline:
         out = r.check_writable("baseline_mp3")
         script = r.read("baseline_script")
-        # The baseline has no segment markers; treat each run of paragraphs as one segment.
+        # The baseline has no segment markers, so it is narrated as one segment.
         parts = [(1, script)]
         work = r.path("baseline_dir") / "audio"
         stage = "narrate_baseline"

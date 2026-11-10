@@ -13,7 +13,7 @@ without `--force`.
 ## Setup
 
 ```bash
-uv sync                       # or: python -m venv .venv && .venv/bin/pip install -e . pytest
+uv sync                       # creates .venv with the pinned versions in uv.lock
 cp .env.example .env          # then add ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
 
