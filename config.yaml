@@ -1,0 +1,102 @@
+# Commissioned audio chapter MVP: settings.
+# API keys live in .env (gitignored), never here.
+
+models:
+  writer: claude-opus-5-5     # map, angles, research, brief, draft, edit, revise, baseline
+  cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
+
+# On a safety-classifier decline, the API re-runs the same request on a fallback
+# model inside the same call ("default" lets the API pick by refusal category).
+# The log records which model actually served each call. Set to null to turn off.
+refusal_fallbacks: default
+refusal_fallbacks_beta: server-side-fallback-2026-07-01
+
+# Stop and ask before any single call or stage expected to cost more than this.
+cost_guard_usd: 5.00
+
+# Per-stage request settings. max_tokens covers thinking plus text; every call
+# streams, so large values are safe. Effort: low | medium | high | xhigh | max.
+# expected_* feed the cost guard's estimate only.
+stages:
+  ping:     {max_tokens: 64, expected_output_tokens: 20}
+  map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
+  angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
+  research: {max_tokens: 64000, effort: high, expected_output_tokens: 40000, expected_input_tokens: 300000}
+  brief:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
+  edit:     {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
+  revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
+  baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
+
+chapter:
+  target_words: 6000
+  target_minutes: 40
+  min_segments: 6
+  max_segments: 8
+  segment_words: [750, 800]
+
+research:
+  max_searches: 30
+  max_fetches: 30
+  max_fetch_tokens: 20000     # cap on each fetched page's size in context
+
+tools:
+  web_search: web_search_20260209
+  web_fetch: web_fetch_20260209
+
+# Server-side tool loops can pause; each pause is resumed with a new request.
+max_pause_continuations: 8
+
+pricing:
+  # USD per million tokens, from the Claude API pricing page (checked 2026-11-09).
+  # A model not listed here is charged at the most expensive listed rate.
+  models:
+    claude-opus-5-5:   {input: 4.00, output: 20.00}
+    claude-haiku-5-5:  {input: 0.10, output: 0.50}
+    # Possible server-side fallback targets:
+    claude-opus-5:     {input: 5.00, output: 25.00}
+    claude-opus-4-8:   {input: 5.00, output: 25.00}
+    claude-sonnet-5-5: {input: 2.00, output: 10.00}
+    claude-fable-5-2:  {input: 8.00, output: 40.00}
+  cache_read_multiplier: 0.05       # Opus 5.5 cache hits: $0.20 / MTok
+  cache_write_5m_multiplier: 1.25
+  cache_write_1h_multiplier: 2.0
+  web_search_per_1000: 10.00
+
+narration:
+  provider: elevenlabs
+  # Highest-quality narration model as of November 2026, per ElevenLabs' docs
+  # as summarized by search (elevenlabs.io could not be fetched directly).
+  # `python cli.py voices` lists the models on your account with their live
+  # per-request limits; the narrate stage also reads the limit at runtime.
+  model_id: eleven_v4
+  voice_id: null              # set after the voice test (milestone 2)
+  candidate_voices:
+    # ElevenLabs premade voices. IDs not yet confirmed against the account:
+    # run `python cli.py voices` and replace any that are missing.
+    - {name: George, voice_id: JBFqnCBsd6RMkjVDRZzb}
+    - {name: Brian, voice_id: nPczCjzI2devNBz1zQrb}
+    - {name: Sarah, voice_id: EXAVITQu4vr4xnSDxMaL}
+  # pcm_24000 has no plan gate in the SDK docs. pcm_44100 needs the Pro plan.
+  output_format: pcm_24000
+  voice_settings:
+    stability: 0.6
+    similarity_boost: 0.75
+    style: 0.0
+    use_speaker_boost: true
+    speed: 1.0
+  seed: 1234                  # same seed for every chunk, for a steadier voice
+  max_chars_per_request: 4500 # chunk target; kept well under the model limit
+  chunk_pause_ms: 450         # between chunks inside a segment
+  segment_pause_ms: 1600      # at segment breaks
+  mp3_bitrate: 128k
+  # Reported API rates: about $0.08-0.10 per 1,000 characters for eleven_v4.
+  # The higher figure is used so the cost guard errs high. Confirm on elevenlabs.io.
+  price_per_1000_chars: 0.10
+  # Spelled the way the voice should say them. Whole words, case-sensitive.
+  # Check every one in the voice test and adjust.
+  pronunciations:
+    Weil: Vay
+    Diotima: Dee-oh-TEE-mah
+    Boethius: Boh-EE-thee-us
+    Aquinas: Uh-KWY-nus
