@@ -42,8 +42,10 @@ Each milestone stops for Ian.
    ```
    Check `00_source/removed_lines.txt` to see what ingest stripped. Then write
    `runs/beauty-scarry/03_angle.md` by hand.
-4. **Research and brief.** `research` (web search and fetch, capped at 30
-   searches), then `brief`. Edit `05_brief.md` by hand. Keep its
+4. **Research and brief.** `research beauty-scarry --plan-only` writes the
+   research plan and prints its cost estimate. Edit `04_research/plan.md` if
+   you want to, then run `research beauty-scarry` for the full deep research
+   (see below). Then run `brief` and edit `05_brief.md` by hand. Keep its
    `## Segment N: Title` headings and its `Target words:` and `Claims:` lines,
    because the draft stage reads them.
 5. **Pilot.** `draft beauty-scarry --segments 1-2`, then
@@ -56,6 +58,49 @@ Each milestone stops for Ian.
    `narrate`, `baseline`, `narrate --baseline`, `compare`, `report`.
 
 `python cli.py status <run>` shows what exists, what's next, and spend so far.
+`python cli.py estimate [run]` forecasts the cost of the rest of a run.
+
+## Deep research
+
+The research stage plans the work, then runs several agents in parallel:
+
+1. **Plan (Opus).** Opus breaks the angle into 5 to 8 topics and writes
+   `04_research/plan.md`. It splits by thinker or text where it can, with the
+   primary texts first. For each topic the plan lists the questions, the
+   passages to read, the episode claims to check, and the scenes to find.
+2. **Research (Sonnet 5.5, 4 at a time).** One agent per topic, each with its
+   own budget of 25 searches and 25 fetches. Each agent writes
+   `topics/Tnn.md`, with claims numbered `[Tn.k]`. It also writes
+   `topics/Tnn.sources.json`, which holds every URL it saw and the full text of
+   every page it fetched. The console shows each search and page read as it
+   happens.
+3. **Critique (Opus).** Opus reads all the findings, looking for gaps, weak
+   sources, conflicts and new leads. It commissions up to 4 follow-up topics
+   per round, which join the plan and get researched. This repeats for up to
+   `rounds: 3`, or until the critic writes "No follow-up research needed".
+   Each critique is saved as `critic_roundN.md`.
+4. **Merge.** Code renumbers every claim into `04_dossier.md` as `[C1]`,
+   `[C2]`, .... No model touches a source or a quote on the way. Opus then
+   writes the overview on top: the threads, the strongest material,
+   duplicates and conflicts, and weak spots.
+
+The source check at the end of the dossier lists:
+
+- cited URLs that no agent retrieved (written from memory),
+- claims with no source,
+- claims that rest only on the episode,
+- every quote checked word for word against the text of the page it was
+  fetched from. Misquotes and paraphrases presented as quotes are flagged.
+
+Topic files are kept once paid for. A re-run researches only the topics that
+have no findings yet, so a failed agent costs one retry, not the whole stage.
+`--topics T3,T5` redoes specific topics. `--force` rebuilds the dossier from
+what is on disk. Before starting, the stage asks once for its whole estimated
+budget, and no new follow-up round starts once spend passes
+`research.max_usd`.
+
+All the knobs are under `research:` in `config.yaml`: topic counts, budgets
+per agent, parallel agents, rounds and the spend cap.
 
 ## How it works
 
@@ -63,10 +108,9 @@ Each milestone stops for Ian.
   listed above a `---` line. Only the part below the line is sent.
   `prompts/style_guide.md` is the house style for draft, revise, edit and the
   baseline. Where it disagrees with the brief's style section, it wins.
-- **Claim markers.** The research stage numbers every claim `[C1]`, `[C2]`, ...
-  with a source URL, then checks every cited URL against the URLs that search
-  and fetch actually returned. The result is appended to `04_dossier.md`. The
-  draft and revise stages tag every factual sentence with its claim number.
+- **Claim markers.** Every dossier claim is numbered `[C1]`, `[C2]`, ... with a
+  source URL. The draft and revise stages tag every factual sentence with its
+  claim number.
   The editor checks each tag against the dossier. Narration strips the tags,
   and the report samples tagged sentences for the spot-check.
 - **Segments** in the assembled script are separated by `<!-- segNN -->`
@@ -78,14 +122,15 @@ Each milestone stops for Ian.
   records tokens, cache reads and writes, searches, the model that actually
   served the call, and the cost in USD from the prices in `config.yaml`.
   Before any call or multi-call stage estimated above $5, the tool stops and
-  asks. `--yes` pre-approves. Research and baseline run server-side tool loops
-  that can pause and resume. Before each resume the tool re-checks total spend
-  and asks once if the projection passes $5.
-- **The 30-search cap** is set as the tool's `max_uses` and stated in the
-  prompt. The API applies `max_uses` per request, and the tool list has to stay
-  byte-identical across resumes (changing it breaks Opus 5.5's check on the
-  earlier thinking). So a run with many resumes could exceed 30 searches. The
-  log records the real count, and the cost guard bounds the spend.
+  asks. `--yes` pre-approves. The baseline's single tool loop can pause and
+  resume. Before each resume the tool re-checks total spend and asks once if
+  the projection passes $5. Research guards its whole budget up front instead.
+- **Search budgets** (each research agent's 25, the baseline's 30) are set as
+  the tool's `max_uses` and stated in the prompt. The API applies `max_uses`
+  per request, and the tool list must stay byte-identical when a paused tool
+  loop resumes (changing it breaks Opus 5.5's check on the earlier thinking).
+  So an agent that resumes several times can exceed its budget. The log
+  records the real counts, and the cost guards bound the spend.
 - **Narration** sits behind one function, `stages/tts.py:synthesize`. Chunks
   split at paragraph breaks, then at sentences, below the model's per-request
   limit, which is read live from the account. They are stitched with

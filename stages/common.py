@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = ROOT / "prompts"
 RUNS_DIR = ROOT / "runs"
 CONFIG_PATH = ROOT / "config.yaml"
+
+
+_LOG_LOCK = threading.Lock()  # research agents log from several threads
 
 
 class StageError(Exception):
@@ -38,6 +42,9 @@ PATHS = {
     "map": "01_map.md",
     "angles": "02_angles.md",
     "angle": "03_angle.md",
+    "research_dir": "04_research",
+    "research_plan": "04_research/plan.md",
+    "topics_dir": "04_research/topics",
     "dossier": "04_dossier.md",
     "brief": "05_brief.md",
     "segments_dir": "06_segments",
@@ -120,8 +127,9 @@ class Run:
     def log(self, record: dict) -> None:
         """Append one record to log.jsonl. Never pass secrets in here."""
         record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), **record}
-        with open(self.path("log"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        with _LOG_LOCK, open(self.path("log"), "a", encoding="utf-8") as f:
+            f.write(line)
 
     def read_log(self) -> list[dict]:
         p = self.path("log")
@@ -228,8 +236,20 @@ def claim_numbers(text: str) -> list[int]:
     return sorted(nums)
 
 
+def claims_section(dossier: str) -> str:
+    """The '## Claims' section of a dossier (its ### subsections included), or the
+    whole text if there is no such heading. Citations elsewhere, such as '- [C2]'
+    in the overview, are not entries."""
+    m = re.search(r"^##\s+Claims\b.*$", dossier, re.M | re.I)
+    if not m:
+        return dossier
+    nxt = re.search(r"^##\s", dossier[m.end():], re.M)
+    return dossier[m.end(): m.end() + nxt.start() if nxt else None]
+
+
 def dossier_entries(dossier: str) -> dict[int, str]:
     """Map claim number -> the full entry text (claim, quote, source)."""
+    dossier = claims_section(dossier)
     marks = list(DOSSIER_ENTRY.finditer(dossier))
     out: dict[int, str] = {}
     for i, m in enumerate(marks):

@@ -19,7 +19,7 @@ def run(r: Run, cfg: dict):
                          style_guide=(PROMPTS_DIR / "style_guide.md").read_text(encoding="utf-8"),
                          target_words=ch["target_words"], target_minutes=ch["target_minutes"])
     res = llm.call(r, cfg, "baseline", messages=[{"role": "user", "content": prompt}],
-                   tools=research_tools(cfg), expected_searches=cfg["research"]["max_searches"])
+                   tools=research_tools(cfg), expected_searches=cfg["baseline"]["max_searches"])
     # The model narrates between searches; keep only the last complete <script> block.
     end = res.text.rfind("</script>")
     start = res.text.rfind("<script>", 0, end) if end != -1 else -1

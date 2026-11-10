@@ -9,7 +9,9 @@ Stages, in order ([Ian] marks where the pipeline stops for you):
     map <run>                    -> 01_map.md
     angles <run>                 -> 02_angles.md
                                  [Ian] write 03_angle.md
-    research <run>               -> 04_dossier.md   (web search + fetch)
+    research <run> [--plan-only] -> 04_research/ (plan, one agent per topic, critic rounds)
+                                    -> 04_dossier.md
+    research <run> --topics T3,T5   redo those topics (others are kept), rebuild with --force
     brief <run>                  -> 05_brief.md
                                  [Ian] edit 05_brief.md
     draft <run> [--segments 1-2] -> 06_segments/segNN.md
@@ -27,6 +29,7 @@ Stages, in order ([Ian] marks where the pipeline stops for you):
 Utilities:
 
     status <run>                 which outputs exist, the next step, and the cost so far
+    estimate [run]               forecast the cost of the rest of the run (or a whole run)
     ping                         one tiny call to each API (milestone 1)
     voices [--search TEXT]       list ElevenLabs models and voices on the account
     voicetest [--voices A,B,C]   narrate voice_test/sample.md in each candidate voice
@@ -64,6 +67,16 @@ def status(r: Run, cfg: dict) -> None:
         print(f"  [{'x' if exists else ' '}] {PATHS[key]}")
         if not exists and next_step is None:
             next_step = step
+    if r.path("research_plan").exists():
+        from stages.research import parse_topics, topic_paths
+        try:
+            topics = parse_topics(r.read("research_plan"))
+            have = [t for t in topics if topic_paths(r, t["id"])[0].exists()]
+            print(f"  research topics: {len(have)} of {len(topics)} researched"
+                  + (f" (missing: {', '.join(f'T{t['id']}' for t in topics if t not in have)})"
+                     if len(have) < len(topics) else ""))
+        except StageError as e:
+            print(f"  research plan: {e}")
     segs = sorted(r.path("segments_dir").glob("seg*.md")) if r.path("segments_dir").exists() else []
     if segs:
         print(f"  segments drafted: {', '.join(p.stem for p in segs)}")
@@ -86,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--voices", help="voicetest: comma-separated voice IDs")
     ap.add_argument("--search", help="voices: filter by name")
     ap.add_argument("--seed", type=int, help="report: seed for the claim sample")
+    ap.add_argument("--plan-only", action="store_true", help="research: write the plan and stop")
+    ap.add_argument("--topics", help="research: topics to redo, e.g. T3,T5")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -94,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
         if st == "ping":
             from stages import ping
             ping.run(Run.open(args.run or "ping", create=True, yes=args.yes), cfg)
+            return 0
+        if st == "estimate":
+            from stages import estimate
+            estimate.run(Run.open(args.run) if args.run else None, cfg)
             return 0
         if st == "voices":
             from stages.voicetest import list_voices
@@ -122,7 +141,10 @@ def main(argv: list[str] | None = None) -> int:
         elif st == "ingest":
             from stages import ingest
             ingest.run(r, cfg, source=args.source)
-        elif st in ("map", "angles", "research", "brief", "assemble", "edit", "revise",
+        elif st == "research":
+            from stages import research
+            research.run(r, cfg, plan_only=args.plan_only, topics=args.topics)
+        elif st in ("map", "angles", "brief", "assemble", "edit", "revise",
                     "baseline", "compare"):
             import importlib
             importlib.import_module(f"stages.{st}").run(r, cfg)

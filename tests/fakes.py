@@ -34,24 +34,32 @@ def all_text(kwargs) -> str:
     return "\n".join(parts)
 
 
-DOSSIER = """<dossier>
-# Dossier: Beauty as a ladder
+PAGE_TEXT = ("The Symposium, translated by Benjamin Jowett. He who has been instructed thus far in the "
+             "things of love, and who has learned to see the beautiful in due order and succession, will suddenly "
+             "perceive a nature of wondrous beauty.")
 
-## Sources
-- [S1] Symposium, Plato, trans. Benjamin Jowett. https://www.gutenberg.org/ebooks/1600 Primary.
+
+def findings(n):
+    return f"""Now writing my findings.
+<findings>
+# T{n}: Topic {n}
+
+## Summary
+Found things.
 
 ## Claims
+[T{n}.1] In the Symposium, Socrates attributes his teaching on love to Diotima of Mantinea. Source: Symposium, https://www.gutenberg.org/ebooks/1600
+[T{n}.2] "He who has been instructed thus far in the things of love, and who has learned to see the beautiful" Source: Symposium, https://www.gutenberg.org/ebooks/1600 Translator: Jowett.
+[T{n}.3] Scarry argues that beauty prompts a desire to replicate. Source: episode
+- [T{n}.4] "A sentence that appears on no page the agent ever fetched at all." Source: https://invented.example.com/page
+[T{n}.5] A claim with no source at all.
 
-### Diotima
-[C1] In the Symposium, Socrates attributes his teaching on love to Diotima of Mantinea. Source: S1, https://www.gutenberg.org/ebooks/1600
-[C2] "He who has been instructed thus far in the things of love..." Source: S1, https://www.gutenberg.org/ebooks/1600 Translator: Jowett.
-[C3] Scarry argues that beauty prompts a desire to replicate. Source: episode
-[C4] A claim citing a page nobody fetched. Source: https://invented.example.com/page
-[C5] A claim with no source at all.
+## Conflicts
+T{n}.1 and T{n}.3 do not conflict.
 
 ## Could not establish
-- Nothing.
-</dossier>"""
+- Where Diotima lived.
+</findings>"""
 
 
 def brief_text(n_segments=3):
@@ -76,7 +84,8 @@ class Responder:
     def __init__(self, n_segments=3):
         self.n_segments = n_segments
         self.calls: list[dict] = []
-        self.research_calls = 0
+        self.topic_calls: dict[int, int] = {}
+        self.critic_calls = 0
 
     def __call__(self, kwargs):
         self.calls.append(kwargs)
@@ -87,9 +96,14 @@ class Responder:
             return self.msg(kwargs, "## Episode in brief\nA map.")
         if "candidate angles" in t:
             return self.msg(kwargs, "### Angle 1: The ladder\n- **Thesis:** beauty teaches.")
-        if "write the whole dossier inside <dossier> tags" in t:
-            self.research_calls += 1
-            if self.research_calls == 1:  # first request pauses mid tool loop
+        if "You are planning the research" in t:
+            return self.msg(kwargs, "# Research plan: Beauty as a ladder\n\n## Overview\nTwo topics.\n\n"
+                            "## T1: Diotima\n- Goal: the ladder.\n\n## T2: Scarry\n- Goal: replication.")
+        m = re.search(r"<topic>\s*## T(\d+)", t)
+        if m and "You are one of several research agents" in t:
+            n = int(m.group(1))
+            self.topic_calls[n] = self.topic_calls.get(n, 0) + 1
+            if n == 1 and self.topic_calls[n] == 1:  # first request pauses mid tool loop
                 return self.msg(kwargs, None, stop="pause_turn", content=[
                     text_block("I'll start with the primary text."),
                     NS(type="server_tool_use", id="s1", name="web_search", input={"query": "symposium"}),
@@ -97,7 +111,21 @@ class Responder:
                        content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600",
                                    title="Symposium")]),
                 ], u=usage(searches=4))
-            return self.msg(kwargs, None, content=[text_block("Now writing.\n\n" + DOSSIER)], u=usage(searches=2))
+            return self.msg(kwargs, None, content=[
+                NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
+                    type="web_fetch_result", url="https://www.gutenberg.org/ebooks/1600",
+                    content=NS(type="document", title="Symposium",
+                               source=NS(type="text", media_type="text/plain", data=PAGE_TEXT)))),
+                text_block(findings(n))], u=usage(searches=2, fetches=1))
+        if "You are the research editor" in t:
+            self.critic_calls += 1
+            nxt = int(re.search(r"numbered from T(\d+)", t).group(1))
+            if self.critic_calls == 1:
+                return self.msg(kwargs, f"## Assessment\nT1.5 has no source.\n\n## T{nxt}: Sources for T1.5\n"
+                                "- Goal: find a source.\n- Why: T1.5.")
+            return self.msg(kwargs, "## Assessment\nGood.\n\nNo follow-up research needed.")
+        if "You are writing the guide at the top of a research dossier" in t:
+            return self.msg(kwargs, "## Overview\nThe ladder [C1].\n\n## Strongest material\n- [C2]")
         if "Write the brief" in t:
             return self.msg(kwargs, brief_text(self.n_segments))
         m = re.search(r"Write segment (\d+) of", t)
@@ -130,6 +158,10 @@ class _Stream:
 
     def __exit__(self, *a):
         return False
+
+    def __iter__(self):
+        for block in self.message.content:
+            yield NS(type="content_block_stop", content_block=block)
 
     def get_final_message(self):
         return self.message

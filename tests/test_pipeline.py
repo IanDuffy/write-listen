@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from fakes import all_text
 
 from stages import (angles, assemble, baseline, brief, compare, draft, edit, map as map_stage, narrate,
                     report, research, revise)
@@ -18,24 +19,48 @@ def ingested(run):
 
 def test_full_run(ingested, cfg, responder, fake_tts):
     r = ingested
+    r.yes = True  # research's whole-stage estimate is over the $5 guard
     map_stage.run(r, cfg)
     angles.run(r, cfg)
     with pytest.raises(StageError, match="03_angle.md"):
         research.run(r, cfg)  # stops at the [Ian] checkpoint
     r.path("angle").write_text("Angle 1, the ladder. Notes: more Weil, please.\n")
 
-    # Research: the first request pauses mid tool loop, the second finishes.
+    # Research: plan, agents in parallel, critic rounds, merge.
     research.run(r, cfg)
+    plan = r.path("research_plan").read_text()
+    assert "## T3: Sources for T1.5" in plan  # the critic's follow-up joined the plan
+    assert {p.name for p in r.path("topics_dir").glob("T*.md")} == {"T01.md", "T02.md", "T03.md"}
+    assert responder.critic_calls == 2  # round 2 added a topic; round 3 found nothing more
+
     dossier = r.path("dossier").read_text()
-    assert dossier.startswith("# Dossier")
-    assert "Now writing." not in dossier and "<dossier>" not in dossier
-    assert "https://invented.example.com/page" in dossier.split("## Source check")[1]
-    assert "Claims with no source URL: C5" in dossier  # C3 cites the episode, which is allowed
-    first, second = responder.calls[-2:]
-    assert second["messages"][-1]["role"] == "assistant"  # paused turn sent back
-    assert second["tools"] == first["tools"]  # tools must not change between continuations
-    assert first["cache_control"] == {"type": "ephemeral"}
-    assert first["fallbacks"] == "default" and first["betas"] == ["server-side-fallback-2026-07-01"]
+    assert dossier.startswith("# Dossier: Beauty as a ladder")
+    assert "## Overview" in dossier and "Now writing" not in dossier
+    assert "[C1] In the Symposium" in dossier and "[C15]" in dossier and "[C16]" not in dossier
+    assert "C1 and C3 do not conflict" in dossier  # cross references renumbered
+    check = dossier.split("## Source check")[1]
+    assert "https://invented.example.com/page" in check
+    assert "Claims with no source URL: C5, C10, C15" in check
+    assert "Quotes matched word for word against the fetched page: 3" in check
+    assert "NOT found in any fetched page" in check and "C4, C9, C14" in check
+
+    topic_calls = [c for c in responder.calls if "You are one of several research agents" in all_text(c)]
+    assert all(c["model"] == cfg["models"]["researcher"] for c in topic_calls)
+    t1 = [c for c in topic_calls if "<topic>\n## T1:" in all_text(c)]
+    assert len(t1) == 2 and t1[1]["messages"][-1]["role"] == "assistant"  # paused turn resumed
+    assert t1[1]["tools"] == t1[0]["tools"]  # tools must not change between continuations
+    assert t1[0]["cache_control"] == {"type": "ephemeral"}
+    assert t1[0]["fallbacks"] == "default" and t1[0]["betas"] == ["server-side-fallback-2026-07-01"]
+
+    # Re-running keeps paid-for topics.
+    n_calls = len(responder.calls)
+    with pytest.raises(StageError, match="--force"):
+        research.run(r, cfg)
+    r.force = True
+    research.run(r, cfg)
+    r.force = False
+    new_calls = responder.calls[n_calls:]
+    assert not any("You are one of several research agents" in all_text(c) for c in new_calls)
 
     brief.run(r, cfg)
 
@@ -87,11 +112,11 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     report.run(r, cfg, seed=1)
     rep = r.path("report").read_text()
     assert "## Spot-check" in rep and "Diotima of Mantinea" in rep
-    assert "| narrate |" in rep and "| research |" in rep
+    assert "| narrate |" in rep and "| research_topic |" in rep and "| research_critic |" in rep
     assert "0:00" not in rep.split("## Length")[1].split("## Cost")[0]
 
     log = [json.loads(l) for l in r.path("log").read_text().splitlines()]
-    assert {"map", "angles", "research", "brief", "draft", "edit", "revise", "baseline",
+    assert {"map", "angles", "research_plan", "research_topic", "research_critic", "research_synthesis", "brief", "draft", "edit", "revise", "baseline",
             "narrate", "narrate_pilot", "narrate_baseline"} <= {rec["stage"] for rec in log}
     assert all("cost_usd" in rec for rec in log)
     assert not any("sk-" in json.dumps(rec) for rec in log)

@@ -170,6 +170,18 @@ def _text_of(content) -> str:
     return "".join(b.text for b in content if getattr(b, "type", None) == "text")
 
 
+def _show_tool_use(label: str, block) -> None:
+    if getattr(block, "type", None) != "server_tool_use":
+        return
+    inp = getattr(block, "input", None) or {}
+    if not isinstance(inp, dict):
+        return
+    if block.name == "web_search" and inp.get("query"):
+        print(f"  [{label}] search: {inp['query']}", flush=True)
+    elif block.name == "web_fetch" and inp.get("url"):
+        print(f"  [{label}] read: {inp['url']}", flush=True)
+
+
 def _system_blocks(system: str | list | None, cache: bool):
     if system is None:
         return None
@@ -196,11 +208,15 @@ def call(
     label: str | None = None,
     expected_output_tokens: int | None = None,
     expected_searches: int = 0,
+    preapproved: bool = False,
 ) -> Result:
     """Send one request (plus any pause_turn continuations) and log it.
 
-    `role` picks the model from config: "writer" (Opus) or "cheap" (Haiku).
-    Stage settings (max_tokens, effort) come from config unless overridden.
+    `role` picks the model from config: "writer" (Opus), "researcher" (Sonnet)
+    or "cheap" (Haiku). Stage settings (max_tokens, effort, max_continuations)
+    come from config unless overridden. `preapproved` skips the cost guard,
+    for stages that guard their whole budget up front (research runs agents in
+    parallel threads, where a prompt for input would be lost).
     """
     model = cfg["models"][role]
     st = cfg["stages"].get(stage, {})
@@ -213,7 +229,8 @@ def call(
     est = estimate_call(cfg, model, prompt_tokens,
                         expected_output_tokens or st.get("expected_output_tokens", max_tokens),
                         expected_searches)
-    guard(run, cfg, f"{label or stage} ({model})", est)
+    if not preapproved:
+        guard(run, cfg, f"{label or stage} ({model})", est)
 
     import anthropic
     import httpx2
@@ -235,7 +252,7 @@ def call(
     if effort:
         kwargs["output_config"] = {"effort": effort}
 
-    fallbacks = cfg.get("refusal_fallbacks") if role == "writer" else None
+    fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher") else None
     if fallbacks:
         kwargs["fallbacks"] = fallbacks
         kwargs["betas"] = [cfg["refusal_fallbacks_beta"]]
@@ -245,7 +262,7 @@ def call(
 
     total = Usage()
     all_content: list = []
-    max_continuations = cfg.get("max_pause_continuations", 8)
+    max_continuations = st.get("max_continuations", cfg.get("max_pause_continuations", 8))
     message = None
     overrun_approved = False
     request_id = None
@@ -253,6 +270,11 @@ def call(
         t0 = time.monotonic()
         try:
             with stream_fn(**kwargs) as stream:
+                if tools:
+                    # Show each search and fetch as it happens: tool loops run for minutes.
+                    for event in stream:
+                        if getattr(event, "type", None) == "content_block_stop":
+                            _show_tool_use(label or stage, getattr(event, "content_block", None))
                 message = stream.get_final_message()
                 request_id = getattr(stream, "request_id", None)
         except anthropic.APIStatusError as e:
@@ -308,7 +330,7 @@ def call(
             next_input = u.input_tokens + u.cache_read + u.cache_write_5m + u.cache_write_1h + u.output_tokens
             projected = total.cost_usd + token_cost(cfg, model, input_tokens=next_input,
                                                     output_tokens=st.get("expected_output_tokens", 8000))
-            if not overrun_approved and projected > cfg["cost_guard_usd"]:
+            if not preapproved and not overrun_approved and projected > cfg["cost_guard_usd"]:
                 guard(run, cfg, f"{label or stage} after {attempt + 1} continuation(s), "
                       f"${total.cost_usd:.2f} spent so far,", projected)
                 overrun_approved = True

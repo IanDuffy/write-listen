@@ -3,6 +3,7 @@
 
 models:
   writer: claude-opus-5-5     # map, angles, research, brief, draft, edit, revise, baseline
+  researcher: claude-sonnet-5-5  # the parallel deep-research agents
   cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
 
 # On a safety-classifier decline, the API re-runs the same request on a fallback
@@ -21,7 +22,10 @@ stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
   map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
   angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
-  research: {max_tokens: 64000, effort: high, expected_output_tokens: 40000, expected_input_tokens: 300000}
+  research_plan:      {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  research_topic:     {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 400000, max_continuations: 10}
+  research_critic:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  research_synthesis: {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   brief:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   edit:     {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
@@ -35,10 +39,23 @@ chapter:
   max_segments: 8
   segment_words: [750, 800]
 
+# Deep research: Opus plans topics, one Sonnet agent researches each topic in
+# parallel, Opus critiques and assigns follow-ups, then the findings are merged.
 research:
+  min_topics: 5
+  max_topics: 8
+  searches_per_topic: 25      # each agent's budget (applied per request; see README)
+  fetches_per_topic: 25
+  parallel_agents: 4          # agents running at once
+  rounds: 3                   # 1 = no critic; 3 = up to two rounds of follow-ups
+  max_followups: 4            # topics the critic may add per round
+  max_usd: 40.00              # no new follow-up round starts past this spend
+  max_fetch_tokens: 20000     # cap on each fetched page's size in context
+
+# The single-prompt baseline: one agent, the build doc's 30-search cap.
+baseline:
   max_searches: 30
   max_fetches: 30
-  max_fetch_tokens: 20000     # cap on each fetched page's size in context
 
 tools:
   web_search: web_search_20260209
