@@ -205,8 +205,21 @@ def _write_up(r: Run, cfg: dict, label: str, prompt: str, notes: str, got: dict,
                     preapproved=True, before_request=check_spend, log_extra=extra)
 
 
+def pending_path(r: Run, rid: str, followup: bool = False) -> Path:
+    """Where a tool loop's material waits for its write-up: Lnn.pending.json, Lnn.followup.pending.json."""
+    md, _ = row_paths(r, rid, followup)
+    return md.with_name(md.stem + ".pending.json")
+
+
+def has_pending(r: Run, row: dict, followup: bool = False) -> bool:
+    p = pending_path(r, row["id"], followup)
+    return p.exists() and json.loads(p.read_text(encoding="utf-8")).get("fingerprint") == ledger.fingerprint(row)
+
+
 def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
               followup: dict | None = None, check_spend=None) -> dict:
+    """Research one row. A row's files (Lnn.md and Lnn.sources.json) change only when new findings
+    have been written, so a failed redo leaves the old findings, and their sources, as they were."""
     if check_spend:
         check_spend()  # a queued agent does not start once the spend cap is reached
     searches, fetches = ledger.budget(cfg, row, followup=bool(followup))
@@ -215,10 +228,11 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
     extra = {"row": row["id"]}
     prompt = agent_prompt(cfg, row, led, angle, episode_map, followup)
     md, src = row_paths(r, row["id"], followup=bool(followup))
+    pending = pending_path(r, row["id"], followup=bool(followup))
     md.parent.mkdir(parents=True, exist_ok=True)
-    saved = json.loads(src.read_text(encoding="utf-8")) if src.exists() and not md.exists() else {}
-    if saved.get("pending_writeup") and saved.get("fingerprint") == ledger.fingerprint(row):
+    if has_pending(r, row, followup=bool(followup)):
         # An earlier run paid for the tool loop and then failed in the write-up: write up again only.
+        saved = json.loads(pending.read_text(encoding="utf-8"))
         print(f"  {label}: writing up the research an earlier run paid for")
         got = {"urls": saved.get("urls", {}), "fetched": saved.get("fetched", [])}
         n_search, n_fetch, notes, cost = (saved.get("searches", 0), saved.get("fetches", 0),
@@ -239,15 +253,12 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
     record = {**got, "row": row["id"], "followup": bool(followup), "fingerprint": ledger.fingerprint(row),
               "budget": {"searches": searches, "fetches": fetches}, "searches": n_search, "fetches": n_fetch,
               "written_up": paused, "cost_usd": round(cost, 4)}
-    if paused:  # save what the loop found before the write-up, so a failed write-up costs only itself
-        src.write_text(json.dumps({**record, "pending_writeup": True, "notes": notes},
-                                  ensure_ascii=False, indent=1), encoding="utf-8")
+    text = notes
+    if paused:  # save what the loop found first, so a failed write-up costs only itself
+        pending.write_text(json.dumps({**record, "notes": notes}, ensure_ascii=False, indent=1), encoding="utf-8")
         w = _write_up(r, cfg, label, prompt, notes, got, extra, check_spend)
         text, cost = w.text, cost + w.usage.cost_usd
         record["cost_usd"] = round(cost, 4)
-    else:
-        text = notes
-        src.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
     try:
         findings = extract_tagged(text, "research")
     except StageError:
@@ -257,8 +268,10 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
                          f"{partial.relative_to(r.root)}" + ("; the next run writes it up again from the saved "
                                                              "material" if paused else "")) from None
     md.write_text(findings + "\n", encoding="utf-8")
-    if paused:  # the write-up succeeded: the saved material no longer needs one
-        src.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    src.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+    pending.unlink(missing_ok=True)
+    if not followup:  # new first-round findings: an old follow-up answered the old findings' gap
+        _set_aside_followup(r, row["id"])
     entries = parse_entries(findings)
     kinds = Counter(e["tags"]["kind"] or "untagged" for e in entries)
     print(f"  {label} done: {len(entries)} entries ({', '.join(f'{k} {v}' for k, v in kinds.items()) or 'none'}), "
@@ -344,10 +357,16 @@ def _norm(url: str) -> str:
     return url.rstrip("/").lower()
 
 
+SUPERSCRIPTS = str.maketrans({c: " " for c in "⁰¹²³⁴⁵⁶⁷⁸⁹"})
+
+
 def _norm_text(s: str) -> str:
-    s = s.lower().replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    """Lowercase words for matching quotes against pages: punctuation, underscores (emphasis),
+    footnote numbers glued to a word ('beautiful12') and superscripts are dropped."""
+    s = s.lower().translate(SUPERSCRIPTS).replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     s = re.sub(r"(?<!\w)'|'(?!\w)", " ", s)  # a quote mark, not an apostrophe inside a word
-    return " ".join(re.sub(r"[^\w']+", " ", s).split())
+    s = re.sub(r"(?<=[^\W\d])\d+\b", "", s)  # a footnote number glued to a word ('love2', '_love_2')
+    return " ".join(re.sub(r"[^\w']+|_", " ", s).split())
 
 
 ELLIPSIS = re.compile(r"\s*(?:\.\s?\.\s?\.|…)\s*")
@@ -633,8 +652,8 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
         if unknown:
             raise StageError(f"--rows {rows!r}: not active rows in the ledger: {', '.join(sorted(unknown))}")
         todo = [x for x in act if x["id"] in redo]
-    else:
-        todo = [x for x in act if not row_paths(r, x["id"])[0].exists()]
+    else:  # rows with no findings yet, or whose paid tool loop still waits for its write-up
+        todo = [x for x in act if not row_paths(r, x["id"])[0].exists() or has_pending(r, x)]
     stale = [x["id"] for x in act if x not in todo and row_paths(r, x["id"])[0].exists() and _stale(r, x)]
     if stale:
         print(f"  warning: {', '.join(stale)} changed in ledger.json after being researched; their findings "
@@ -658,9 +677,6 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
     if todo:
         check_search_cap(r, cfg, planned, f"Researching {len(todo)} row(s)")
         llm.guard(r, cfg, f"research ({len(todo)} agents)", est)
-        for x in todo:
-            if row_paths(r, x["id"])[0].exists():
-                _set_aside_followup(r, x["id"])
         errors = run_agents(r, cfg, [(x, None) for x in todo], led, angle, episode_map, spend_checker(r, cfg))
         if errors:
             raise StageError("some research agents failed; their rows will be researched on the next run:\n  "

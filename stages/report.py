@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .common import Run, dossier_entries, entry_id, entry_numbers, spoken_text, word_count
 
-MARKERS = re.compile(r"(?:\s*\[D\d+(?:[ \t]*[,;\-–—][ \t]*D?\d+)*\])+")
+MARKERS = re.compile(r"(?:\s*\[D\d+[^\[\]\n]{0,40}\])+")
 
 
 def duration_seconds(mp3: Path) -> float | None:

@@ -80,13 +80,15 @@ def apply(led: dict, data: dict, dossier: str, cfg: dict, seen_urls: set[str] | 
 
     def tier(n: int) -> int | None:
         """The entry's tier for the code check: none for a connection, an episode entry, or an entry
-        citing only URLs no agent retrieved; no better than its source's domain allows."""
+        with no URL that an agent retrieved; no better than its retrieved sources' domains allow."""
         t = tags[n]
         if t["kind"] == "connection" or not isinstance(t["tier"], int):
             return None
         urls = [u.rstrip(".,;:") for u in research.URL_IN_TEXT.findall(entries[n])]
-        if seen_n is not None and urls and not any(research._norm(u) in seen_n for u in urls):
-            return None
+        if seen_n is not None:
+            urls = [u for u in urls if research._norm(u) in seen_n]
+            if not urls:  # no source URL at all, or only URLs no agent retrieved
+                return None
         dt = research.domain_tier(cfg, urls) if urls else None
         return max(t["tier"], dt[0]) if dt else t["tier"]
 
@@ -165,6 +167,17 @@ def run(r: Run, cfg: dict):
     if r.path("ledger_update").exists() and not r.force:
         raise StageError("Output already exists: 04_research/ledger_update.md. Use --force to judge again "
                          "(a row's follow-up is never repeated).")
+    if not r.force:  # the dossier must answer the ledger as it stands
+        problems = []
+        for row in ledger.active(led):
+            if not research.row_paths(r, row["id"])[0].exists() or research.has_pending(r, row):
+                problems.append(f"{row['id']} has no research yet")
+            elif research._stale(r, row):
+                problems.append(f"{row['id']} changed in ledger.json after it was researched")
+        if problems:
+            ids = ",".join(p.split()[0] for p in problems)
+            raise StageError("; ".join(problems) + f". Research it first: python cli.py research {r.name} "
+                             f"--rows {ids} --force (or use ledger-update --force to judge as it is).")
     edited = research.dossier_edited(r, dossier)
     if edited is None:  # no record of what the pipeline wrote: compare with a rebuild
         edited = research.build_dossier(r, cfg, led, transcript) != dossier

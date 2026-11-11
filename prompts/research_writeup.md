@@ -31,6 +31,6 @@ Everything your searches and fetches returned:
 {{material}}
 </material>
 
-Cite only the URLs listed above. Mark a quote "verbatim: yes" only if its words are on one of the fetched pages above, copied character for character; anything else is a paraphrase, "verbatim: no", without quotation marks. Report what you could not establish in the Not found section.
+Cite only the URLs listed above. Mark a quote "verbatim: yes" only if its words are on one of the fetched pages above, copied character for character, or, with "Source: episode", copied word for word from the map's short quotable lines in your instructions. Anything else is a paraphrase, "verbatim: no", without quotation marks. Report what you could not establish in the Not found section.
 
 Write the <research> block now, in the shape your instructions give.

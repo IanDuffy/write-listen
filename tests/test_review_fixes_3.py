@@ -49,11 +49,63 @@ def test_failed_write_up_is_retried_without_buying_the_tool_loop_again(ledgered,
     monkeypatch.setattr(llm, "_client", FakeAnthropic(broken_writeup))
     with pytest.raises(StageError, match="no <research> block"):
         research.run(r, cfg, rows="L01")  # L01 pauses with its budget spent
-    assert json.loads(row_paths(r, "L01")[1].read_text())["pending_writeup"] is True
+    assert research.pending_path(r, "L01").exists() and not row_paths(r, "L01")[1].exists()
     monkeypatch.setattr(llm, "_client", FakeAnthropic(real))
     research.run(r, cfg, rows="L01")
     assert resp.row_calls["L01"] == 1  # the tool loop ran once; only the write-up was repeated
-    assert row_paths(r, "L01")[0].exists()
+    assert row_paths(r, "L01")[0].exists() and not research.pending_path(r, "L01").exists()
+
+
+def _broken_writeups(resp):
+    real = resp.__call__
+
+    def respond(kwargs):
+        if "your search and fetch budget is now spent" in all_text(kwargs):
+            from types import SimpleNamespace as NS
+            return NS(content=[NS(type="text", text="no block", citations=None)], stop_reason="end_turn",
+                      usage=__import__("fakes").usage(), model=kwargs["model"], stop_details=None)
+        return real(kwargs)
+    return respond
+
+
+def test_failed_redo_leaves_old_findings_and_follow_up_alone(ledgered, cfg, monkeypatch):
+    r, resp = ledgered
+    research.run(r, cfg)
+    ledger_update.run(r, cfg)
+    old_md, old_src = (p.read_text() for p in row_paths(r, "L02"))
+    resp.pause_at = {"L02": (3, 1)}  # the redo pauses part-way, then its write-up fails
+    resp.row_calls.pop("L02")
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(_broken_writeups(resp)))
+    r.force = True
+    with pytest.raises(StageError, match="writes it up again"):
+        research.run(r, cfg, rows="L02")
+    assert [p.read_text() for p in row_paths(r, "L02")] == [old_md, old_src]  # untouched
+    assert row_paths(r, "L02", followup=True)[0].exists()  # the paid follow-up is not set aside
+    # A plain re-run picks up the pending write-up, without buying the tool loop again.
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(resp))
+    r.force = True
+    research.run(r, cfg)
+    assert resp.row_calls["L02"] == 1 and not research.pending_path(r, "L02").exists()
+    src = json.loads(row_paths(r, "L02")[1].read_text())
+    assert src["written_up"] is True and src["searches"] == 3  # the redo's record, after its write-up
+    assert not row_paths(r, "L02", followup=True)[0].exists()  # set aside now the redo has landed
+
+
+def test_ledger_update_stops_for_rows_research_has_not_covered(ledgered, cfg):
+    r, resp = ledgered
+    research.run(r, cfg)
+    led = json.loads(r.path("ledger").read_text())
+    led["rows"].append({"id": "L04", "rank": 4, "idea": "A new idea.", "type": "missing",
+                        "research_question": "Q?", "tier_needed": 2})
+    r.path("ledger").write_text(json.dumps(led))
+    with pytest.raises(StageError, match="L04 has no research yet"):
+        ledger_update.run(r, cfg)
+    assert resp.judge_calls == 0 and "L04 follow-up" not in resp.row_calls
+    led["rows"].pop()
+    led["rows"][0]["research_question"] = "A rewritten question."
+    r.path("ledger").write_text(json.dumps(led))
+    with pytest.raises(StageError, match="L01 changed in ledger.json"):
+        ledger_update.run(r, cfg)
 
 
 def _write(r, rid, entries, followup=False, fetched=None, fingerprint=None):
@@ -210,10 +262,21 @@ def test_code_quote_check_reads_only_the_quoted_passage():
     assert coverage.unbacked_quotes(script, dossier) == [(1, "translated by Benjamin Jowett for Oxford")]
 
 
-def test_unclosed_marker_does_not_swallow_narration():
-    s = "Weil said so. [D3 And Plato wrote [D04] more. [D05, D06]"
-    assert spoken_text(s) == "Weil said so. [D3 And Plato wrote more."
+def test_unclosed_marker_does_not_swallow_narration_and_stops_narration(run, cfg, fake_tts):
+    s = "Weil said so. [D3 And Plato wrote [D04] more. [D05, D06] Then [D7 and D8]."
+    assert spoken_text(s) == "Weil said so. [D3 And Plato wrote more. Then."
     assert claim_sentences("One. [D03] Two [D4-D6]")[1][1] == [4, 5, 6]
+    from stages import narrate
+    run.path("script_final").write_text("<!-- seg01 -->\n\nWeil said so. [D3 And Plato wrote more.\n")
+    with pytest.raises(StageError, match="still has a dossier marker"):
+        narrate.run(run, cfg)
+    assert not fake_tts  # nothing was paid for
+
+
+def test_quote_check_tolerates_footnotes_and_emphasis():
+    page = [_norm_text("He who has been instructed thus far in the things of love\u00b2 and who has learned "
+                       "to see the _beautiful_12 in due order")]
+    assert quote_found('"the things of love and who has learned to see the beautiful in due order"', page)
 
 
 def test_dossier_sublist_with_notes():

@@ -153,6 +153,10 @@ class Responder:
             searched = NS(type="web_search_tool_result", tool_use_id="s1",
                           content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600",
                                       title="Symposium")])
+            if self.pause_at and key == rid and self.row_calls[key] == 1 and rid in self.pause_at:
+                s_used, f_used = self.pause_at[rid]  # pauses part-way through its budget
+                return self.msg(kwargs, None, stop="pause_turn", content=[searched, fetched],
+                                u=usage(searches=s_used, fetches=f_used))
             if rid == "L01" and key == rid and self.row_calls[key] == 1:
                 # Pauses with its whole budget spent: must be written up, not resumed.
                 return self.msg(kwargs, None, stop="pause_turn", content=[
@@ -165,10 +169,6 @@ class Responder:
                 return self.msg(kwargs, None, stop="pause_turn", content=[
                     NS(type="server_tool_use", id="s1", name="web_search", input={"query": "weil"})],
                     u=usage(searches=0))
-            if self.pause_at and key == rid and self.row_calls[key] == 1 and rid in self.pause_at:
-                s_used, f_used = self.pause_at[rid]  # pauses part-way through its budget
-                return self.msg(kwargs, None, stop="pause_turn", content=[searched, fetched],
-                                u=usage(searches=s_used, fetches=f_used))
             if key.endswith("follow-up"):
                 start = int(re.search(r"\[" + rid + r"\.(\d+)\]", t.split("</earlier>")[-1]).group(1))
                 text = row_findings(rid, start=start, kind="followup")

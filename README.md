@@ -162,8 +162,12 @@ searches used per row.
 Findings are paid for, so they are kept: `research` without `--rows` only
 researches rows that have no findings yet. `--rows L01,L03` redoes those
 rows. `--force` allows the dossier to be rebuilt. A row whose idea or question
-changed in `ledger.json` after it was researched is flagged; redoing a row
-moves its old follow-up to `04_research/_superseded/`. The dossier's hash is
+changed in `ledger.json` after it was researched is flagged, and
+`ledger-update` will not judge until every active row's research matches the
+ledger. A row's files change only when its new findings are written: once a
+redo lands, the row's old follow-up moves to `04_research/_superseded/`. A
+write-up that fails keeps its tool loop's material in `Lnn.pending.json`, and
+the next `research` run writes it up without paying for the loop again. The dossier's hash is
 kept in `04_research/dossier.sha256`, and `ledger-update` stops before any
 paid call if the dossier was edited by hand (its follow-up round rebuilds it).
 Every call is logged with its row id. Spend in one invocation stops at `research.max_usd`.

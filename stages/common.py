@@ -185,9 +185,10 @@ def parse_json(run: "Run", text: str, label: str) -> dict:
 # --- text helpers ----------------------------------------------------------
 
 SEGMENT_MARKER = re.compile(r"^<!--\s*seg(\d+)\s*-->\s*$", re.M)
-# A dossier marker after a sentence, on one line: [D12], [D03, D07], [D3-D5], [D3; D7]. Only marker syntax
-# is matched, so a '[D12' left unclosed never swallows the narration that follows it.
-MARKER = re.compile(r"[ \t]*\[D\d+(?:[ \t]*[,;\-–—][ \t]*D?\d+)*\]")
+# A dossier marker after a sentence: [D12], [D03, D07], [D3-D5], [D3; D7], [D3 and D7]. It stays on one
+# line and holds no other bracket, so a '[D12' left unclosed never swallows the narration after it.
+MARKER = re.compile(r"[ \t]*\[D\d+[^\[\]\n]{0,40}\]")
+LEFTOVER_MARKER = re.compile(r"\[D\d")
 
 
 def word_count(text: str) -> int:

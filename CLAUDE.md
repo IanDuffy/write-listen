@@ -88,7 +88,8 @@ real key), so locally it must be in `.env`.
   so no agent passes its budget and the 40-search cap holds. Not resuming also
   avoids an extra user message after a paused turn (which the API does not
   allow when the turn ends on a pending tool call). The tool loop's material is
-  saved before the write-up, so a failed write-up is retried alone.
+  saved to `Lnn.pending.json` before the write-up, so a failed write-up is
+  retried alone; `Lnn.md` and `Lnn.sources.json` change only on success.
 - **Merge by code.** Entries are renumbered `D01`... with tags
   `(row(s), kind, tier N, verbatim: yes|no, verdict)`; exact duplicates across
   agents become one entry with both rows. No model rewrites an entry. Agents
@@ -104,7 +105,8 @@ real key), so locally it must be in `.env`.
   claim), else it becomes partial. For that check an entry counts at no better
   than its domain allows, and not at all if it cites only URLs no agent
   retrieved. 04b stops before any paid call if `04_dossier.md` no longer matches
-  `04_research/dossier.sha256` (a hand edit its rebuild would lose). 07b's quote report adds a mechanical check.
+  `04_research/dossier.sha256` (a hand edit its rebuild would lose), or if an
+  active row has no research or changed in `ledger.json` since it was researched. 07b's quote report adds a mechanical check.
   The brief stage warns about rows assigned to no segment, and appends every
   corrected fact by code (`prompts/brief_corrections.md`).
 - **Structured output** (`output_config.format`, a JSON schema in each stage

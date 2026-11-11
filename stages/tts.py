@@ -16,7 +16,7 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 
-from .common import ROOT, Run, StageError, spoken_text
+from .common import LEFTOVER_MARKER, ROOT, Run, StageError, spoken_text
 from .llm import guard
 
 # --- provider ---------------------------------------------------------------
@@ -254,6 +254,9 @@ def narrate_segments(r: Run, cfg: dict, segments: list[tuple[int, str]], out_mp3
     plan: list[tuple[int, str]] = []  # (segment, chunk text)
     for n, body in segments:
         clean = apply_pronunciations(spoken_text(body), ncfg.get("pronunciations") or {})
+        if m := LEFTOVER_MARKER.search(clean):  # e.g. an unclosed '[D12': stop before paying to read it aloud
+            raise StageError(f"Segment {n} still has a dossier marker after stripping, near "
+                             f"{clean[max(0, m.start() - 40):m.start() + 20]!r}. Fix it in the script first.")
         for c in chunk_paragraphs(clean, max_chars):
             plan.append((n, c))
     if not plan:
