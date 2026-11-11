@@ -2,8 +2,9 @@
 
 A small local pipeline that turns one podcast transcript into one researched,
 edited, narrated 40-minute audio chapter, plus a single-prompt baseline to
-compare it against in a blind listen. The spec is the build doc
-(*Build Doc: Commissioned Audio Chapter MVP*, Nov 9, 2026).
+compare it against in a blind listen. The spec is the build doc,
+[`docs/build-doc.md`](docs/build-doc.md). Agents: start with [`CLAUDE.md`](CLAUDE.md)
+for status, decisions and next steps.
 
 Each stage reads files from a run folder and writes one new file, so any
 output can be read and edited by hand before the next stage runs. A stage
