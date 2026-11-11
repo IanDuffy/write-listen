@@ -33,12 +33,13 @@ Number the entries [{{row_id}}.{{start}}], then the next number, and so on, each
 
 The tags in parentheses come right after the number:
 - The kind first: claim, material, quote, tension or connection.
-- Then the source's tier, 1 to 4, from the table above, or "tier episode" for something taken from the episode. Every entry except a connection has one. Judge the tier by the source itself, not by where you found it: a Gutenberg text of Plato is tier 1; a blog post about Plato is tier 4.
-- Quotes only: "verbatim: yes" if you copied the words character for character from a page you fetched in this research, and the entry names that page's URL. Anything you recall, reconstruct, translate yourself or take from a search snippet is "verbatim: no", and is written as a paraphrase, without quotation marks. Every verbatim: yes quote is checked word for word against the page you fetched; one that is not on the page is downgraded, and the script cannot use it.
+- Then the source's tier, 1 to 4, from the table above, or "tier episode" for something taken from the episode. Every entry except a connection has one. The tier is that of the page you cite: a Gutenberg text of Plato is tier 1; a passage of Plato quoted in an encyclopedia entry is tier 2, the encyclopedia's tier; a blog post about Plato is tier 4. To claim tier 1, fetch and cite the primary text itself.
+- Quotes only: "verbatim: yes" if you copied the words character for character from a page you fetched in this research, and the entry names that page's URL; or, for the episode, if you copied a line word for word from the map's short quotable lines, with "Source: episode" (it is checked against the transcript). Anything you recall, reconstruct, translate yourself or take from a search snippet is "verbatim: no", and is written as a paraphrase, without quotation marks. Every verbatim: yes quote is checked word for word against its page; one that is not on it is downgraded, and the script cannot use it.
+- Put only the quoted words in quotation marks. Give titles of works in plain text, never in quotation marks, so the check reads only the quote.
 - A connection names the other row or rows it links to, and needs no tier or source.
 
 Rules:
 - Cite only URLs that a search returned or that you fetched. Never write a URL from memory.
 - One fact per claim, small enough to check in a minute. Quotes under 40 words, in straight double quotation marks.
-- Something only the episode says ends "Source: episode". You have the map, not the transcript, so an episode quote must repeat a line from the map's short quotable lines word for word.
+- Something only the episode says ends "Source: episode".
 - If sources disagree, give each its own entry, and say in the second that it conflicts with the first, citing it by number.

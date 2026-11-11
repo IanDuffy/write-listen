@@ -46,8 +46,9 @@ the live Claude API.
 4. `ledger beauty-scarry`. Stop: Ian reviews `ledger.md` and edits `ledger.json`
    (add, cut, re-rank, park, rewrite rows); `ledger beauty-scarry` again re-checks it.
 5. `research beauty-scarry --plan-only` (budgets and estimate), then
-   `research beauty-scarry --rows L01`. Stop: show Ian `04_research/L01.md`
-   before running the rest (build order step 3 of the add-on).
+   `research beauty-scarry --rows L01` (the rank-1 row; the `ledger` stage
+   prints its id if Ian re-ranked). Stop: show Ian `04_research/L01.md` before
+   running the rest (build order step 3 of the add-on).
 6. `research beauty-scarry` (the other rows; the estimate is over $5, so it
    asks), then `ledger-update beauty-scarry`, then `brief`. Stop: Ian edits
    `05_brief.md`.
@@ -81,12 +82,13 @@ real key), so locally it must be in `.env`.
   checks the draft against the ledger for the editor. Built on the Messages API
   so every search result and fetched page stays in the run folder.
 - **Budget enforcement.** `max_uses` resets on each request, so `llm.call`
-  takes `resume_if`: a research agent's paused tool loop is resumed only while
-  it is under budget. At its budget, one call without tools
-  (`prompts/research_writeup.md`) writes the findings from the pages it read.
-  Not resuming avoids both a fresh budget and an extra user message after a
-  paused turn (which the API does not allow when the turn ends on a pending
-  tool call).
+  takes `resume_if`: a research agent's paused tool loop is resumed only if it
+  has used none of its budget. Otherwise one call without tools
+  (`prompts/research_writeup.md`) writes the findings from the pages it read,
+  so no agent passes its budget and the 40-search cap holds. Not resuming also
+  avoids an extra user message after a paused turn (which the API does not
+  allow when the turn ends on a pending tool call). The tool loop's material is
+  saved before the write-up, so a failed write-up is retried alone.
 - **Merge by code.** Entries are renumbered `D01`... with tags
   `(row(s), kind, tier N, verbatim: yes|no, verdict)`; exact duplicates across
   agents become one entry with both rows. No model rewrites an entry. Agents
@@ -99,7 +101,10 @@ real key), so locally it must be in `.env`.
   criterion 5.
 - **Code checks on model judgments.** 04b's "filled" also needs an entry at the
   tier needed and a material entry (covered rows: a confirmed or corrected
-  claim), else it becomes partial. 07b's quote report adds a mechanical check.
+  claim), else it becomes partial. For that check an entry counts at no better
+  than its domain allows, and not at all if it cites only URLs no agent
+  retrieved. 04b stops before any paid call if `04_dossier.md` no longer matches
+  `04_research/dossier.sha256` (a hand edit its rebuild would lose). 07b's quote report adds a mechanical check.
   The brief stage warns about rows assigned to no segment, and appends every
   corrected fact by code (`prompts/brief_corrections.md`).
 - **Structured output** (`output_config.format`, a JSON schema in each stage

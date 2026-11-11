@@ -7,9 +7,10 @@ One research agent per active ledger row (docs/ledger-research-addon.md):
   against tier 1-2 sources (prompts/research_verify.md).
 - Each agent's budget comes from its row's rank and type (research.budgets) and
   is set as the web tools' max_uses. The API applies max_uses per request, so a
-  tool loop that pauses after spending its budget is not resumed (a resumed
-  request would get a fresh budget): one call without tools writes the agent's
-  findings from what it already read (prompts/research_writeup.md).
+  resumed request would get the whole budget again. A tool loop that pauses
+  after using any of its budget is therefore not resumed: one call without
+  tools writes the agent's findings from what it already read
+  (prompts/research_writeup.md). No agent can pass its budget.
 - All research agents together, follow-ups included, stay under
   research.max_searches: the stage asks before a run whose budgets would pass it.
 - Each agent writes 04_research/Lnn.md, its numbered entries [Lnn.k], and
@@ -31,6 +32,7 @@ with run_agents and rebuilds the dossier with build_dossier.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import re
@@ -195,6 +197,14 @@ def material_text(got: dict) -> str:
     return f"Search results and pages seen:\n{seen}\n\nPages fetched, in full:\n\n{pages}"
 
 
+def _write_up(r: Run, cfg: dict, label: str, prompt: str, notes: str, got: dict, extra: dict, check_spend):
+    return llm.call(r, cfg, "research_writeup", role="researcher", label=f"{label} write-up",
+                    messages=[{"role": "user", "content": load_prompt(
+                        "research_writeup", instructions=prompt, notes=notes or "(none)",
+                        material=material_text(got))}],
+                    preapproved=True, before_request=check_spend, log_extra=extra)
+
+
 def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
               followup: dict | None = None, check_spend=None) -> dict:
     if check_spend:
@@ -204,42 +214,56 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
     label = f"research {row['id']}" + (" follow-up" if followup else "")
     extra = {"row": row["id"]}
     prompt = agent_prompt(cfg, row, led, angle, episode_map, followup)
-    res = llm.call(
-        r, cfg, stage, role="researcher", label=label, messages=[{"role": "user", "content": prompt}],
-        tools=web_tools(cfg, searches, fetches), expected_searches=searches, preapproved=True,
-        before_request=check_spend, log_extra=extra,
-        resume_if=lambda u: u.web_searches < searches and u.web_fetches < fetches,
-    )
-    got = retrieved(res.content)
-    text, cost = res.text, res.usage.cost_usd
-    if res.paused:  # its budget is spent: write up from what it read, without tools
-        w = llm.call(r, cfg, "research_writeup", role="researcher", label=f"{label} write-up",
-                     messages=[{"role": "user", "content": load_prompt(
-                         "research_writeup", instructions=prompt, notes=text or "(none)",
-                         material=material_text(got))}],
-                     preapproved=True, before_request=check_spend, log_extra=extra)
-        text, cost = w.text, cost + w.usage.cost_usd
     md, src = row_paths(r, row["id"], followup=bool(followup))
     md.parent.mkdir(parents=True, exist_ok=True)
-    src.write_text(json.dumps({
-        **got, "row": row["id"], "followup": bool(followup), "fingerprint": ledger.fingerprint(row),
-        "budget": {"searches": searches, "fetches": fetches},
-        "searches": res.usage.web_searches, "fetches": res.usage.web_fetches,
-        "written_up": res.paused, "cost_usd": round(cost, 4),
-    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    saved = json.loads(src.read_text(encoding="utf-8")) if src.exists() and not md.exists() else {}
+    if saved.get("pending_writeup") and saved.get("fingerprint") == ledger.fingerprint(row):
+        # An earlier run paid for the tool loop and then failed in the write-up: write up again only.
+        print(f"  {label}: writing up the research an earlier run paid for")
+        got = {"urls": saved.get("urls", {}), "fetched": saved.get("fetched", [])}
+        n_search, n_fetch, notes, cost = (saved.get("searches", 0), saved.get("fetches", 0),
+                                          saved.get("notes", ""), saved.get("cost_usd", 0.0))
+        paused = True
+    else:
+        # A paused tool loop is resumed only if it has used none of its budget: max_uses applies
+        # per request, so a resumed request could spend the whole budget again.
+        res = llm.call(
+            r, cfg, stage, role="researcher", label=label, messages=[{"role": "user", "content": prompt}],
+            tools=web_tools(cfg, searches, fetches), expected_searches=searches, preapproved=True,
+            before_request=check_spend, log_extra=extra,
+            resume_if=lambda u: u.web_searches == 0 and u.web_fetches == 0,
+        )
+        got = retrieved(res.content)
+        n_search, n_fetch, notes, cost, paused = (res.usage.web_searches, res.usage.web_fetches, res.text,
+                                                  res.usage.cost_usd, res.paused)
+    record = {**got, "row": row["id"], "followup": bool(followup), "fingerprint": ledger.fingerprint(row),
+              "budget": {"searches": searches, "fetches": fetches}, "searches": n_search, "fetches": n_fetch,
+              "written_up": paused, "cost_usd": round(cost, 4)}
+    if paused:  # save what the loop found before the write-up, so a failed write-up costs only itself
+        src.write_text(json.dumps({**record, "pending_writeup": True, "notes": notes},
+                                  ensure_ascii=False, indent=1), encoding="utf-8")
+        w = _write_up(r, cfg, label, prompt, notes, got, extra, check_spend)
+        text, cost = w.text, cost + w.usage.cost_usd
+        record["cost_usd"] = round(cost, 4)
+    else:
+        text = notes
+        src.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
     try:
         findings = extract_tagged(text, "research")
     except StageError:
         partial = md.parent / f"_partial_{md.stem}.md"
         partial.write_text(text, encoding="utf-8")
         raise StageError(f"{label}: no <research> block; raw output saved to "
-                         f"{partial.relative_to(r.root)}") from None
+                         f"{partial.relative_to(r.root)}" + ("; the next run writes it up again from the saved "
+                                                             "material" if paused else "")) from None
     md.write_text(findings + "\n", encoding="utf-8")
+    if paused:  # the write-up succeeded: the saved material no longer needs one
+        src.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
     entries = parse_entries(findings)
     kinds = Counter(e["tags"]["kind"] or "untagged" for e in entries)
     print(f"  {label} done: {len(entries)} entries ({', '.join(f'{k} {v}' for k, v in kinds.items()) or 'none'}), "
-          f"{res.usage.web_searches} of {searches} searches, {res.usage.web_fetches} of {fetches} fetches"
-          + (", written up after its budget ran out" if res.paused else "") + f", ${cost:.2f}")
+          f"{n_search} of {searches} searches, {n_fetch} of {fetches} fetches"
+          + (", written up when its tool loop paused" if paused else "") + f", ${cost:.2f}")
     return {"row": row["id"], "entries": len(entries), "cost": cost}
 
 
@@ -322,18 +346,28 @@ def _norm(url: str) -> str:
 
 def _norm_text(s: str) -> str:
     s = s.lower().replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    s = re.sub(r"(?<!\w)'|'(?!\w)", " ", s)  # a quote mark, not an apostrophe inside a word
     return " ".join(re.sub(r"[^\w']+", " ", s).split())
 
 
+ELLIPSIS = re.compile(r"\s*(?:\.\s?\.\s?\.|…)\s*")
+
+
 def quote_found(body: str, pages: list[str]) -> bool | None:
-    """Whether every quoted passage in an entry's text (before 'Source:') is on one of the
-    normalized pages. An ellipsis marks a cut: each piece must appear. None if nothing is quoted."""
+    """Whether each quoted passage in an entry's text (before 'Source:') is on one of the
+    normalized pages. An ellipsis marks a cut: every piece of a passage must be on the same
+    page, matched as whole words. Passages under three words (a title, a term) are not checked.
+    None if nothing is quoted."""
     text = re.split(r"\bSource:", body, maxsplit=1)[0]
-    pieces = [p for q in QUOTE.findall(text) for p in re.split(r"\s*(?:\.\.\.|…)\s*", q)]
-    pieces = [_norm_text(p) for p in pieces if len(_norm_text(p).split()) >= 3]
-    if not pieces:
+    passages = []
+    for q in QUOTE.findall(text):
+        pieces = [p for p in (_norm_text(x) for x in ELLIPSIS.split(q)) if p]
+        if sum(len(p.split()) for p in pieces) >= 3:
+            passages.append(pieces)
+    if not passages:
         return None
-    return all(any(p in page for page in pages) for p in pieces)
+    padded = [f" {page} " for page in pages]
+    return all(any(all(f" {p} " in page for p in pieces) for page in padded) for pieces in passages)
 
 
 def _host(url: str) -> str:
@@ -357,11 +391,11 @@ def gather(r: Run, led: dict) -> dict:
     """Every active row's entries (first round, then follow-up), deduplicated and numbered."""
     numbered: list[dict] = []
     by_text: dict[str, dict] = {}
-    mapping: dict[tuple[int, int], int] = {}
     seen = {"urls": {}, "fetched": []}
-    not_found, stats, merged = [], [], []
+    not_found, stats, merged, renumbered = [], [], [], []
     for row in ledger.active(led):
         rnum = int(row["id"][1:])
+        first_round: dict[int, int] = {}  # local entry number -> D number, for the row's first file
         for fu in (False, True):
             md, src = row_paths(r, row["id"], fu)
             if not md.exists():
@@ -373,10 +407,13 @@ def gather(r: Run, led: dict) -> dict:
                 seen["fetched"].extend(s.get("fetched", []))
                 stats.append((row["id"] + (" follow-up" if fu else ""), s.get("searches", 0),
                               (s.get("budget") or {}).get("searches"), s.get("written_up", False)))
+            here: dict[int, int] = {}  # this file's own numbers
             for e in parse_entries(findings):
-                if (rnum, e["n"]) in mapping:
-                    print(f"  warning: {row['id']}.{e['n']} appears twice in {row['id']}'s findings; keeping the first")
+                if e["n"] in here:
+                    print(f"  warning: {row['id']}.{e['n']} appears twice in {md.name}; keeping the first")
                     continue
+                if fu and e["n"] in first_round:
+                    renumbered.append(f"{row['id']}.{e['n']} in {md.name}")
                 key = " ".join([e["tags"]["kind"] or "claim", *e["tags"]["links"], *e["body"].split()])
                 if key in by_text:  # an exact duplicate of another agent's entry
                     first = by_text[key]
@@ -384,20 +421,37 @@ def gather(r: Run, led: dict) -> dict:
                         first["tags"]["rows"].append(row["id"])
                         if first not in merged:
                             merged.append(first)
-                    mapping[(rnum, e["n"])] = first["d"]
+                    here[e["n"]] = first["d"]
                     continue
                 e["tags"]["rows"] = [row["id"]]
                 e["d"], e["row"] = len(numbered) + 1, row["id"]
-                mapping[(rnum, e["n"])] = e["d"]
+                here[e["n"]] = e["d"]
                 by_text[key] = e
                 numbered.append(e)
+            # 'see L01.3' -> 'see D05': a file's own numbers first, then (for a follow-up) the first round's.
+            refs = {**first_round, **here} if fu else here
+            for e in numbered:
+                if e.get("file") is None and e["row"] == row["id"]:
+                    e["file"], e["refs"] = md.name, refs
             nf = _section(findings, "Not found")
             if nf and nf.strip().rstrip(".").lower() not in ("nothing", "none", "n/a"):
-                not_found.append((row["id"] + (" follow-up" if fu else ""), nf))
-    for e in numbered:  # 'see L01.3' -> 'see D05'
-        e["body"] = LOCAL_REF.sub(lambda m: entry_id(mapping[(int(m.group(1)), int(m.group(2)))])
-                                  if (int(m.group(1)), int(m.group(2))) in mapping else m.group(0), e["body"])
-    return {"entries": numbered, "seen": seen, "not_found": not_found, "stats": stats, "merged": merged}
+                not_found.append((row["id"] + (" follow-up" if fu else ""), _renumber(nf, rnum, refs)))
+            if not fu:
+                first_round = here
+    for e in numbered:
+        e["body"] = _renumber(e["body"], int(e["row"][1:]), e.pop("refs"))
+        e.pop("file", None)
+    return {"entries": numbered, "seen": seen, "not_found": not_found, "stats": stats, "merged": merged,
+            "renumbered": renumbered}
+
+
+def _renumber(text: str, rnum: int, refs: dict[int, int]) -> str:
+    """An agent's references to its own row's entries, 'L01.3', become dossier numbers."""
+    def sub(m: re.Match) -> str:
+        if int(m.group(1)) == rnum and int(m.group(2)) in refs:
+            return entry_id(refs[int(m.group(2))])
+        return m.group(0)
+    return LOCAL_REF.sub(sub, text)
 
 
 def check_entries(cfg: dict, entries: list[dict], seen: dict, transcript: str) -> dict:
@@ -471,6 +525,9 @@ def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
     lines += ["", "## Source check (generated by the research stage)", ""]
     kinds = Counter(e["tags"]["kind"] or "claim" for e in entries)
     lines.append(f"- Entries: {len(entries)} ({', '.join(f'{k} {kinds[k]}' for k in KINDS if kinds[k])})")
+    if g["renumbered"]:
+        lines.append("- Follow-up entries that reused a first-round number (kept, renumbered): "
+                     + ", ".join(g["renumbered"]))
     if g["merged"]:
         lines.append("- Exact duplicates merged across agents: "
                      + ", ".join(f"{entry_id(e['d'])} ({', '.join(e['tags']['rows'])})" for e in g["merged"]))
@@ -501,17 +558,62 @@ def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
     if g["stats"]:
         used = sum(s[1] or 0 for s in g["stats"])
         lines.append(f"- Searches: {used} (cap {cfg['research']['max_searches']}): " + ", ".join(
-            f"{rid} {n} of {b}" + (", written up at its budget" if w else "") for rid, n, b, w in g["stats"]))
+            f"{rid} {n} of {b}" + (", written up after its tool loop paused" if w else "") for rid, n, b, w in g["stats"]))
     return "\n".join(lines).rstrip() + "\n"
 
 
 # --- the stage ----------------------------------------------------------------------------------
 
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def write_dossier(r: Run, text: str) -> None:
+    """Write 04_dossier.md and record its hash, so ledger-update can tell a hand edit from a rebuild."""
+    r.path("dossier").write_text(text, encoding="utf-8")
+    r.path("dossier_hash").write_text(_sha(text) + "\n", encoding="utf-8")
+
+
+def dossier_edited(r: Run, text: str) -> bool | None:
+    """Whether the dossier differs from what the pipeline last wrote; None if there is no record."""
+    p = r.path("dossier_hash")
+    return p.read_text(encoding="utf-8").strip() != _sha(text) if p.exists() else None
+
+
+def parse_rows(spec: str) -> list[str]:
+    """'L01', 'L01,L03', 'L1-L3' or '1-3' -> row ids."""
+    ids: list[str] = []
+    for part in re.split(r"[,\s]+", spec.strip()):
+        if not part:
+            continue
+        m = re.fullmatch(r"[Ll]?0*(\d+)(?:[-–][Ll]?0*(\d+))?", part)
+        if not m or int(m.group(2) or m.group(1)) < int(m.group(1)):
+            raise StageError(f"--rows {spec!r}: use row ids like L01, L01,L03 or L01-L03.")
+        ids += [row_id(n) for n in range(int(m.group(1)), int(m.group(2) or m.group(1)) + 1)]
+    if not ids:
+        raise StageError(f"--rows {spec!r} names no rows.")
+    return ids
+
+
 def _stale(r: Run, row: dict) -> bool:
-    _, src = row_paths(r, row["id"])
-    if not src.exists():
-        return False
-    return json.loads(src.read_text(encoding="utf-8")).get("fingerprint") != ledger.fingerprint(row)
+    for fu in (False, True):
+        _, src = row_paths(r, row["id"], fu)
+        if src.exists() and json.loads(src.read_text(encoding="utf-8")).get("fingerprint") != ledger.fingerprint(row):
+            return True
+    return False
+
+
+def _set_aside_followup(r: Run, rid: str) -> None:
+    """A redone row's old follow-up answered the old findings' gap: move it out of the merge."""
+    files = [p for p in row_paths(r, rid, followup=True) if p.exists()]
+    if not files:
+        return
+    old = r.path("research_dir") / "_superseded"
+    old.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    for f in files:
+        f.rename(old / f"{f.stem}.{stamp}{f.suffix}")
+    print(f"  {rid}: its old follow-up moved to 04_research/_superseded/; ledger-update can give it a new one")
 
 
 def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
@@ -526,17 +628,18 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
                          "(row findings already paid for are kept).")
     act = ledger.active(led)
     if rows:
-        redo = {row_id(int(x)) for x in re.findall(r"\d+", rows)}
+        redo = set(parse_rows(rows))
         unknown = redo - {x["id"] for x in act}
-        if not redo or unknown:
-            raise StageError(f"--rows {rows!r}: not active rows in the ledger: {sorted(unknown) or rows}")
+        if unknown:
+            raise StageError(f"--rows {rows!r}: not active rows in the ledger: {', '.join(sorted(unknown))}")
         todo = [x for x in act if x["id"] in redo]
     else:
         todo = [x for x in act if not row_paths(r, x["id"])[0].exists()]
     stale = [x["id"] for x in act if x not in todo and row_paths(r, x["id"])[0].exists() and _stale(r, x)]
     if stale:
         print(f"  warning: {', '.join(stale)} changed in ledger.json after being researched; their findings "
-              f"answer the old question. Redo them with --rows {','.join(stale)} --force.")
+              f"answer the old question. Redo them with --rows {','.join(stale)}"
+              + (" --force." if r.path("dossier").exists() else "."))
 
     print("  research plan, from ledger.json:")
     for x in act:
@@ -555,6 +658,9 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
     if todo:
         check_search_cap(r, cfg, planned, f"Researching {len(todo)} row(s)")
         llm.guard(r, cfg, f"research ({len(todo)} agents)", est)
+        for x in todo:
+            if row_paths(r, x["id"])[0].exists():
+                _set_aside_followup(r, x["id"])
         errors = run_agents(r, cfg, [(x, None) for x in todo], led, angle, episode_map, spend_checker(r, cfg))
         if errors:
             raise StageError("some research agents failed; their rows will be researched on the next run:\n  "
@@ -565,7 +671,9 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
               f"findings: python cli.py research {r.name}")
         return None
     dossier = build_dossier(r, cfg, led, transcript)
-    out = r.write("dossier", dossier)
+    r.check_writable("dossier")
+    write_dossier(r, dossier)
+    out = r.path("dossier")
     n = len(re.findall(r"^\[D\d+\]", dossier, re.M))
     print(f"  04_dossier.md: {n} entries from {len(act)} rows in {(time.monotonic() - t0) / 60:.1f} min. "
           "See its source check.")

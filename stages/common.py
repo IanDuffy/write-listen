@@ -46,6 +46,7 @@ PATHS = {
     "ledger_md": "ledger.md",
     "research_dir": "04_research",
     "ledger_update": "04_research/ledger_update.md",
+    "dossier_hash": "04_research/dossier.sha256",  # the dossier as research or ledger-update last wrote it
     "dossier": "04_dossier.md",
     "brief": "05_brief.md",
     "segments_dir": "06_segments",
@@ -184,6 +185,9 @@ def parse_json(run: "Run", text: str, label: str) -> dict:
 # --- text helpers ----------------------------------------------------------
 
 SEGMENT_MARKER = re.compile(r"^<!--\s*seg(\d+)\s*-->\s*$", re.M)
+# A dossier marker after a sentence, on one line: [D12], [D03, D07], [D3-D5], [D3; D7]. Only marker syntax
+# is matched, so a '[D12' left unclosed never swallows the narration that follows it.
+MARKER = re.compile(r"[ \t]*\[D\d+(?:[ \t]*[,;\-–—][ \t]*D?\d+)*\]")
 
 
 def word_count(text: str) -> int:
@@ -194,7 +198,7 @@ def word_count(text: str) -> int:
 def spoken_text(text: str) -> str:
     """Strip everything that is for Ian, not for the ear."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    text = re.sub(r"\s*\[D\d+[^\]]*\]", "", text)  # [D03], [D03, D07], [D3-D5], [D3; D7]
+    text = MARKER.sub("", text)  # [D03], [D03, D07], [D3-D5], [D3; D7]
     text = re.sub(r"^#+\s.*$", "", text, flags=re.M)  # stray headings
     text = text.replace("**", "").replace("__", "")
     text = re.sub(r"[ \t]+", " ", text)
@@ -298,8 +302,8 @@ def parse_tags(group: str) -> dict:
             out["tier"] = "episode" if m.group(1) else int(m.group(2))
         elif m := re.fullmatch(r"verbatim\s*:?\s*(yes|no)", p):
             out["verbatim"] = m.group(1)
-        elif p in VERDICTS:
-            out["verdict"] = p
+        elif m := re.fullmatch(r"(?:verdict\s*:?\s*)?(confirmed|corrected|unverified)\W*", p):
+            out["verdict"] = m.group(1)
     return out
 
 

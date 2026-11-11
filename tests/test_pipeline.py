@@ -73,7 +73,8 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     assert "https://invented.example.com/page" in check and "not found on the fetched page" in check
     assert "Tiers better than the source's domain" in check and "wikipedia.org is tier 4" in check
     assert "Entries with no tags" in check and "Rows with no tellable material: L02" in check
-    assert "Searches: " in check and "L01 8 of 8, written up at its budget" in check
+    assert "Searches: " in check and "L01 8 of 8, written up after its tool loop paused" in check
+    assert "L02 1 of 8," in check  # resumed from a pause before any tool use
 
     # Stage 04b: judge, L02 partial -> one follow-up with its gap, rebuild, judge again.
     ledger_update.run(r, cfg)

@@ -19,7 +19,7 @@ import re
 from . import ledger, llm
 from .common import (Run, StageError, dossier_entries, entry_tags, load_prompt, parse_json,
                      spoken_text, split_script_segments)
-from .research import QUOTE, _norm_text
+from .research import ELLIPSIS, QUOTE, _norm_text
 
 SCHEMA = {
     "type": "object",
@@ -63,15 +63,16 @@ def verbatim_entries(dossier: str) -> dict[int, str]:
 def unbacked_quotes(script: str, dossier: str) -> list[tuple[int, str]]:
     """Passages in quotation marks (four words or more) that appear in no verbatim: yes entry.
     An ellipsis marks a cut: each piece must appear in the same entry."""
-    backed = [_norm_text(re.split(r"\bSource:", t, maxsplit=1)[0]) for t in verbatim_entries(dossier).values()]
+    # Only the quoted passages of verbatim entries, not their attributions or paraphrase.
+    backed = [f" {_norm_text(q)} " for t in verbatim_entries(dossier).values()
+              for q in QUOTE.findall(re.split(r"\bSource:", t, maxsplit=1)[0])]
     out = []
     for n, body in split_script_segments(script):
         for q in QUOTE.findall(spoken_text(body)):
-            pieces = [_norm_text(p) for p in re.split(r"\s*(?:\.\.\.|…)\s*", q)]
-            pieces = [p for p in pieces if len(p.split()) >= 3]
-            if len(_norm_text(q).split()) < 4 or not pieces:
+            pieces = [p for p in (_norm_text(x) for x in ELLIPSIS.split(q)) if p]
+            if sum(len(p.split()) for p in pieces) < 4:
                 continue
-            if not any(all(p in entry for p in pieces) for entry in backed):
+            if not any(all(f" {p} " in passage for p in pieces) for passage in backed):
                 out.append((n, " ".join(q.split())))
     return out
 

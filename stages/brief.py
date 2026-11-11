@@ -39,7 +39,8 @@ def _listed(body: str, line: re.Pattern, parse) -> list:
     if not items:
         # The list on the following lines, as a sub-list, up to the next 'Label:' line.
         rest = body[m.end():]
-        label = re.search(r"^[ \t]*[-*]?[ \t]*\**[A-Z][\w ]{1,30}\**[ \t]*:", rest, re.M)
+        # ('- D03: note' and '- L01: note' are items, not labels.)
+        label = re.search(r"^[ \t]*[-*]?[ \t]*\**(?![DL]\d)[A-Z][\w ]{1,30}\**[ \t]*:", rest, re.M)
         items = parse(rest[:label.start()] if label else rest)
     return items
 

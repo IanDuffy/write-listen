@@ -7,17 +7,20 @@
    them at the top, and the brief uses them for transitions.
 2. Code check. 'filled' also needs, in the dossier itself: an entry at the tier
    needed or better, and a material entry (for a covered row, an episode claim
-   confirmed or corrected). Otherwise the row becomes partial, and the reason is
-   added to its gap. dossier_refs always include the row's own entries.
+   confirmed or corrected). For this check an entry counts at no better than its
+   source's domain allows, and not at all if it cites only URLs no agent
+   retrieved. Otherwise the row becomes partial, and the reason is added to its
+   gap. dossier_refs always include the row's own entries.
 3. Follow-up round. Each open or partial row gets one more agent, with its gap
    stated (research.budgets.followup: 4 searches, 2 fetches), at most once per
    row. The dossier is rebuilt with the new entries and step 1 runs again.
 4. Rows still open or partial are flagged in ledger.md for Ian.
 
 This stage rewrites 04_dossier.md when a follow-up round runs. If the dossier
-was edited by hand since research wrote it, it stops rather than lose the edits
-(--force rebuilds anyway). With --force the judge runs again; a row's follow-up
-is never repeated.
+has changed since the pipeline last wrote it (its hash is in
+04_research/dossier.sha256), the stage stops before any paid call rather than
+risk losing the edits; --force goes ahead. With --force the judge runs again;
+a row's follow-up is never repeated.
 """
 
 from __future__ import annotations
@@ -57,8 +60,10 @@ SCHEMA = {
 
 
 def judge(r: Run, cfg: dict, led: dict, dossier: str, round_no: int) -> dict:
+    fb = cfg["research"]["budgets"]["followup"]
     prompt = load_prompt("ledger_update", ledger=ledger.describe(ledger.active(led)), dossier=dossier,
-                         source_tiers=load_prompt("source_tiers"))
+                         source_tiers=load_prompt("source_tiers"),
+                         followup_searches=fb["searches"], followup_fetches=fb["fetches"])
     res = llm.call(r, cfg, "ledger_update", messages=[{"role": "user", "content": prompt}],
                    label=f"ledger update round {round_no}", json_schema=SCHEMA, preapproved=True)
     data = parse_json(r, res.text, "ledger_update")
@@ -67,10 +72,24 @@ def judge(r: Run, cfg: dict, led: dict, dossier: str, round_no: int) -> dict:
     return data
 
 
-def apply(led: dict, data: dict, dossier: str) -> None:
+def apply(led: dict, data: dict, dossier: str, cfg: dict, seen_urls: set[str] | None = None) -> None:
     """Write the judge's verdicts into the ledger, with the code checks on 'filled'."""
     entries = dossier_entries(dossier)
     tags = {n: entry_tags(text) for n, text in entries.items()}
+    seen_n = {research._norm(u) for u in seen_urls} if seen_urls is not None else None
+
+    def tier(n: int) -> int | None:
+        """The entry's tier for the code check: none for a connection, an episode entry, or an entry
+        citing only URLs no agent retrieved; no better than its source's domain allows."""
+        t = tags[n]
+        if t["kind"] == "connection" or not isinstance(t["tier"], int):
+            return None
+        urls = [u.rstrip(".,;:") for u in research.URL_IN_TEXT.findall(entries[n])]
+        if seen_n is not None and urls and not any(research._norm(u) in seen_n for u in urls):
+            return None
+        dt = research.domain_tier(cfg, urls) if urls else None
+        return max(t["tier"], dt[0]) if dt else t["tier"]
+
     own = defaultdict(set)
     for n, t in tags.items():
         for rid in t["rows"]:
@@ -83,15 +102,17 @@ def apply(led: dict, data: dict, dossier: str) -> None:
     for row in ledger.active(led):
         v = verdicts[row["id"]]
         refs = {n for n in entry_numbers(" ".join(v.get("dossier_refs") or [])) if n in entries} | own[row["id"]]
-        tiers = [tags[n]["tier"] for n in refs if isinstance(tags[n]["tier"], int) and tags[n]["kind"] != "connection"]
-        best = v.get("best_tier") if v.get("best_tier") in (1, 2, 3, 4) else None
-        if best is not None and tiers and best < min(tiers):
-            best = min(tiers)  # no better than the best entry it cites
-        if best is None and tiers and v.get("status") != "open":
-            best = min(tiers)
         status, gap = v.get("status"), (v.get("gap") or "").strip()
         if status not in ledger.STATUSES:
             status = "open"
+        tiers = [t for t in (tier(n) for n in refs) if t is not None]
+        judged = v.get("best_tier") if v.get("best_tier") in (1, 2, 3, 4) else None
+        if not tiers:
+            best = None
+        elif judged is not None:
+            best = max(judged, min(tiers))  # no better than the best entry it cites
+        else:
+            best = None if status == "open" else min(tiers)
         if status == "filled":
             problems = []
             if best is None or best > row["tier_needed"]:
@@ -121,10 +142,11 @@ def _followup_job(r: Run, row: dict) -> tuple[dict, dict]:
                  "start": start}
 
 
-def _record(led: dict, rounds: list[str], followups: list[str]) -> str:
+def _record(led: dict, rounds: list[str], ran_now: list[str]) -> str:
     lines = ["# Ledger update", "", "Stage 04b. The full ledger is in ledger.md.", ""]
     lines += rounds
-    lines += ["", "Follow-up round: " + (", ".join(followups) if followups else "none needed"), ""]
+    done = [r["id"] + ("" if r["id"] in ran_now else " (an earlier run)") for r in ledger.active(led) if r["followup"]]
+    lines += ["", "Follow-ups: " + (", ".join(done) if done else "none needed"), ""]
     still = [r for r in ledger.active(led) if r["status"] in ("partial", "open")]
     lines += ["Still open (for Ian): " + ("; ".join(f"{r['id']} {r['status']}: {r['gap']}" for r in still)
                                          if still else "none")]
@@ -143,11 +165,20 @@ def run(r: Run, cfg: dict):
     if r.path("ledger_update").exists() and not r.force:
         raise StageError("Output already exists: 04_research/ledger_update.md. Use --force to judge again "
                          "(a row's follow-up is never repeated).")
+    edited = research.dossier_edited(r, dossier)
+    if edited is None:  # no record of what the pipeline wrote: compare with a rebuild
+        edited = research.build_dossier(r, cfg, led, transcript) != dossier
+    if edited and not r.force:
+        raise StageError("04_dossier.md has changed since the pipeline wrote it (edited by hand?). If a row "
+                         "needs a follow-up, this stage rebuilds the dossier from 04_research/, and the edits "
+                         "would be lost. Put them in 04_research/Lnn.md and run research --force, or run "
+                         "ledger-update --force to go ahead.")
+    seen = research.gather(r, led)["seen"]["urls"]
     judge_est = 2 * llm.estimate_call(cfg, cfg["models"]["writer"], llm.estimate_tokens(dossier) + 3000,
                                       cfg["stages"]["ledger_update"]["expected_output_tokens"])
     llm.guard(r, cfg, "ledger update (two judge calls)", judge_est)
 
-    apply(led, judge(r, cfg, led, dossier, 1), dossier)
+    apply(led, judge(r, cfg, led, dossier, 1), dossier, cfg, seen)
     ledger.save(r, led)
     rounds = [_statuses(led, 1)]
     print("  " + rounds[0])
@@ -155,24 +186,20 @@ def run(r: Run, cfg: dict):
     need = [row for row in ledger.active(led) if row["status"] in ("partial", "open")
             and not research.row_paths(r, row["id"], followup=True)[0].exists()]
     if need:
-        if research.build_dossier(r, cfg, led, transcript) != dossier and not r.force:
-            raise StageError("04_dossier.md differs from what the research files give now (it was edited by "
-                             "hand, or the ledger's rows or ranks changed since research). The follow-up round "
-                             "rebuilds it from 04_research/, so edits there would be lost. Put the edits in "
-                             "04_research/Lnn.md, or use --force.")
         jobs = [_followup_job(r, row) for row in need]
         s = cfg["research"]["budgets"]["followup"]["searches"]
         research.check_search_cap(r, cfg, s * len(jobs), f"The follow-up round ({len(jobs)} agents)")
         llm.guard(r, cfg, f"follow-up round ({len(jobs)} agents)",
                   research.estimate(cfg, [(row, True) for row, _ in jobs]))
         errors = research.run_agents(r, cfg, jobs, led, angle, episode_map, research.spend_checker(r, cfg))
+        dossier = research.build_dossier(r, cfg, led, transcript)
+        research.write_dossier(r, dossier)  # with every follow-up that finished, even if others failed
         if errors:
             raise StageError("some follow-up agents failed; re-run ledger-update to retry them (finished "
-                             "follow-ups are kept):\n  " + "\n  ".join(errors))
-        dossier = research.build_dossier(r, cfg, led, transcript)
-        r.path("dossier").write_text(dossier, encoding="utf-8")
+                             "follow-ups are kept, and are in 04_dossier.md):\n  " + "\n  ".join(errors))
         print("  04_dossier.md rebuilt with the follow-up entries")
-        apply(led, judge(r, cfg, led, dossier, 2), dossier)
+        seen = research.gather(r, led)["seen"]["urls"]
+        apply(led, judge(r, cfg, led, dossier, 2), dossier, cfg, seen)
         rounds.append(_statuses(led, 2))
         print("  " + rounds[-1])
     for row in led["rows"]:

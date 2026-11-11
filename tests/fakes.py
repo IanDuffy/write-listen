@@ -122,6 +122,7 @@ class Responder:
         self.calls: list[dict] = []
         self.row_calls: dict[str, int] = {}
         self.judge_calls = 0
+        self.pause_at: dict[str, tuple[int, int]] = {}  # row -> (searches, fetches) used when it pauses
         self.judge_rounds: list[dict] = [  # one verdict set per judge call; the last repeats
             {"L01": "filled", "L02": "partial", "L03": "filled"},
             {"L01": "filled", "L02": "filled", "L03": "filled"},
@@ -160,10 +161,14 @@ class Responder:
                     NS(type="server_tool_use", id="s9", name="web_search", input={"query": "more"})],
                     u=usage(searches=8, fetches=1))
             if rid == "L02" and key == rid and self.row_calls[key] == 1:
-                # Pauses with budget left: resumed with the same tools.
+                # Pauses before using any of its budget: resumed, with the same tools.
                 return self.msg(kwargs, None, stop="pause_turn", content=[
-                    NS(type="server_tool_use", id="s1", name="web_search", input={"query": "weil"}), searched],
-                    u=usage(searches=2))
+                    NS(type="server_tool_use", id="s1", name="web_search", input={"query": "weil"})],
+                    u=usage(searches=0))
+            if self.pause_at and key == rid and self.row_calls[key] == 1 and rid in self.pause_at:
+                s_used, f_used = self.pause_at[rid]  # pauses part-way through its budget
+                return self.msg(kwargs, None, stop="pause_turn", content=[searched, fetched],
+                                u=usage(searches=s_used, fetches=f_used))
             if key.endswith("follow-up"):
                 start = int(re.search(r"\[" + rid + r"\.(\d+)\]", t.split("</earlier>")[-1]).group(1))
                 text = row_findings(rid, start=start, kind="followup")

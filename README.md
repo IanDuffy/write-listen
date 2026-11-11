@@ -77,7 +77,7 @@ Each milestone stops for Ian.
    the file and re-renders `ledger.md`. Then:
    ```bash
    python cli.py research beauty-scarry --plan-only   # budgets and estimate, nothing spent
-   python cli.py research beauty-scarry --rows L01    # the rank-1 agent first: show Ian 04_research/L01.md
+   python cli.py research beauty-scarry --rows L01    # the rank-1 row first (L01 unless re-ranked): show Ian 04_research/L01.md
    python cli.py research beauty-scarry               # the other rows, then 04_dossier.md
    python cli.py ledger-update beauty-scarry          # 04b: judge each row, one follow-up round
    python cli.py brief beauty-scarry
@@ -111,7 +111,8 @@ Research is aimed by the chosen angle, not by general reading. The spec is
    gives one narrow research question and the source tier needed to settle it.
    Ideas that miss the cut go to a `parked` list and are never researched.
    `ledger.json` is the source of truth; `ledger.md` is a table rendered from
-   it by every stage that touches it. Ian edits the JSON.
+   it by every stage that touches it. Ian edits the JSON. Row ids follow rank,
+   so `ledger --force` (a new ledger) moves any old `04_research/` aside.
 2. **One agent per row (04, Opus 5.5 with web search and fetch).** Budgets
    by rank and type: ranks 1-3 get 8 searches and 4 fetches, lower ranks 4 and
    2, covered rows a verify-only agent with 2 and 1. All research agents
@@ -124,9 +125,10 @@ Research is aimed by the chosen angle, not by general reading. The spec is
    mark each episode claim `confirmed`, `corrected` or `unverified`. Up to 4
    agents run at a time. Each writes `04_research/L01.md` and
    `L01.sources.json` (every URL it saw, the text of every page it fetched).
-   The API applies the tools' `max_uses` per request, so an agent whose tool
-   loop pauses after spending its budget is not resumed: one call without
-   tools writes its findings from what it already read.
+   The API applies the tools' `max_uses` per request, so a resumed tool loop
+   would get its whole budget again. An agent whose loop pauses after using
+   any of its budget is therefore not resumed: one call without tools writes
+   its findings from what it already read. No agent can pass its budget.
 3. **Merge (code).** Once every active row has findings, code renumbers the
    entries `D01`, `D02`, ... into `04_dossier.md`, in rank order, keeping each
    entry's row, kind and tier. Exact duplicates across agents become one entry
@@ -160,8 +162,11 @@ searches used per row.
 Findings are paid for, so they are kept: `research` without `--rows` only
 researches rows that have no findings yet. `--rows L01,L03` redoes those
 rows. `--force` allows the dossier to be rebuilt. A row whose idea or question
-changed in `ledger.json` after it was researched is flagged. Every call is
-logged with its row id. Spend in one invocation stops at `research.max_usd`.
+changed in `ledger.json` after it was researched is flagged; redoing a row
+moves its old follow-up to `04_research/_superseded/`. The dossier's hash is
+kept in `04_research/dossier.sha256`, and `ledger-update` stops before any
+paid call if the dossier was edited by hand (its follow-up round rebuilds it).
+Every call is logged with its row id. Spend in one invocation stops at `research.max_usd`.
 All the knobs are under `research:` in `config.yaml`.
 
 ## How it works
@@ -194,9 +199,9 @@ All the knobs are under `research:` in `config.yaml`.
   tool's `max_uses` and stated in the prompt. The API applies `max_uses` per
   request, and the tool list must stay byte-identical when a paused tool loop
   resumes (changing it breaks Opus 5.5's check on the earlier thinking). A
-  research agent is resumed only while it is under budget; at its budget it is
-  written up instead. So it can only exceed its budget in the request that
-  follows a resume. The log records the real counts.
+  research agent's loop is resumed only if it paused before using any tool;
+  otherwise it is written up, so it never passes its budget. The baseline's
+  loop can resume several times and pass its 30. The log records real counts.
 - **Structured output.** The ledger, ledger-update and coverage stages ask for
   JSON with a schema (`output_config.format`). The smoketest checks this live.
 - **Narration** sits behind one function, `stages/tts.py:synthesize`. Chunks
@@ -219,7 +224,7 @@ All the knobs are under `research:` in `config.yaml`.
 The tests run every stage end to end against fake Claude and ElevenLabs
 clients, with real files and real ffmpeg. Covered: the ledger and Ian's hand
 edits, research per row (the rank-1 agent first, budgets by rank and type, the
-search cap, a paused agent resumed under budget and written up at it, a failed
+search cap, a paused agent written up rather than resumed once it has used its budget, a failed
 agent retried alone), the merge (duplicates, renumbering, quote downgrades,
 tier flags), the follow-up round and the code check on "filled", the brief's
 checks and corrections, the coverage check, cache breakpoint placement,

@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 
 from . import llm
 from .common import Run, StageError, load_prompt, parse_json, row_id
@@ -122,6 +123,11 @@ def validate(led, cfg: dict | None = None) -> list[str]:
         unknown = set(row) - set(PLAN_FIELDS) - set(LATER_FIELDS)
         if unknown:
             warnings.append(f"{rid} has fields the pipeline does not use: {', '.join(sorted(unknown))}")
+    conns = led.get("connections", [])
+    if not isinstance(conns, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("link", ""), str) and isinstance(c.get("rows", []), list)
+            and all(isinstance(x, str) for x in c.get("rows", [])) for c in conns):
+        errors.append("connections must be a list of {\"rows\": [\"L01\", \"L03\"], \"link\": \"...\"} objects")
     parked = led.get("parked", [])
     if not isinstance(parked, list) or not all(
             isinstance(p, str) or (isinstance(p, dict) and isinstance(p.get("idea"), str)) for p in parked):
@@ -137,7 +143,10 @@ def validate(led, cfg: dict | None = None) -> list[str]:
 
 
 def normalize(led: dict) -> dict:
-    """Fill in the later stages' columns and put each row's fields in a fixed order."""
+    """Fill in the later stages' columns, put each row's fields in a fixed order, and close any gaps
+    in the ranks (1, 3, 4 -> 1, 2, 3), since budgets go by rank."""
+    for i, row in enumerate(sorted(led["rows"], key=lambda x: x["rank"]), 1):
+        row["rank"] = i
     rows = []
     for row in led["rows"]:
         out = {f: row[f] for f in PLAN_FIELDS if f in row}
@@ -169,6 +178,9 @@ def load(r: Run, cfg: dict | None = None, render: bool = True) -> dict:
         raise StageError(f"ledger.json is not valid JSON: {e.msg} at line {e.lineno}, column {e.colno}.") from None
     for w in validate(led, cfg):
         print(f"  ledger: {w}")
+    ranks = [x["rank"] for x in sorted(led["rows"], key=lambda x: x["rank"])]
+    if ranks != list(range(1, len(ranks) + 1)):
+        print(f"  ledger: ranks {ranks} read as 1-{len(ranks)} in that order (budgets go by rank)")
     normalize(led)
     if render:
         r.path("ledger_md").write_text(render_md(led, r.name), encoding="utf-8")
@@ -306,11 +318,19 @@ def summary(led: dict) -> str:
                      for r in active(led))
 
 
+def next_research(r: Run, led: dict) -> str:
+    """The research commands for a fresh ledger: the rank-1 row's agent first, for Ian to read."""
+    first = active(led)[0]["id"] if led["rows"] else "L01"
+    return (f"python cli.py research {r.name} --plan-only, then python cli.py research {r.name} "
+            f"--rows {first} (the rank-1 row first).")
+
+
 def run(r: Run, cfg: dict):
     if r.path("ledger").exists() and not r.force:
         led = load(r, cfg)
         print(f"  ledger.json checked, ledger.md re-rendered:\n{summary(led)}\n"
-              "  (Use --force to write a new ledger from scratch; edits in ledger.json would be lost.)")
+              "  (Use --force to write a new ledger from scratch; edits in ledger.json would be lost.)\n"
+              f"  Next: {next_research(r, led)}")
         return r.path("ledger")
     transcript, episode_map, angle = r.read("transcript"), r.read("map"), r.read("angle")
     r.check_writable("ledger")
@@ -328,11 +348,24 @@ def run(r: Run, cfg: dict):
         row["id"] = row_id(i)
     led = {"run": r.name, "inputs": inputs_hash(transcript, episode_map, angle),
            "rows": rows, "parked": data.get("parked") or [], "connections": []}
-    for w in validate(led, cfg):
+    try:
+        warnings = validate(led, cfg)
+    except StageError as e:  # keep the paid output: fix it by hand and save it as ledger.json
+        partial = r.root / "_partial_ledger.json"
+        partial.write_text(json.dumps(led, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        raise StageError(f"{e}\nThe model's ledger is saved as {partial.name}: fix those rows and save it as "
+                         "ledger.json, then run ledger again to check it.") from None
+    for w in warnings:
         print(f"  ledger: {w}")
+    research_dir = r.path("research_dir")
+    if research_dir.exists() and any(research_dir.glob("L*.md")):
+        # Ids follow rank, so the old L01.md would pass as findings for the new L01.
+        old = r.root / f"04_research.old-{time.strftime('%Y%m%d-%H%M%S')}"
+        research_dir.rename(old)
+        print(f"  the old research answered the old ledger: moved 04_research/ to {old.name}/")
     save(r, led)
     print(f"  {len(rows)} active rows, {len(led['parked'])} parked:\n{summary(led)}")
     print("\n  Next [Ian]: read ledger.md, then edit ledger.json by hand: add, cut, re-rank, park or rewrite\n"
-          "  rows (to park a row, move its idea into \"parked\"). `python cli.py ledger <run>` re-checks the\n"
-          "  file and re-renders ledger.md. Then: research <run> --plan-only, and research <run> --rows L01.")
+          f"  rows (to park a row, move its idea into \"parked\"). `python cli.py ledger {r.name}` re-checks the\n"
+          f"  file and re-renders ledger.md. Then: {next_research(r, led)}")
     return r.path("ledger")

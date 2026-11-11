@@ -1,7 +1,7 @@
 # Prompt: verify-only agent for a covered ledger row (stage 04)
 
 Inputs: the same as research_row.md:
-- {{angle}}, {{map}}, {{row_id}}, {{idea}}, {{rank}}, {{episode_has}},
+- {{angle}}, {{map}}, {{row_id}}, {{idea}}, {{rank}}, {{episode_has}}, {{tier_needed}},
   {{research_question}} (for a covered row: the episode's factual claims to verify),
   {{other_rows}}, {{searches}}, {{fetches}}, {{source_tiers}}, {{format}}, {{followup}}
 
@@ -42,7 +42,7 @@ The claims to check:
 {{research_question}}
 </claims>
 
-Check them against tier 1 or 2 sources:
+Check them against sources of tier {{tier_needed}} or better:
 
 {{source_tiers}}
 
@@ -57,9 +57,9 @@ The chapter's other ideas, which other agents cover. Note a link to one as a con
 Your budget is {{searches}} searches and {{fetches}} page fetches; the tools refuse any more. Check the claims most likely to be wrong first: exact dates, attributions, titles, quotations, numbers.
 
 For each claim, write one claim entry whose tags end with a verdict:
-- **confirmed**: a tier 1 or 2 source says the same. Say what it says.
-- **corrected**: the record differs. Write "The episode says ... In fact ..." with the corrected version, and the source.
-- **unverified**: you could not find a tier 1 or 2 source either way. Say what you tried. Its tier is that of the best source you did find, or "tier episode" if none.
+- **confirmed**: a source of tier {{tier_needed}} or better says the same. Say what it says.
+- **corrected**: such a source says otherwise. Write "The episode says ... In fact ..." with the corrected version, and the source.
+- **unverified**: you could not find a source of tier {{tier_needed}} or better either way. Say what you tried. Its tier is that of the best source you did find, or "tier episode" if none.
 
 For example: [{{row_id}}.n] (claim, tier 2, corrected) The episode says the essay appeared in 1999. In fact it was first published in 1998. Source: page title, URL.
 
