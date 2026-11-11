@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import struct
@@ -39,42 +40,77 @@ PAGE_TEXT = ("The Symposium, translated by Benjamin Jowett. He who has been inst
              "perceive a nature of wondrous beauty.")
 
 
-def findings(n):
-    return f"""Now writing my findings.
-<findings>
-# T{n}: Topic {n}
+LEDGER = {
+    "rows": [  # deliberately out of rank order: code numbers rows by rank
+        {"idea": "Beauty prompts a desire to replicate.", "rank": 3, "type": "covered",
+         "episode_has": "Scarry, early on: 'it makes us want to copy it'.",
+         "research_question": "1. The Symposium is set in 399 BC (Brooks). 2. Diotima is from Mantinea (Scarry).",
+         "tier_needed": 2},
+        {"idea": "Plato's ladder ends in a beauty no one beloved can hold.", "rank": 1, "type": "deep-dive",
+         "episode_has": "Brooks mentions the ladder in passing.",
+         "research_question": "What does Diotima's ladder say at Symposium 210a-212a?", "tier_needed": 1},
+        {"idea": "Weil thought attention to beauty is a form of prayer.", "rank": 2, "type": "missing",
+         "episode_has": "Nothing.", "research_question": "Where does Weil link beauty and attention?",
+         "tier_needed": 2},
+    ],
+    "parked": ["Kant on disinterested pleasure."],
+}
 
-## Summary
-Found things.
-
-## Claims
-[T{n}.1] In the Symposium, Socrates attributes his teaching on love to Diotima of Mantinea. Source: Symposium, https://www.gutenberg.org/ebooks/1600
-[T{n}.2] "He who has been instructed thus far in the things of love, and who has learned to see the beautiful" Source: Symposium, https://www.gutenberg.org/ebooks/1600 Translator: Jowett.
-[T{n}.3] Scarry argues that beauty prompts a desire to replicate. Source: episode
-- [T{n}.4] "A sentence that appears on no page the agent ever fetched at all." Source: https://invented.example.com/page
-[T{n}.5] A claim with no source at all.
-
-## Conflicts
-T{n}.1 and T{n}.3 do not conflict.
-
-## Could not establish
-- Where Diotima lived.
-</findings>"""
+SHARED = ("In the Symposium, Socrates attributes his teaching on love to Diotima of Mantinea. "
+          "Source: Symposium, https://www.gutenberg.org/ebooks/1600")
 
 
-def brief_text(n_segments=3):
+def row_findings(rid, start=1, kind="deep"):
+    """An agent's <research> block for a row. kind: deep, verify or followup."""
+    n = start
+    if kind == "verify":
+        entries = [
+            f"[{rid}.{n}] (claim, tier 2, corrected) The episode says the Symposium is set in 399 BC. In fact "
+            "the dinner is set in 416 BC. Source: SEP, https://plato.stanford.edu/entries/plato/",
+            f"[{rid}.{n + 1}] (claim, tier 2, confirmed) Diotima is from Mantinea. "
+            "Source: SEP, https://plato.stanford.edu/entries/plato/",
+            f"[{rid}.{n + 2}] (material, tier episode) Scarry describes a palm tree she keeps drawing. Source: episode",
+        ]
+    elif kind == "followup":
+        entries = [f"[{rid}.{n}] (material, tier 2) Weil at Solesmes in 1938, listening to the chant. "
+                   "Source: https://plato.stanford.edu/entries/weil/"]
+    else:
+        entries = [
+            f"[{rid}.{n}] (claim, tier 1) {SHARED}",
+            f"[{rid}.{n + 1}] (quote, tier 1, verbatim: yes) \"He who has been instructed thus far in the things "
+            f"of love, and who has learned to see the beautiful\" Plato, Symposium 210e, tr. Jowett, for {rid}. "
+            "Source: Symposium, https://www.gutenberg.org/ebooks/1600",
+            f"- [{rid}.{n + 2}] (quote, tier 1, verbatim: yes) \"A sentence that appears on no page the agent "
+            f"ever fetched at all.\" Found for {rid}. Source: https://invented.example.com/page",
+            f"[{rid}.{n + 3}] (tension, tier 2) Some readers say {rid}'s idea abandons persons; compare {rid}.{n}. "
+            "Source: https://en.wikipedia.org/wiki/Symposium_(Plato)",
+            f"[{rid}.{n + 4}] (connection, {'L01' if rid == 'L02' else 'L02'}) The ladder and Weil's attention "
+            "both turn away from the self.",
+            f"[{rid}.{n + 5}] (In 1933) a claim with no tags and no source, for {rid}.",
+        ]
+        if rid == "L01":
+            entries.insert(2, f"[{rid}.{n + 6}] (material, tier 1) Agathon's dinner party, the night after his "
+                              "victory, with Alcibiades arriving drunk. Source: https://www.gutenberg.org/ebooks/1600")
+    return (f"Writing up now.\n<research>\n# {rid}: an idea\n\n## Summary\nFound things.\n\n## Entries\n"
+            + "\n".join(entries) + "\n\n## Not found\n" + ("Nothing." if kind != "deep" else "Where Diotima lived.")
+            + "\n</research>")
+
+
+def brief_text(n_segments=3, rows=("L01", "L02", "L03")):
     segs = "\n\n".join(
-        f"## Segment {i}: Part {i}\n- Purpose: move {i}.\n- Target words: 120\n- Claims: C{i}, C{i + 1}\n"
+        f"## Segment {i}: Part {i}\n- Purpose: move {i}.\n- Target words: 120\n"
+        f"- Ledger: {rows[(i - 1) % len(rows)]}\n- Dossier: D{i:02d}, D{i + 1:02d}\n"
         f"- Beats: one, two.\n- Opens with: x\n- Hands off to: y" for i in range(1, n_segments + 1))
-    return ("# Brief: Beauty\n\n## Thesis\nBeauty teaches.\n\n## Listener\nCurious.\n\n"
-            "## Opening hook\nA dinner party.\n\n## Closing line\nThe end.\n\n"
+    return ("# Brief: Beauty\n\n## Through-line\nCan looking at beauty change us?\n\n## Thesis\nBeauty teaches.\n\n"
+            "## Listener\nCurious.\n\n## Opening hook\nA dinner party.\n\n## Closing line\nThe end.\n\n"
             "## Style guide for the ear\nShort sentences.\n\n## Arc\nUp the ladder.\n\n" + segs)
 
 
 def segment_prose(n):
-    paras = [f"Segment {n} opens at a dinner party in Athens. Socrates tells the guests about Diotima. [C1]",
+    paras = [f"Segment {n} opens at a dinner party in Athens. Socrates tells the guests about Diotima. [D01] "
+             "Plato has her say: \u201cHe who has been instructed thus far in the things of love.\u201d [D02]",
              f"This is the second paragraph of segment {n}. It moves the argument along, slowly and plainly. "
-             f"Scarry thinks beauty makes us want to copy it. [C3]"]
+             f"Scarry calls it \"a sentence nobody ever wrote down anywhere\". [D03]"]
     return "\n\n".join(paras)
 
 
@@ -84,8 +120,12 @@ class Responder:
     def __init__(self, n_segments=3):
         self.n_segments = n_segments
         self.calls: list[dict] = []
-        self.topic_calls: dict[int, int] = {}
-        self.critic_calls = 0
+        self.row_calls: dict[str, int] = {}
+        self.judge_calls = 0
+        self.judge_rounds: list[dict] = [  # one verdict set per judge call; the last repeats
+            {"L01": "filled", "L02": "partial", "L03": "filled"},
+            {"L01": "filled", "L02": "filled", "L03": "filled"},
+        ]
 
     def __call__(self, kwargs):
         self.calls.append(kwargs)
@@ -96,38 +136,59 @@ class Responder:
             return self.msg(kwargs, "## Episode in brief\nA map.")
         if "candidate angles" in t:
             return self.msg(kwargs, "### Angle 1: The ladder\n- **Thesis:** beauty teaches.")
-        if "You are planning the research" in t:
-            return self.msg(kwargs, "# Research plan: Beauty as a ladder\n\n## Overview\nTwo topics.\n\n"
-                            "## T1: Diotima\n- Goal: the ladder.\n\n## T2: Scarry\n- Goal: replication.")
-        m = re.search(r"<topic>\s*## T(\d+)", t)
-        if m and "You are one of several research agents" in t:
-            n = int(m.group(1))
-            self.topic_calls[n] = self.topic_calls.get(n, 0) + 1
-            if n == 1 and self.topic_calls[n] == 1:  # first request pauses mid tool loop
+        if "Before any research, we decide what the chapter must land" in t:
+            return self.msg(kwargs, json.dumps(LEDGER))
+        m = re.search(r"(?:Your idea is row|This idea is row) (L\d+)", t)
+        if m and "your search and fetch budget is now spent" in t:
+            return self.msg(kwargs, row_findings(m.group(1)))
+        if m and ("You are a research agent for one idea" in t or "You are a fact-checker for one idea" in t):
+            rid = m.group(1)
+            key = rid + (" follow-up" if "This is a follow-up." in t else "")
+            self.row_calls[key] = self.row_calls.get(key, 0) + 1
+            fetched = NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
+                type="web_fetch_result", url="https://www.gutenberg.org/ebooks/1600",
+                content=NS(type="document", title="Symposium",
+                           source=NS(type="text", media_type="text/plain", data=PAGE_TEXT))))
+            searched = NS(type="web_search_tool_result", tool_use_id="s1",
+                          content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600",
+                                      title="Symposium")])
+            if rid == "L01" and key == rid and self.row_calls[key] == 1:
+                # Pauses with its whole budget spent: must be written up, not resumed.
                 return self.msg(kwargs, None, stop="pause_turn", content=[
-                    text_block("I'll start with the primary text."),
                     NS(type="server_tool_use", id="s1", name="web_search", input={"query": "symposium"}),
-                    NS(type="web_search_tool_result", tool_use_id="s1",
-                       content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600",
-                                   title="Symposium")]),
-                ], u=usage(searches=4))
-            return self.msg(kwargs, None, content=[
-                NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
-                    type="web_fetch_result", url="https://www.gutenberg.org/ebooks/1600",
-                    content=NS(type="document", title="Symposium",
-                               source=NS(type="text", media_type="text/plain", data=PAGE_TEXT)))),
-                text_block(findings(n))], u=usage(searches=2, fetches=1))
-        if "You are the research editor" in t:
-            self.critic_calls += 1
-            nxt = int(re.search(r"numbered from T(\d+)", t).group(1))
-            if self.critic_calls == 1:
-                return self.msg(kwargs, f"## Assessment\nT1.5 has no source.\n\n## T{nxt}: Sources for T1.5\n"
-                                "- Goal: find a source.\n- Why: T1.5.")
-            return self.msg(kwargs, "## Assessment\nGood.\n\nNo follow-up research needed.")
-        if "You are writing the guide at the top of a research dossier" in t:
-            return self.msg(kwargs, "## Overview\nThe ladder [C1].\n\n## Strongest material\n- [C2]")
+                    searched, fetched,
+                    NS(type="server_tool_use", id="s9", name="web_search", input={"query": "more"})],
+                    u=usage(searches=8, fetches=1))
+            if rid == "L02" and key == rid and self.row_calls[key] == 1:
+                # Pauses with budget left: resumed with the same tools.
+                return self.msg(kwargs, None, stop="pause_turn", content=[
+                    NS(type="server_tool_use", id="s1", name="web_search", input={"query": "weil"}), searched],
+                    u=usage(searches=2))
+            if key.endswith("follow-up"):
+                start = int(re.search(r"\[" + rid + r"\.(\d+)\]", t.split("</earlier>")[-1]).group(1))
+                text = row_findings(rid, start=start, kind="followup")
+            else:
+                text = row_findings(rid, kind="verify" if "fact-checker" in t else "deep")
+            return self.msg(kwargs, None, content=[fetched, text_block(text)], u=usage(searches=1, fetches=1))
+        if "You are the research editor for a long-form audio chapter" in t:
+            verdicts = self.judge_rounds[min(self.judge_calls, len(self.judge_rounds) - 1)]
+            self.judge_calls += 1
+            rows = [{"id": rid, "status": st, "dossier_refs": ["D01", "D99"], "best_tier": 1,
+                     "gap": "" if st == "filled" else "No tellable material for Weil: find a scene."}
+                    for rid, st in verdicts.items()]
+            return self.msg(kwargs, json.dumps({"rows": rows, "connections": [
+                {"rows": ["L01", "L02", "L09"], "link": "Both turn the self outward."}]}))
         if "Write the brief" in t:
             return self.msg(kwargs, brief_text(self.n_segments))
+        if "You are checking the draft of a long-form audio chapter against the ledger" in t:
+            return self.msg(kwargs, json.dumps({
+                "rows": [{"id": "L01", "coverage": "covered", "segments": [1, 2], "note": ""},
+                         {"id": "L02", "coverage": "thin", "segments": [2], "note": "Weil needs her scene."},
+                         {"id": "L03", "coverage": "missing", "segments": [], "note": "Never lands."}],
+                "drift": [{"idea": "Dinner-party logistics", "segments": [1], "note": "Cut."}],
+                "through_line": "Clear until segment 3.",
+                "unbacked_quotes": [{"quote": "a sentence nobody ever wrote down anywhere", "segment": 2,
+                                     "note": "No entry."}]}))
         m = re.search(r"Write segment (\d+) of", t)
         if m:
             return self.msg(kwargs, segment_prose(int(m.group(1))))

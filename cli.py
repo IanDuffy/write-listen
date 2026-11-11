@@ -9,14 +9,17 @@ Stages, in order ([Ian] marks where the pipeline stops for you):
     map <run>                    -> 01_map.md
     angles <run>                 -> 02_angles.md
                                  [Ian] write 03_angle.md
-    research <run> [--plan-only] -> 04_research/ (plan, one agent per topic, critic rounds)
-                                    -> 04_dossier.md
-    research <run> --topics T3,T5   redo those topics (others are kept), rebuild with --force
-    research <run> --replan         move 04_research/ aside and plan again (after an angle change)
+    ledger <run>                 -> ledger.json, ledger.md (5-7 ranked ideas the chapter must land)
+                                 [Ian] review and edit ledger.json; `ledger <run>` again re-checks it
+    research <run> --plan-only   each row's search budget and the cost estimate, nothing spent
+    research <run> --rows L01    research just those rows (redoes them if already researched)
+    research <run>               one agent per remaining row -> 04_research/Lnn.md -> 04_dossier.md
+    ledger-update <run>          judge each row, one follow-up round -> ledger.json, 04_dossier.md
     brief <run>                  -> 05_brief.md
                                  [Ian] edit 05_brief.md
     draft <run> [--segments 1-2] -> 06_segments/segNN.md
     assemble <run>               -> 07_script_draft.md
+    coverage <run>               draft vs ledger -> 07b_coverage.md (the editor reads it)
     edit <run>                   -> 08_edit_notes.md
     revise <run>                 -> 09_script_final.md
                                  [Ian] read 09_script_final.md
@@ -48,8 +51,10 @@ from stages.common import ROOT, PATHS, Run, StageError, load_config
 
 STAGES_IN_ORDER = [
     ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "[Ian] write 03_angle.md"),
-    ("dossier", "research"), ("brief", "brief"), (None, "[Ian] edit 05_brief.md, then draft"),
-    ("script_draft", "assemble (after draft)"), ("edit_notes", "edit"), ("script_final", "revise"),
+    ("ledger", "ledger, then [Ian] review ledger.json"), ("dossier", "research"),
+    ("ledger_update", "ledger-update"), ("brief", "brief"), (None, "[Ian] edit 05_brief.md, then draft"),
+    ("script_draft", "assemble (after draft)"), ("coverage", "coverage"), ("edit_notes", "edit"),
+    ("script_final", "revise"),
     (None, "[Ian] read 09_script_final.md, then narrate"), ("chapter_mp3", "narrate"),
     ("baseline_script", "baseline"), ("baseline_mp3", "narrate --baseline"),
     ("compare_dir", "compare"), ("report", "report"),
@@ -69,16 +74,22 @@ def status(r: Run, cfg: dict) -> None:
         print(f"  [{'x' if exists else ' '}] {PATHS[key]}")
         if not exists and next_step is None:
             next_step = step
-    if r.path("research_plan").exists():
-        from stages.research import parse_topics, topic_paths
+    if r.path("ledger").exists():
+        from stages import ledger
+        from stages.research import row_paths, searches_used
         try:
-            topics = parse_topics(r.read("research_plan"))
-            have = [t for t in topics if topic_paths(r, t["id"])[0].exists()]
-            print(f"  research topics: {len(have)} of {len(topics)} researched"
-                  + (f" (missing: {', '.join(f'T{t['id']}' for t in topics if t not in have)})"
-                     if len(have) < len(topics) else ""))
+            rows = ledger.active(ledger.load(r, cfg, render=False))
+            have = [x["id"] for x in rows if row_paths(r, x["id"])[0].exists()]
+            missing = [x["id"] for x in rows if x["id"] not in have]
+            print(f"  ledger rows researched: {len(have)} of {len(rows)}"
+                  + (f" (missing: {', '.join(missing)})" if missing else "")
+                  + f"; {searches_used(r)} of {cfg['research']['max_searches']} searches used")
+            if any(x["status"] for x in rows):
+                print("  row status: " + ", ".join(f"{x['id']} {x['status']}" for x in rows))
+            if any(x["coverage"] for x in rows):
+                print("  coverage: " + ", ".join(f"{x['id']} {x['coverage']}" for x in rows))
         except StageError as e:
-            print(f"  research plan: {e}")
+            print(f"  ledger: {e}")
     segs = sorted(r.path("segments_dir").glob("seg*.md")) if r.path("segments_dir").exists() else []
     if segs:
         print(f"  segments drafted: {', '.join(p.stem for p in segs)}")
@@ -101,10 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--voices", help="voicetest: comma-separated voice IDs")
     ap.add_argument("--search", help="voices: filter by name")
     ap.add_argument("--seed", type=int, help="report: seed for the claim sample")
-    ap.add_argument("--plan-only", action="store_true", help="research: write the plan and stop")
-    ap.add_argument("--topics", help="research: topics to redo, e.g. T3,T5")
-    ap.add_argument("--replan", action="store_true",
-                    help="research: move the old research aside and plan again")
+    ap.add_argument("--plan-only", action="store_true",
+                    help="research: show each row's budget and the estimate, spend nothing")
+    ap.add_argument("--rows", help="research: ledger rows to research (or redo), e.g. L01 or L01,L03")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -151,8 +161,11 @@ def main(argv: list[str] | None = None) -> int:
             ingest.run(r, cfg, source=args.source)
         elif st == "research":
             from stages import research
-            research.run(r, cfg, plan_only=args.plan_only, topics=args.topics, replan=args.replan)
-        elif st in ("map", "angles", "brief", "assemble", "edit", "revise",
+            research.run(r, cfg, rows=args.rows, plan_only=args.plan_only)
+        elif st == "ledger-update":
+            from stages import ledger_update
+            ledger_update.run(r, cfg)
+        elif st in ("map", "angles", "ledger", "brief", "assemble", "coverage", "edit", "revise",
                     "baseline", "compare"):
             import importlib
             importlib.import_module(f"stages.{st}").run(r, cfg)

@@ -2,8 +2,9 @@
 # API keys live in .env (gitignored), never here.
 
 models:
-  writer: claude-opus-5-5     # map, angles, research, brief, draft, edit, revise, baseline
-  researcher: claude-sonnet-5-5  # the parallel deep-research agents
+  writer: claude-opus-5-5     # map, angles, ledger, ledger update, brief, draft, coverage, edit, revise, baseline
+  researcher: claude-opus-5-5 # one research agent per ledger row (the add-on asks for Opus 5.5;
+                              # claude-sonnet-5-5 would halve these agents' token cost)
   cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
 
 # On a safety-classifier decline, the API re-runs the same request on a fallback
@@ -23,12 +24,14 @@ stages:
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
   angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
-  research_plan:      {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
-  research_topic:     {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 400000, max_continuations: 10}
-  research_critic:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
-  research_synthesis: {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  ledger:   {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  research_row:      {max_tokens: 64000, effort: high, expected_output_tokens: 16000, max_continuations: 6}
+  research_followup: {max_tokens: 64000, effort: high, expected_output_tokens: 12000, max_continuations: 6}
+  research_writeup:  {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
+  ledger_update:     {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   brief:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
+  coverage: {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   edit:     {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
@@ -40,18 +43,32 @@ chapter:
   max_segments: 8
   segment_words: [750, 800]
 
-# Deep research: Opus plans topics, one Sonnet agent researches each topic in
-# parallel, Opus critiques and assigns follow-ups, then the findings are merged.
+# Ledger-driven research (docs/ledger-research-addon.md). Stage 03b writes 5-7
+# ranked ideas to ledger.json; stage 04 runs one agent per active row, with a
+# budget set by the row's rank and type; stage 04b judges each row and gives
+# open or partial rows one follow-up agent.
 research:
-  min_topics: 5
-  max_topics: 8
-  searches_per_topic: 25      # each agent's budget (applied per request; see README)
-  fetches_per_topic: 25
+  min_rows: 5
+  max_rows: 7
+  top_ranks: 3                # ranks 1-3 get the "top" budget
+  budgets:                    # per agent; the web tools' max_uses
+    top:      {searches: 8, fetches: 4}   # deep-dive or missing, rank 1-3
+    rest:     {searches: 4, fetches: 2}   # deep-dive or missing, rank 4 and below
+    covered:  {searches: 2, fetches: 1}   # verify-only agent
+    followup: {searches: 4, fetches: 2}   # the one follow-up round in stage 04b
+  max_searches: 40            # all research agents together, follow-ups included; asks before going past
   parallel_agents: 4          # agents running at once
-  rounds: 3                   # 1 = no critic; 3 = up to two rounds of follow-ups
-  max_followups: 4            # topics the critic may add per round
-  max_usd: 40.00              # no new follow-up round starts past this spend
+  max_usd: 25.00              # hard stop on research spend (agents and write-ups) in one invocation
   max_fetch_tokens: 20000     # cap on each fetched page's size in context
+  # Domains whose tier is clear, for a check of the tiers agents record.
+  # An entry claiming a better tier than its source's domain is flagged, never changed.
+  tier_domains:
+    gutenberg.org: 1
+    perseus.tufts.edu: 1
+    wikisource.org: 1
+    plato.stanford.edu: 2
+    iep.utm.edu: 2
+    wikipedia.org: 4
 
 # The single-prompt baseline: one agent, the build doc's 30-search cap.
 baseline:

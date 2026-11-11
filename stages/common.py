@@ -42,13 +42,15 @@ PATHS = {
     "map": "01_map.md",
     "angles": "02_angles.md",
     "angle": "03_angle.md",
+    "ledger": "ledger.json",
+    "ledger_md": "ledger.md",
     "research_dir": "04_research",
-    "research_plan": "04_research/plan.md",
-    "topics_dir": "04_research/topics",
+    "ledger_update": "04_research/ledger_update.md",
     "dossier": "04_dossier.md",
     "brief": "05_brief.md",
     "segments_dir": "06_segments",
     "script_draft": "07_script_draft.md",
+    "coverage": "07b_coverage.md",
     "edit_notes": "08_edit_notes.md",
     "script_final": "09_script_final.md",
     "audio_dir": "10_audio",
@@ -162,6 +164,23 @@ def load_prompt(name: str, **values: str) -> str:
     return re.sub(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}", fill, body).strip() + "\n"
 
 
+def parse_json(run: "Run", text: str, label: str) -> dict:
+    """The JSON a structured-output call returned. If it does not parse, the raw text is
+    saved as _partial_<label>.json and the stage stops."""
+    t = text.strip()
+    if t.startswith("```"):  # tolerate a fenced block
+        t = re.sub(r"^```\w*\s*|\s*```$", "", t)
+    try:
+        data = json.loads(t)
+    except json.JSONDecodeError as e:
+        partial = run.root / f"_partial_{label}.json"
+        partial.write_text(text, encoding="utf-8")
+        raise StageError(f"{label}: the model's output is not valid JSON ({e.msg}); saved to {partial.name}.") from None
+    if not isinstance(data, dict):
+        raise StageError(f"{label}: expected a JSON object, got {type(data).__name__}.")
+    return data
+
+
 # --- text helpers ----------------------------------------------------------
 
 SEGMENT_MARKER = re.compile(r"^<!--\s*seg(\d+)\s*-->\s*$", re.M)
@@ -175,7 +194,7 @@ def word_count(text: str) -> int:
 def spoken_text(text: str) -> str:
     """Strip everything that is for Ian, not for the ear."""
     text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-    text = re.sub(r"\s*\[C\d+[^\]]*\]", "", text)  # [C3], [C3, C7], [C3-C5], [C3; C7]
+    text = re.sub(r"\s*\[D\d+[^\]]*\]", "", text)  # [D03], [D03, D07], [D3-D5], [D3; D7]
     text = re.sub(r"^#+\s.*$", "", text, flags=re.M)  # stray headings
     text = text.replace("**", "").replace("__", "")
     text = re.sub(r"[ \t]+", " ", text)
@@ -228,14 +247,34 @@ def parse_range(spec: str | None, available: list[int]) -> list[int]:
     return out
 
 
-# '[C12]', '**[C12]**', '- [C12]' or '1. [C12]' at the start of a line.
-DOSSIER_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[C(\d+)\]\**", re.M)
+# --- dossier entries ----------------------------------------------------------
+#
+# An entry starts a line with its number, then its tags in parentheses:
+#   [D07] (L01, quote, tier 1, verbatim: yes) "Exact words." Plato, Symposium 211a. Source: title, URL
+#   [D12] (L02, L05, claim, tier 2) A fact. Source: title, URL
+#   [D15] (L04, claim, tier 1, corrected) The episode says X. In fact Y. Source: title, URL
+#   [D20] (L03, connection, L05) How the two ideas link.
+# Ledger rows before the kind own the entry (several after a merge of exact
+# duplicates); rows after a connection's kind are the rows it links to.
+
+# '[D12]', '**[D12]**', '- [D12]' or '1. [D12]' at the start of a line.
+DOSSIER_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[D0*(\d+)\]\**", re.M)
+KINDS = ("claim", "material", "quote", "tension", "connection")
+VERDICTS = ("confirmed", "corrected", "unverified")
 
 
-def claim_numbers(text: str) -> list[int]:
-    """'C3, C7', 'C3-C5', '[C3][C7]', 'C3; C7' -> sorted unique claim numbers, ranges expanded."""
+def entry_id(n: int) -> str:
+    return f"D{n:02d}"
+
+
+def row_id(n: int) -> str:
+    return f"L{n:02d}"
+
+
+def entry_numbers(text: str) -> list[int]:
+    """'D3, D07', 'D3-D5', '[D03][D07]', 'D3; D7' -> sorted unique entry numbers, ranges expanded."""
     nums: set[int] = set()
-    for a, b in re.findall(r"C(\d+)(?:[ \t]*[-–—][ \t]*C?(\d+))?", text):  # a range stays on one line
+    for a, b in re.findall(r"\bD0*(\d+)(?:[ \t]*[-–—][ \t]*D?0*(\d+))?", text):  # a range stays on one line
         lo, hi = int(a), int(b or a)
         if hi < lo or hi - lo > 200:
             hi = lo
@@ -243,11 +282,53 @@ def claim_numbers(text: str) -> list[int]:
     return sorted(nums)
 
 
-def claims_section(dossier: str) -> str:
-    """The '## Claims' section of a dossier (its ### subsections included), or the
-    whole text if there is no such heading. Citations elsewhere, such as '- [C2]'
-    in the overview, are not entries."""
-    m = re.search(r"^##\s+Claims\b.*$", dossier, re.M | re.I)
+def parse_tags(group: str) -> dict:
+    """'L01, quote, tier 1, verbatim: yes' -> {'rows': ['L01'], 'kind': 'quote', 'tier': 1,
+    'verbatim': 'yes', 'verdict': None, 'links': []}. Unknown words are ignored."""
+    out = {"rows": [], "kind": None, "tier": None, "verbatim": None, "verdict": None, "links": []}
+    for part in re.split(r"[,;]", group):
+        p = part.strip().strip("*_").strip().lower()
+        if not p:
+            continue
+        if m := re.fullmatch(r"l0*(\d+)", p):
+            (out["links"] if out["kind"] else out["rows"]).append(row_id(int(m.group(1))))
+        elif p in KINDS:
+            out["kind"] = p
+        elif m := re.fullmatch(r"(?:tier\s*:?\s*)?(episode)|tier\s*:?\s*([1-4])", p):
+            out["tier"] = "episode" if m.group(1) else int(m.group(2))
+        elif m := re.fullmatch(r"verbatim\s*:?\s*(yes|no)", p):
+            out["verbatim"] = m.group(1)
+        elif p in VERDICTS:
+            out["verdict"] = p
+    return out
+
+
+def format_tags(t: dict) -> str:
+    parts = list(t.get("rows") or [])
+    parts.append(t.get("kind") or "claim")
+    parts += list(t.get("links") or [])
+    if t.get("tier") is not None:
+        parts.append(f"tier {t['tier']}")
+    if t.get("verbatim"):
+        parts.append(f"verbatim: {t['verbatim']}")
+    if t.get("verdict"):
+        parts.append(t["verdict"])
+    return "(" + ", ".join(parts) + ")"
+
+
+ENTRY_HEAD = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[D0*\d+\]\**[ \t]*\(([^)]*)\)")
+
+
+def entry_tags(entry: str) -> dict:
+    """The tags of one dossier entry, as returned by dossier_entries."""
+    m = ENTRY_HEAD.match(entry)
+    return parse_tags(m.group(1)) if m else parse_tags("")
+
+
+def entries_section(dossier: str) -> str:
+    """The '## Entries' section of a dossier (its ### subsections included), or the
+    whole text if there is no such heading. Citations elsewhere are not entries."""
+    m = re.search(r"^##\s+Entries\b.*$", dossier, re.M | re.I)
     if not m:
         return dossier
     nxt = re.search(r"^##\s", dossier[m.end():], re.M)
@@ -255,8 +336,8 @@ def claims_section(dossier: str) -> str:
 
 
 def dossier_entries(dossier: str) -> dict[int, str]:
-    """Map claim number -> the full entry text (claim, quote, source)."""
-    dossier = claims_section(dossier)
+    """Map entry number -> the full entry text (tags, text, source)."""
+    dossier = entries_section(dossier)
     marks = list(DOSSIER_ENTRY.finditer(dossier))
     out: dict[int, str] = {}
     for i, m in enumerate(marks):

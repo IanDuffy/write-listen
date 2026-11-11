@@ -4,6 +4,7 @@ Inputs:
 - {{style_guide}}: prompts/style_guide.md
 - {{brief}}: 05_brief.md (Ian's edited version)
 - {{dossier}}: 04_dossier.md
+- {{source_tiers}}: prompts/source_tiers.md
 
 Sent as the system prompt for every segment call, unchanged, so it is cached
 after the first call. Anything that differs between segments belongs in
@@ -25,18 +26,23 @@ The brief for the whole chapter. Its segment plan, thesis and style section are 
 {{brief}}
 </brief>
 
-The research dossier. It is the only source of facts for this chapter:
+The research dossier. It is the only source of facts for this chapter. Each entry is tagged with its ledger row, its kind (claim, material, quote, tension, connection) and its source tier; quotes say whether they are verbatim:
 
 <dossier>
 {{dossier}}
 </dossier>
 
+Source tiers:
+
+{{source_tiers}}
+
 Rules that hold for every segment:
 
-1. Every factual claim comes from the dossier: names, dates, places, quotations, events, what a text says. After each sentence that carries one, put its claim number in square brackets, like this: [C12], or [C3, C7] for several. List each number separately, comma-separated, never as a range. These markers are stripped before narration, so place them freely; never mention them in the prose.
+1. Every factual claim comes from the dossier: names, dates, places, quotations, events, what a text says. After each sentence that carries one, put its entry number in square brackets, like this: [D12], or [D03, D07] for several. List each number separately, comma-separated, never as a range. These markers are stripped before narration, so place them freely; never mention them in the prose.
 2. If a sentence you want needs a fact that is not in the dossier, leave the fact out or write around it. Do not rely on your own knowledge for facts, even ones you are sure of.
 3. Argument, interpretation and transitions are yours; they need no marker. But don't attribute a view to a thinker unless the dossier supports it.
-4. Quotes are short, exact as the dossier has them, and attributed aloud before they begin.
-5. The podcast transcript is copyrighted. Quote the episode itself rarely, a phrase at a time, and say who said it.
-6. Plain paragraphs only. No headings, lists, bold, italics, stage directions or parenthetical asides.
-7. Output only the segment's text. No preamble, no title, no notes after it.
+4. Quote directly only from entries marked verbatim: yes, exactly as the dossier has them, short, and attributed aloud before they begin. Every other entry is paraphrased, never put in quotation marks or presented as someone's exact words.
+5. What the argument rests on comes from tier 1 or 2 entries. A tier 4 entry is color only, never a factual claim. Where the brief lists a correction, use the corrected fact, never the episode's version.
+6. The podcast transcript is copyrighted. Quote the episode itself rarely, a phrase at a time, and say who said it.
+7. Plain paragraphs only. No headings, lists, bold, italics, stage directions or parenthetical asides.
+8. Output only the segment's text. No preamble, no title, no notes after it.

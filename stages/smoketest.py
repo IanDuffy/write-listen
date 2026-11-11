@@ -4,11 +4,13 @@ Run first when the keys are in place. Each check prints PASS or FAIL with what
 it saw, so a wrong assumption shows up here and not halfway through a $20
 research run.
 
-Claude (one small Sonnet research request):
+Claude (one small research request, as a ledger research agent makes it, and one
+tiny structured-output request, as the ledger, ledger-update and coverage stages make it):
   - web search and web fetch run, and results come back as the blocks we parse
   - the fetched page's text is captured, so quotes can be checked against it
   - usage reports searches and tokens; the cost lands in log.jsonl
   - the refusal-fallback beta and effort setting are accepted
+  - output_config.format (JSON schema) is accepted alongside them, and returns parseable JSON
 ElevenLabs (one short sentence):
   - the configured model exists, and its live per-request limit
   - the configured (or first candidate) voice synthesizes in the configured format
@@ -20,7 +22,7 @@ from __future__ import annotations
 from collections import Counter
 
 from . import llm, research, tts
-from .common import Run, StageError
+from .common import Run, StageError, parse_json
 
 URL = "https://plato.stanford.edu/entries/plato/"
 
@@ -51,13 +53,30 @@ def check_claude(r: Run, cfg: dict) -> bool:
                   f"{len(got['fetched'])} page(s), {sum(len(f['text']) for f in got['fetched']):,} characters"
                   if got["fetched"] else "no web_fetch_result with text; quote checks would find nothing")
     if got["fetched"]:
-        dossier = f"## Claims\n[C1] {res.text.strip()} Source: {URL}\n"
-        verified, missing, _ = research.quote_check(dossier, got["fetched"])
+        pages = [research._norm_text(f["text"]) for f in got["fetched"]]
+        verified = research.quote_found(res.text, pages)
         ok &= _report("quote check", bool(verified),
                       "the reply's quote was found on the fetched page" if verified
                       else f"the reply's quote was not found on the page (reply: {res.text[:120]!r})")
     ok &= _report("cost logged", res.usage.cost_usd > 0, f"${res.usage.cost_usd:.4f}")
+    ok &= check_structured(r, cfg)
     return ok
+
+
+SCHEMA = {"type": "object", "additionalProperties": False, "required": ["word", "count"],
+          "properties": {"word": {"type": "string", "enum": ["ready"]}, "count": {"type": "integer"}}}
+
+
+def check_structured(r: Run, cfg: dict) -> bool:
+    try:
+        res = llm.call(r, cfg, "smoketest", label="smoketest structured output",
+                       messages=[{"role": "user", "content": "Return the word ready and the count 3."}],
+                       json_schema=SCHEMA, max_tokens=2000, effort="low", expected_output_tokens=200)
+        data = parse_json(r, res.text, "smoketest")
+    except StageError as e:
+        return _report("structured output", False, str(e))
+    return _report("structured output", data.get("word") == "ready" and isinstance(data.get("count"), int),
+                   f"model {', '.join(res.usage.served_by)}, returned {data}")
 
 
 def check_elevenlabs(r: Run, cfg: dict) -> bool:

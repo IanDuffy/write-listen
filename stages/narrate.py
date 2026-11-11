@@ -6,7 +6,7 @@
 
 Splits at paragraph breaks to fit the per-request limit, synthesizes each chunk,
 joins them with short pauses (longer at segment breaks) and exports one MP3.
-Claim markers [Cn] and segment markers are stripped before synthesis.
+Dossier markers [Dn] and segment markers are stripped before synthesis.
 """
 
 from .brief import parse_segments

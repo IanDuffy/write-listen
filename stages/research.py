@@ -1,48 +1,58 @@
-"""Stage 4: angle + map -> 04_research/ -> 04_dossier.md
+"""Stage 04: ledger.json + angle + map -> 04_research/Lnn.md -> 04_dossier.md
 
-Deep research with several agents, in four steps:
+One research agent per active ledger row (docs/ledger-research-addon.md):
 
-1. Plan (Opus). Break the angle into research topics: 04_research/plan.md.
-   Ian can edit the plan; `research <run> --plan-only` stops here.
-2. Research (Sonnet, in parallel). One agent per topic, each with its own web
-   search and fetch budget. Each writes 04_research/topics/Tnn.md (findings,
-   claims numbered [Tn.k]) and Tnn.sources.json (every URL it saw and the
-   text of every page it fetched).
-3. Critique (Opus). Read all findings, name the gaps, contradictions and weak
-   sources, and add follow-up topics to the plan for another round. Repeats up
-   to research.rounds times, or until the critic finds nothing to add.
-4. Merge. Claims are renumbered [C1], [C2], ... into 04_dossier.md by code, so
-   no model can alter a source or a quote on the way. Opus writes an overview
-   on top. A source check lists cited URLs no agent retrieved, and every quote
-   is matched word for word against the fetched page it came from.
+- Deep-dive and missing rows get a research agent (prompts/research_row.md);
+  covered rows get a verify-only agent that checks the episode's factual claims
+  against tier 1-2 sources (prompts/research_verify.md).
+- Each agent's budget comes from its row's rank and type (research.budgets) and
+  is set as the web tools' max_uses. The API applies max_uses per request, so a
+  tool loop that pauses after spending its budget is not resumed (a resumed
+  request would get a fresh budget): one call without tools writes the agent's
+  findings from what it already read (prompts/research_writeup.md).
+- All research agents together, follow-ups included, stay under
+  research.max_searches: the stage asks before a run whose budgets would pass it.
+- Each agent writes 04_research/Lnn.md, its numbered entries [Lnn.k], and
+  Lnn.sources.json, every URL it saw and the text of every page it fetched.
 
-Topic files are paid for, so they are kept: a re-run only researches topics
-without findings. --topics T3,T5 redoes those topics. --force only allows
-04_dossier.md to be rebuilt.
+When every active row has findings, code merges them into 04_dossier.md: entries
+renumbered D01, D02, ... in rank order, each keeping its row tag and kind, exact
+duplicates across agents dropped. No model rewrites an entry on the way. A
+source check is appended. Every verbatim: yes quote is matched word for word
+against the page it was fetched from, or the transcript for the episode; a quote
+that does not match is downgraded to verbatim: no, so the script cannot quote it.
+
+Findings are paid for, so they are kept: a re-run researches only rows without
+findings, and --rows L01,L03 (re)does just those rows. --force allows the
+dossier to be rebuilt. Stage 04b (ledger_update.py) runs the follow-up round
+with run_agents and rebuilds the dossier with build_dossier.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
 import io
 import json
 import re
-import shutil
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlparse
 
-from . import llm
-from .common import DOSSIER_ENTRY as ENTRY
-from .common import Run, StageError, claims_section, load_prompt
+from . import ledger, llm
+from .common import (KINDS, Run, StageError, entry_id, format_tags, load_prompt, parse_tags,
+                     row_id)
 
 # URLs may hold balanced parentheses (Wikipedia), but a markdown link's closing ')' is not part of one.
 URL_IN_TEXT = re.compile(r"https?://(?:[^\s()\]>\"'`]|\([^\s()]*\))+")
-TOPIC_HEADING = re.compile(r"^##\s+T(\d+)\s*[:.\-–—]\s*(.+)$", re.M)
-TOPIC_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[T(\d+)\.(\d+)\]\**", re.M)
 QUOTE = re.compile(r"[\"“]([^\"”]*)[\"”]")  # pairs marks in order; short pairs are dropped later
 EPISODE_SOURCE = re.compile(r"Source:\s*(the\s+)?(podcast\s+)?episode\b", re.I)
+# '[L01.3]', '**[L1.3]**', '- [L01.3]' at the start of a line, in an agent's findings.
+ROW_ENTRY = re.compile(r"^[ \t]*(?:[-*]|\d+\.)?[ \t]*\**\[L0*(\d+)\.(\d+)\]\**", re.M)
+TAG_GROUP = re.compile(r"^[ \t]*\(([^)]*)\)")
+LOCAL_REF = re.compile(r"\bL0*(\d+)\.(\d+)\b")  # an agent citing its own entry, e.g. 'see L01.3'
+AGENT_STAGES = ("research_row", "research_followup")
 
 
 # --- tools and what they returned ---------------------------------------------
@@ -105,10 +115,6 @@ def _pdf_text(b64: str) -> str | None:
         return None
 
 
-def retrieved_urls(content: list) -> set[str]:
-    return set(retrieved(content)["urls"])
-
-
 def extract_tagged(text: str, tag: str) -> str:
     """The last complete <tag>...</tag> block. Agents narrate between tool calls."""
     end = text.rfind(f"</{tag}>")
@@ -118,158 +124,12 @@ def extract_tagged(text: str, tag: str) -> str:
     return text[start + len(tag) + 2:end].strip()
 
 
-def extract_dossier(text: str) -> str:
-    return extract_tagged(text, "dossier")
+# --- an agent's findings ---------------------------------------------------------------
 
-
-# --- the plan -------------------------------------------------------------------
-
-def parse_topics(plan: str) -> list[dict]:
-    """'## T3: Title' sections of the plan, each with its full text."""
-    heads = list(TOPIC_HEADING.finditer(plan))
-    topics = []
-    for i, m in enumerate(heads):
-        end = heads[i + 1].start() if i + 1 < len(heads) else len(plan)
-        nxt = re.search(r"^#{1,2}\s+(?!T\d)", plan[m.end():end], re.M)  # a non-topic heading ends it
-        if nxt:
-            end = m.end() + nxt.start()
-        topics.append({"id": int(m.group(1)), "title": m.group(2).strip(),
-                       "text": plan[m.start():end].strip()})
-    ids = [t["id"] for t in topics]
-    if len(ids) != len(set(ids)):
-        raise StageError(f"04_research/plan.md has duplicate topic numbers: {ids}")
-    return topics
-
-
-def make_plan(r: Run, cfg: dict, angle: str, episode_map: str) -> str:
-    rc = cfg["research"]
-    prompt = load_prompt("research_plan", angle=angle, map=episode_map,
-                         min_topics=rc["min_topics"], max_topics=rc["max_topics"],
-                         searches=rc["searches_per_topic"], fetches=rc["fetches_per_topic"])
-    res = llm.call(r, cfg, "research_plan", messages=[{"role": "user", "content": prompt}],
-                   label="research plan")
-    plan = res.text.strip()
-    if not parse_topics(plan):
-        (r.path("research_dir") / "_partial_plan.md").write_text(plan, encoding="utf-8")
-        raise StageError("research plan: no '## T1: Title' topics found; raw output saved to "
-                         "04_research/_partial_plan.md.")
-    r.path("research_plan").write_text(plan + "\n", encoding="utf-8")
-    return plan
-
-
-# --- one research agent -------------------------------------------------------------
-
-def topic_paths(r: Run, n: int) -> tuple[Path, Path]:
-    d = r.path("topics_dir")
-    return d / f"T{n:02d}.md", d / f"T{n:02d}.sources.json"
-
-
-def run_topic(r: Run, cfg: dict, topic: dict, angle: str, episode_map: str, plan: str,
-              check_spend=None) -> dict:
-    rc = cfg["research"]
-    if check_spend:
-        check_spend()  # a queued agent does not start once the cap is reached
-    others = "\n".join(f"- T{t['id']}: {t['title']}" for t in parse_topics(plan) if t["id"] != topic["id"])
-    prompt = load_prompt(
-        "research_topic", angle=angle, map=episode_map, topic=topic["text"], n=topic["id"],
-        other_topics=others or "(none)", searches=rc["searches_per_topic"], fetches=rc["fetches_per_topic"],
-    )
-    res = llm.call(
-        r, cfg, "research_topic", role="researcher", label=f"research T{topic['id']}",
-        messages=[{"role": "user", "content": prompt}],
-        tools=web_tools(cfg, rc["searches_per_topic"], rc["fetches_per_topic"]),
-        expected_searches=rc["searches_per_topic"], preapproved=True, before_request=check_spend,
-    )
-    md_path, src_path = topic_paths(r, topic["id"])
-    got = retrieved(res.content)
-    got.update({"topic": topic["id"], "title": topic["title"], "searches": res.usage.web_searches,
-                "fetches": res.usage.web_fetches, "cost_usd": round(res.usage.cost_usd, 4)})
-    src_path.parent.mkdir(parents=True, exist_ok=True)
-    src_path.write_text(json.dumps(got, ensure_ascii=False, indent=1), encoding="utf-8")
-    try:
-        findings = extract_tagged(res.text, "findings")
-    except StageError:
-        (md_path.parent / f"_partial_T{topic['id']:02d}.md").write_text(res.text, encoding="utf-8")
-        raise StageError(f"T{topic['id']}: no <findings> block; raw output saved to "
-                         f"04_research/topics/_partial_T{topic['id']:02d}.md") from None
-    md_path.write_text(findings + "\n", encoding="utf-8")
-    n_claims = len(topic_claims(findings))
-    print(f"  T{topic['id']} done: {n_claims} claims, {res.usage.web_searches} searches, "
-          f"{len(got['fetched'])} pages read, ${res.usage.cost_usd:.2f}")
-    return {"id": topic["id"], "claims": n_claims, "cost": res.usage.cost_usd}
-
-
-def run_topics(r: Run, cfg: dict, todo: list[dict], angle: str, episode_map: str, plan: str,
-               check_spend=None) -> list[str]:
-    """Research topics in parallel. Returns error messages for topics that failed;
-    the others are saved, so a re-run picks up only what is missing."""
-    errors = []
-    workers = max(1, min(cfg["research"]["parallel_agents"], len(todo)))
-    print(f"  researching {len(todo)} topic(s), {workers} agents at a time: "
-          + ", ".join(f"T{t['id']}" for t in todo))
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(run_topic, r, cfg, t, angle, episode_map, plan, check_spend): t for t in todo}
-        for f in as_completed(futures):
-            t = futures[f]
-            try:
-                f.result()
-            except StageError as e:
-                errors.append(f"T{t['id']}: {e}")
-                print(f"  T{t['id']} failed: {e}")
-    return errors
-
-
-# --- the critic -------------------------------------------------------------------------
-
-def findings_bundle(r: Run, topics: list[dict]) -> str:
-    parts = []
-    for t in topics:
-        md, _ = topic_paths(r, t["id"])
-        if md.exists():
-            parts.append(f"<topic id=\"T{t['id']}\" title=\"{t['title']}\">\n"
-                         f"{md.read_text(encoding='utf-8').strip()}\n</topic>")
-    return "\n\n".join(parts)
-
-
-def critique(r: Run, cfg: dict, round_no: int, angle: str, plan: str) -> list[dict]:
-    """Ask the critic for follow-up topics; append them to the plan. Returns the new topics."""
-    rc = cfg["research"]
-    topics = parse_topics(plan)
-    next_id = max(t["id"] for t in topics) + 1
-    prompt = load_prompt("research_critic", angle=angle, plan=plan, findings=findings_bundle(r, topics),
-                         next_id=next_id, max_followups=rc["max_followups"],
-                         searches=rc["searches_per_topic"], fetches=rc["fetches_per_topic"])
-    res = llm.call(r, cfg, "research_critic", messages=[{"role": "user", "content": prompt}],
-                   label=f"research critic round {round_no}", preapproved=True)
-    text = res.text.strip()
-    (r.path("research_dir") / f"critic_round{round_no}.md").write_text(text + "\n", encoding="utf-8")
-    new = [t for t in parse_topics(text) if t["id"] >= next_id][: rc["max_followups"]]
-    if new:
-        block = "\n\n".join(t["text"] for t in new)
-        plan = plan.rstrip() + f"\n\n# Round {round_no} follow-ups\n\n{block}\n"
-        r.path("research_plan").write_text(plan, encoding="utf-8")
-    print(f"  critic round {round_no}: {len(new)} follow-up topic(s)"
-          + (": " + ", ".join(f"T{t['id']} {t['title']}" for t in new) if new else ", research is complete"))
-    return new
-
-
-# --- merge ----------------------------------------------------------------------------------
-
-def _entries(text: str, pattern: re.Pattern) -> list[tuple[re.Match, str]]:
-    marks = list(pattern.finditer(text))
-    out = []
-    for i, m in enumerate(marks):
-        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        chunk = text[m.start():end]
-        h = re.search(r"^#{1,6}\s", chunk, re.M)
-        out.append((m, (chunk[:h.start()] if h else chunk).strip()))
-    return out
-
-
-def topic_claims(findings: str) -> list[tuple[re.Match, str]]:
-    """The [Tn.k] entries in a topic's '## Claims' section. Citations of claims in
-    its other sections ('[T3.2] and [T3.3] disagree') are not entries."""
-    return _entries(_section(findings, "Claims") or findings, TOPIC_ENTRY)
+def row_paths(r: Run, rid: str, followup: bool = False) -> tuple[Path, Path]:
+    stem = f"{rid}.followup" if followup else rid
+    d = r.path("research_dir")
+    return d / f"{stem}.md", d / f"{stem}.sources.json"
 
 
 def _section(text: str, name: str) -> str:
@@ -280,68 +140,178 @@ def _section(text: str, name: str) -> str:
     return text[m.end(): m.end() + nxt.start() if nxt else None].strip()
 
 
-def merge_claims(r: Run, topics: list[dict]) -> tuple[str, dict[str, int], dict]:
-    """Renumber every topic's [Tn.k] claims as [Cn], in topic order, by code.
-    Returns (claims markdown, {'T3.4': 17}, everything the agents retrieved)."""
-    mapping: dict[str, int] = {}
-    blocks, conflicts, gaps = [], [], []
-    seen = {"urls": {}, "fetched": []}
-    n = 0
-    for t in topics:
-        md, src = topic_paths(r, t["id"])
-        if not md.exists():
-            continue
-        findings = md.read_text(encoding="utf-8")
-        if src.exists():
-            s = json.loads(src.read_text(encoding="utf-8"))
-            seen["urls"].update(s.get("urls", {}))
-            seen["fetched"].extend(s.get("fetched", []))
-        lines = [f"### T{t['id']}: {t['title']}", ""]
-        for m, entry in topic_claims(findings):
-            tag = f"T{m.group(1)}.{m.group(2)}"
-            if tag in mapping:
-                print(f"  warning: {tag} appears twice in T{t['id']}'s claims; keeping the first")
-                continue
-            n += 1
-            mapping[tag] = n
-            body = TOPIC_ENTRY.sub("", entry, count=1).strip()
-            lines.append(f"[C{n}] {body}")
-        blocks.append("\n".join(lines))
-        if c := _section(findings, "Conflicts"):
-            conflicts.append(f"From T{t['id']}:\n{c}")
-        if g := _section(findings, "Could not establish"):
-            gaps.append(f"From T{t['id']}:\n{g}")
-
-    def renumber(text: str) -> str:
-        return re.sub(r"\bT(\d+)\.(\d+)\b",
-                      lambda m: f"C{mapping[m.group(0)]}" if m.group(0) in mapping else m.group(0), text)
-
-    out = "## Claims\n\n" + "\n\n".join(renumber(b) for b in blocks)
-    if conflicts:
-        out += "\n\n## Conflicts between sources\n\n" + renumber("\n\n".join(conflicts))
-    if gaps:
-        out += "\n\n## Could not establish\n\n" + renumber("\n\n".join(gaps))
-    return out, mapping, seen
+def _chunks(text: str, pattern: re.Pattern) -> list[tuple[re.Match, str]]:
+    """Each match of `pattern` with the text up to the next match or heading."""
+    marks = list(pattern.finditer(text))
+    out = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        chunk = text[m.start():end]
+        h = re.search(r"^#{1,6}\s", chunk, re.M)
+        out.append((m, (chunk[:h.start()] if h else chunk).strip()))
+    return out
 
 
-def merge(r: Run, cfg: dict, angle: str, plan: str) -> str:
-    topics = parse_topics(plan)
-    claims_md, mapping, seen = merge_claims(r, topics)
-    if not mapping:
-        raise StageError("research: no [Tn.k] claims in any topic's findings; nothing to merge.")
-    prompt = load_prompt("research_synthesis", angle=angle, claims=claims_md)
-    res = llm.call(r, cfg, "research_synthesis", messages=[{"role": "user", "content": prompt}],
-                   label="research synthesis", preapproved=True)
-    overview = res.text.strip()
-    title = re.search(r"^#\s+(.+)$", plan, re.M)
-    cited = {u.rstrip(".,;:") for u in URL_IN_TEXT.findall(claims_md)}
-    sources = "\n".join(f"- {seen['urls'][u]}: {u}" if seen["urls"].get(u) else f"- {u}" for u in sorted(cited))
-    dossier = (f"# Dossier: {title.group(1).replace('Research plan:', '').strip() if title else r.name}\n\n"
-               f"{overview}\n\n{claims_md}\n\n## Sources cited\n\n{sources}\n")
-    return dossier.rstrip() + "\n" + source_check(dossier, set(seen["urls"]), seen["fetched"])
+def parse_entries(findings: str) -> list[dict]:
+    """The [Lnn.k] entries in an agent's '## Entries' section:
+    [{'n': k, 'tags': {...}, 'body': text after the tags, 'tagged': whether tags were found}]."""
+    out = []
+    for _, chunk in _chunks(_section(findings, "Entries") or findings, ROW_ENTRY):
+        head = ROW_ENTRY.match(chunk)
+        rest = chunk[head.end():]
+        tm = TAG_GROUP.match(rest)
+        tags = parse_tags(tm.group(1)) if tm else parse_tags("")
+        tagged = bool(tm and (tags["kind"] or tags["tier"] is not None))
+        if not tagged:  # '(In 1933) Weil...' is text, not tags
+            tags = parse_tags("")
+        tags["rows"] = []  # the owner is the row whose file this is
+        out.append({"n": int(head.group(2)), "tags": tags,
+                    "body": (rest[tm.end():] if tagged else rest).strip(), "tagged": tagged})
+    return out
 
 
-# --- checks ----------------------------------------------------------------------------------
+# --- one research agent ----------------------------------------------------------------
+
+def agent_prompt(cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
+                 followup: dict | None = None) -> str:
+    searches, fetches = ledger.budget(cfg, row, followup=bool(followup))
+    others = "\n".join(f"- {o['id']}: {o['idea']}" for o in ledger.active(led) if o["id"] != row["id"])
+    fmt = load_prompt("research_format", row_id=row["id"], start=followup["start"] if followup else 1)
+    note = load_prompt("research_followup", earlier=followup["earlier"], gap=followup["gap"]) if followup else ""
+    return load_prompt(
+        "research_verify" if row["type"] == "covered" else "research_row",
+        angle=angle, map=episode_map, row_id=row["id"], idea=row["idea"], rank=row["rank"],
+        type=row["type"], episode_has=row["episode_has"] or "Nothing.",
+        research_question=row["research_question"], tier_needed=row["tier_needed"],
+        other_rows=others or "(none)", searches=searches, fetches=fetches,
+        source_tiers=load_prompt("source_tiers"), format=fmt, followup=note,
+    )
+
+
+def material_text(got: dict) -> str:
+    seen = "\n".join(f"- {t}: {u}" if t else f"- {u}" for u, t in got["urls"].items()) or "(none)"
+    pages = "\n\n".join(f"<page url=\"{f['url']}\" title=\"{f['title']}\">\n{f['text']}\n</page>"
+                        for f in got["fetched"]) or "(no pages were fetched)"
+    return f"Search results and pages seen:\n{seen}\n\nPages fetched, in full:\n\n{pages}"
+
+
+def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
+              followup: dict | None = None, check_spend=None) -> dict:
+    if check_spend:
+        check_spend()  # a queued agent does not start once the spend cap is reached
+    searches, fetches = ledger.budget(cfg, row, followup=bool(followup))
+    stage = "research_followup" if followup else "research_row"
+    label = f"research {row['id']}" + (" follow-up" if followup else "")
+    extra = {"row": row["id"]}
+    prompt = agent_prompt(cfg, row, led, angle, episode_map, followup)
+    res = llm.call(
+        r, cfg, stage, role="researcher", label=label, messages=[{"role": "user", "content": prompt}],
+        tools=web_tools(cfg, searches, fetches), expected_searches=searches, preapproved=True,
+        before_request=check_spend, log_extra=extra,
+        resume_if=lambda u: u.web_searches < searches and u.web_fetches < fetches,
+    )
+    got = retrieved(res.content)
+    text, cost = res.text, res.usage.cost_usd
+    if res.paused:  # its budget is spent: write up from what it read, without tools
+        w = llm.call(r, cfg, "research_writeup", role="researcher", label=f"{label} write-up",
+                     messages=[{"role": "user", "content": load_prompt(
+                         "research_writeup", instructions=prompt, notes=text or "(none)",
+                         material=material_text(got))}],
+                     preapproved=True, before_request=check_spend, log_extra=extra)
+        text, cost = w.text, cost + w.usage.cost_usd
+    md, src = row_paths(r, row["id"], followup=bool(followup))
+    md.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(json.dumps({
+        **got, "row": row["id"], "followup": bool(followup), "fingerprint": ledger.fingerprint(row),
+        "budget": {"searches": searches, "fetches": fetches},
+        "searches": res.usage.web_searches, "fetches": res.usage.web_fetches,
+        "written_up": res.paused, "cost_usd": round(cost, 4),
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    try:
+        findings = extract_tagged(text, "research")
+    except StageError:
+        partial = md.parent / f"_partial_{md.stem}.md"
+        partial.write_text(text, encoding="utf-8")
+        raise StageError(f"{label}: no <research> block; raw output saved to "
+                         f"{partial.relative_to(r.root)}") from None
+    md.write_text(findings + "\n", encoding="utf-8")
+    entries = parse_entries(findings)
+    kinds = Counter(e["tags"]["kind"] or "untagged" for e in entries)
+    print(f"  {label} done: {len(entries)} entries ({', '.join(f'{k} {v}' for k, v in kinds.items()) or 'none'}), "
+          f"{res.usage.web_searches} of {searches} searches, {res.usage.web_fetches} of {fetches} fetches"
+          + (", written up after its budget ran out" if res.paused else "") + f", ${cost:.2f}")
+    return {"row": row["id"], "entries": len(entries), "cost": cost}
+
+
+def run_agents(r: Run, cfg: dict, jobs: list[tuple[dict, dict | None]], led: dict, angle: str,
+               episode_map: str, check_spend=None) -> list[str]:
+    """Run (row, followup-or-None) jobs in parallel, in rank order as slots free up.
+    Returns error messages for the agents that failed; the others are saved."""
+    errors = []
+    workers = max(1, min(cfg["research"]["parallel_agents"], len(jobs)))
+    print(f"  {len(jobs)} agent(s), {workers} at a time: "
+          + ", ".join(row["id"] + (" follow-up" if fu else "") for row, fu in jobs))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run_agent, r, cfg, row, led, angle, episode_map, fu, check_spend): (row, fu)
+                   for row, fu in jobs}
+        for f in as_completed(futures):
+            row, fu = futures[f]
+            try:
+                f.result()
+            except StageError as e:
+                errors.append(f"{row['id']}{' follow-up' if fu else ''}: {e}")
+                print(f"  {row['id']} failed: {e}")
+    return errors
+
+
+# --- budgets, the search cap, the spend cap ------------------------------------------------
+
+def agent_estimate(cfg: dict, searches: int, fetches: int, stage: str = "research_row") -> float:
+    """Upper-end cost of one agent. Its context grows with each search result and page,
+    and the tool loop re-reads it every iteration (mostly from cache): x1.5, priced uncached."""
+    page = cfg["research"]["max_fetch_tokens"]
+    input_tokens = int((30_000 + searches * 8_000 + fetches * page) * 1.5)
+    return llm.estimate_call(cfg, cfg["models"]["researcher"], input_tokens,
+                             cfg["stages"][stage]["expected_output_tokens"], searches)
+
+
+def estimate(cfg: dict, jobs: list[tuple[dict, bool]]) -> float:
+    total = 0.0
+    for row, followup in jobs:
+        s, f = ledger.budget(cfg, row, followup=followup)
+        total += agent_estimate(cfg, s, f, "research_followup" if followup else "research_row")
+    return total
+
+
+def searches_used(r: Run) -> int:
+    return sum(rec.get("web_searches", 0) or 0 for rec in r.read_log() if rec.get("stage") in AGENT_STAGES)
+
+
+def check_search_cap(r: Run, cfg: dict, planned: int, what: str) -> None:
+    cap, used = cfg["research"]["max_searches"], searches_used(r)
+    if used + planned > cap:
+        llm.confirm(r, "search cap", f"{what} would bring research to up to {used + planned} searches "
+                                     f"({used} used so far, up to {planned} more), past the {cap}-search "
+                                     "cap (research.max_searches).")
+
+
+def research_spend(r: Run) -> float:
+    return sum(rec.get("cost_usd", 0) or 0 for rec in r.read_log() if rec.get("stage", "").startswith("research"))
+
+
+def spend_checker(r: Run, cfg: dict):
+    """A before_request hook: stop once this invocation's research spend reaches research.max_usd."""
+    cap, before = cfg["research"]["max_usd"], research_spend(r)
+
+    def check() -> None:
+        spent = research_spend(r) - before
+        if spent >= cap:
+            raise StageError(f"research has spent ${spent:.2f}, the research.max_usd cap. Finished rows "
+                             "are saved; raise the cap in config.yaml and re-run to continue.")
+    return check
+
+
+# --- merge ---------------------------------------------------------------------------------
 
 def _norm(url: str) -> str:
     url = url.rstrip(".,;:")
@@ -355,202 +325,251 @@ def _norm_text(s: str) -> str:
     return " ".join(re.sub(r"[^\w']+", " ", s).split())
 
 
-def quote_check(dossier: str, fetched: list[dict]) -> tuple[list[str], list[str], list[str]]:
-    """Match every quote in a claim against the text of the pages the agents fetched.
-    Returns claim ids (verified, not found, no fetched page to check against)."""
+def quote_found(body: str, pages: list[str]) -> bool | None:
+    """Whether every quoted passage in an entry's text (before 'Source:') is on one of the
+    normalized pages. An ellipsis marks a cut: each piece must appear. None if nothing is quoted."""
+    text = re.split(r"\bSource:", body, maxsplit=1)[0]
+    pieces = [p for q in QUOTE.findall(text) for p in re.split(r"\s*(?:\.\.\.|…)\s*", q)]
+    pieces = [_norm_text(p) for p in pieces if len(_norm_text(p).split()) >= 3]
+    if not pieces:
+        return None
+    return all(any(p in page for page in pages) for p in pieces)
+
+
+def _host(url: str) -> str:
+    return (urlparse(url).hostname or "").lower()
+
+
+def domain_tier(cfg: dict, urls: list[str]) -> tuple[int, str] | None:
+    """The best tier the cited domains allow, if every cited domain is in research.tier_domains."""
+    table = cfg["research"].get("tier_domains") or {}
+    found = []
+    for u in urls:
+        host = _host(u)
+        hit = next(((d, t) for d, t in table.items() if host == d or host.endswith("." + d)), None)
+        if hit is None:
+            return None
+        found.append((hit[1], hit[0]))
+    return min(found) if found else None
+
+
+def gather(r: Run, led: dict) -> dict:
+    """Every active row's entries (first round, then follow-up), deduplicated and numbered."""
+    numbered: list[dict] = []
+    by_text: dict[str, dict] = {}
+    mapping: dict[tuple[int, int], int] = {}
+    seen = {"urls": {}, "fetched": []}
+    not_found, stats, merged = [], [], []
+    for row in ledger.active(led):
+        rnum = int(row["id"][1:])
+        for fu in (False, True):
+            md, src = row_paths(r, row["id"], fu)
+            if not md.exists():
+                continue
+            findings = md.read_text(encoding="utf-8")
+            if src.exists():
+                s = json.loads(src.read_text(encoding="utf-8"))
+                seen["urls"].update(s.get("urls", {}))
+                seen["fetched"].extend(s.get("fetched", []))
+                stats.append((row["id"] + (" follow-up" if fu else ""), s.get("searches", 0),
+                              (s.get("budget") or {}).get("searches"), s.get("written_up", False)))
+            for e in parse_entries(findings):
+                if (rnum, e["n"]) in mapping:
+                    print(f"  warning: {row['id']}.{e['n']} appears twice in {row['id']}'s findings; keeping the first")
+                    continue
+                key = " ".join([e["tags"]["kind"] or "claim", *e["tags"]["links"], *e["body"].split()])
+                if key in by_text:  # an exact duplicate of another agent's entry
+                    first = by_text[key]
+                    if row["id"] not in first["tags"]["rows"]:
+                        first["tags"]["rows"].append(row["id"])
+                        if first not in merged:
+                            merged.append(first)
+                    mapping[(rnum, e["n"])] = first["d"]
+                    continue
+                e["tags"]["rows"] = [row["id"]]
+                e["d"], e["row"] = len(numbered) + 1, row["id"]
+                mapping[(rnum, e["n"])] = e["d"]
+                by_text[key] = e
+                numbered.append(e)
+            nf = _section(findings, "Not found")
+            if nf and nf.strip().rstrip(".").lower() not in ("nothing", "none", "n/a"):
+                not_found.append((row["id"] + (" follow-up" if fu else ""), nf))
+    for e in numbered:  # 'see L01.3' -> 'see D05'
+        e["body"] = LOCAL_REF.sub(lambda m: entry_id(mapping[(int(m.group(1)), int(m.group(2)))])
+                                  if (int(m.group(1)), int(m.group(2))) in mapping else m.group(0), e["body"])
+    return {"entries": numbered, "seen": seen, "not_found": not_found, "stats": stats, "merged": merged}
+
+
+def check_entries(cfg: dict, entries: list[dict], seen: dict, transcript: str) -> dict:
+    """Quote, tier and URL checks. Downgrades verbatim: yes quotes that do not match their page."""
     by_url: dict[str, list[str]] = {}
-    for f in fetched:
+    for f in seen["fetched"]:
         by_url.setdefault(_norm(f["url"]), []).append(_norm_text(f["text"]))
     every_page = [t for texts in by_url.values() for t in texts]
-    ok, missing, unchecked = [], [], []
-    for m, entry in _entries(claims_section(dossier), ENTRY):
-        if EPISODE_SOURCE.search(entry):
-            continue  # episode quotes are listed separately, for checking against the transcript
-        quotes = [q for q in QUOTE.findall(re.split(r"\bSource:", entry, maxsplit=1)[0]) if len(q) >= 25]
-        if not quotes:
+    transcript_n = _norm_text(transcript) if transcript else ""
+    seen_n = {_norm(u) for u in seen["urls"]}
+    out = {"verified_page": [], "verified_transcript": [], "downgraded": [], "no_tier": [], "untagged": [],
+           "no_url": [], "episode": [], "tier_flags": [], "unseen_urls": set()}
+    for e in entries:
+        t, d, body = e["tags"], entry_id(e["d"]), e["body"]
+        urls = [u.rstrip(".,;:") for u in URL_IN_TEXT.findall(body)]
+        episode = bool(EPISODE_SOURCE.search(body)) or t["tier"] == "episode"
+        if not e["tagged"]:
+            out["untagged"].append(d)
+        if t["kind"] != "connection":
+            if t["tier"] is None:
+                out["no_tier"].append(d)
+            if episode:
+                out["episode"].append(d)
+            elif not urls:
+                out["no_url"].append(d)
+        out["unseen_urls"].update(u for u in urls if _norm(u) not in seen_n)
+        if isinstance(t["tier"], int) and urls and (dt := domain_tier(cfg, urls)) and t["tier"] < dt[0]:
+            out["tier_flags"].append(f"{d} (tier {t['tier']} recorded; {dt[1]} is tier {dt[0]})")
+        if t["verbatim"] != "yes":
             continue
-        urls = [_norm(u) for u in URL_IN_TEXT.findall(entry)]
-        pages = [t for u in urls for t in by_url.get(u, [])]
-        cid = f"C{m.group(1)}"
-        if not pages:
-            # Not fetched at that URL: still look in every page read, in case of a redirect.
-            pages = every_page
-            if not pages:
-                unchecked.append(cid)
-                continue
-        found = True
-        for q in quotes:
-            # An ellipsis marks a cut: each piece must appear.
-            for piece in re.split(r"\s*(?:\.\.\.|…)\s*", q):
-                p = _norm_text(piece)
-                if len(p.split()) >= 3 and not any(p in page for page in pages):
-                    found = False
-        (ok if found else missing).append(cid)
-    return ok, missing, unchecked
+        if episode:
+            pages, where = ([transcript_n] if transcript_n else []), "transcript"
+        else:
+            pages = [p for u in urls for p in by_url.get(_norm(u), [])] or every_page  # or a redirect
+            where = "page"
+        found = quote_found(body, pages) if pages else False
+        if found:
+            out["verified_transcript" if where == "transcript" else "verified_page"].append(d)
+            continue
+        reason = ("no quoted words" if found is None else
+                  f"no {'transcript' if where == 'transcript' else 'fetched page'} to check against" if not pages else
+                  "not in the transcript" if where == "transcript" else "not found on the fetched page")
+        t["verbatim"] = "no"
+        out["downgraded"].append(f"{d} ({reason})")
+    return out
 
 
-def source_check(dossier: str, seen: set[str], fetched: list[dict] | None = None) -> str:
-    """List cited URLs that never came back from a search or fetch, entries with no URL,
-    episode-only claims, and quotes that do not match the fetched page."""
-    seen_n = {_norm(u) for u in seen}
-    cited = {u.rstrip(".,;:") for u in URL_IN_TEXT.findall(dossier)}
-    unseen = sorted(u for u in cited if _norm(u) not in seen_n)
-
-    no_url, episode_only = [], []
-    entries = _entries(claims_section(dossier), ENTRY)
-    for m, entry in entries:
-        if EPISODE_SOURCE.search(entry):
-            episode_only.append(f"C{m.group(1)}")
-        elif not URL_IN_TEXT.search(entry):
-            no_url.append(f"C{m.group(1)}")
-
-    lines = ["", "## Source check (generated by the research stage)", "",
-             f"- Numbered claims: {len(entries)}",
-             f"- URLs retrieved by search or fetch: {len(seen)}",
-             f"- URLs cited in this dossier: {len(cited)}"]
+def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
+    """Merge every active row's findings into the dossier text. Code only: same files in, same dossier out."""
+    g = gather(r, led)
+    entries = g["entries"]
     if not entries:
-        lines.append("- WARNING: no numbered [Cn] claims found. The draft stage needs them.")
-    if no_url:
-        lines.append(f"- Claims with no source URL: {', '.join(no_url)}")
-    if episode_only:
-        lines.append("- Claims sourced only to the episode (the researchers worked from the map, not the "
-                     f"transcript; check these against the transcript): {', '.join(episode_only)}")
-    if unseen:
+        raise StageError("research: no [Lnn.k] entries in any row's findings; nothing to merge.")
+    chk = check_entries(cfg, entries, g["seen"], transcript)
+    angle = r.path("angle").read_text(encoding="utf-8") if r.path("angle").exists() else ""
+    title = re.search(r"^#+\s+(.+)$", angle, re.M)
+    lines = [f"# Dossier: {title.group(1).strip() if title else r.name}", "",
+             "Merged by code from 04_research/, one section per ledger row in rank order. Each entry keeps "
+             "its row, its kind and its source tier. See the source check at the end.", "", "## Entries", ""]
+    for row in ledger.active(led):
+        lines += [f"### {row['id']}: {row['idea']}", "",
+                  f"Rank {row['rank']}, {row['type']}; needs tier {row['tier_needed']} or better.", ""]
+        mine = [e for e in entries if e["row"] == row["id"]]
+        lines += [f"{'[' + entry_id(e['d']) + ']'} {format_tags(e['tags'])} {e['body']}\n" for e in mine] or \
+                 ["(no entries)\n"]
+    if g["not_found"]:
+        lines += ["## Not found", ""] + [f"From {rid}:\n{text}\n" for rid, text in g["not_found"]]
+    cited = sorted({u.rstrip(".,;:") for e in entries for u in URL_IN_TEXT.findall(e["body"])})
+    lines += ["## Sources cited", ""]
+    lines += [f"- {g['seen']['urls'][u]}: {u}" if g["seen"]["urls"].get(u) else f"- {u}" for u in cited] or ["(none)"]
+    lines += ["", "## Source check (generated by the research stage)", ""]
+    kinds = Counter(e["tags"]["kind"] or "claim" for e in entries)
+    lines.append(f"- Entries: {len(entries)} ({', '.join(f'{k} {kinds[k]}' for k in KINDS if kinds[k])})")
+    if g["merged"]:
+        lines.append("- Exact duplicates merged across agents: "
+                     + ", ".join(f"{entry_id(e['d'])} ({', '.join(e['tags']['rows'])})" for e in g["merged"]))
+    no_material = [row["id"] for row in ledger.active(led) if row["type"] != "covered"
+                   and not any(e["tags"]["kind"] == "material" and row["id"] in e["tags"]["rows"] for e in entries)]
+    if no_material:
+        lines.append(f"- Rows with no tellable material: {', '.join(no_material)}")
+    for key, text in (("untagged", "Entries with no tags (treated as claims)"),
+                      ("no_tier", "Entries with no source tier"),
+                      ("no_url", "Entries with no source URL"),
+                      ("tier_flags", "Tiers better than the source's domain allows (flagged, not changed)"),
+                      ("episode", "Entries sourced to the episode")):
+        if chk[key]:
+            lines.append(f"- {text}: {', '.join(chk[key])}")
+    if chk["unseen_urls"]:
         lines.append("- Cited URLs that no search or fetch returned. Check these by hand; "
-                     "the model may have written them from memory:")
-        lines += [f"  - {u}" for u in unseen]
-    if fetched is not None:
-        ok, missing, unchecked = quote_check(dossier, fetched)
-        lines.append(f"- Quotes matched word for word against the fetched page: {len(ok)}")
-        if missing:
-            lines.append("- Quotes NOT found in any fetched page (misquoted, paraphrased, or from a page "
-                         f"the agent did not fetch). Check before using: {', '.join(missing)}")
-        if unchecked:
-            lines.append(f"- Quotes with no fetched page to check against: {', '.join(unchecked)}")
-    if entries and not no_url and not unseen:
-        lines.append("- Every claim has a URL, and every cited URL was retrieved in this run.")
-    return "\n".join(lines) + "\n"
+                     "the agent may have written them from memory:")
+        lines += [f"  - {u}" for u in sorted(chk["unseen_urls"])]
+    verified = chk["verified_page"] + chk["verified_transcript"]
+    lines.append(f"- Verbatim quotes matched word for word: {len(verified)}"
+                 + (f" ({', '.join(chk['verified_page'])} on the fetched page" if chk["verified_page"] else "")
+                 + (f"{'; ' if chk['verified_page'] else ' ('}{', '.join(chk['verified_transcript'])} in the "
+                    "transcript" if chk["verified_transcript"] else "")
+                 + (")" if verified else ""))
+    if chk["downgraded"]:
+        lines.append("- Quotes downgraded to verbatim: no, so the script may not quote them: "
+                     + ", ".join(chk["downgraded"]))
+    if g["stats"]:
+        used = sum(s[1] or 0 for s in g["stats"])
+        lines.append(f"- Searches: {used} (cap {cfg['research']['max_searches']}): " + ", ".join(
+            f"{rid} {n} of {b}" + (", written up at its budget" if w else "") for rid, n, b, w in g["stats"]))
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # --- the stage ----------------------------------------------------------------------------------
 
-def estimate(cfg: dict, n_topics: int, critic_rounds: int | None = None) -> float:
-    """Upper-end cost of the research still to do, for the cost guard."""
-    rc, st = cfg["research"], cfg["stages"]
-    agent = llm.estimate_call(cfg, cfg["models"]["researcher"], st["research_topic"]["expected_input_tokens"],
-                              st["research_topic"]["expected_output_tokens"], rc["searches_per_topic"])
-    critic = llm.estimate_call(cfg, cfg["models"]["writer"], 80_000, st["research_critic"]["expected_output_tokens"])
-    synth = llm.estimate_call(cfg, cfg["models"]["writer"], 60_000, st["research_synthesis"]["expected_output_tokens"])
-    rounds = rc["rounds"] - 1 if critic_rounds is None else critic_rounds
-    return (n_topics + rounds * rc["max_followups"]) * agent + rounds * critic + synth
+def _stale(r: Run, row: dict) -> bool:
+    _, src = row_paths(r, row["id"])
+    if not src.exists():
+        return False
+    return json.loads(src.read_text(encoding="utf-8")).get("fingerprint") != ledger.fingerprint(row)
 
 
-def _inputs_hash(angle: str, episode_map: str) -> str:
-    return hashlib.sha256((angle + "\0" + episode_map).encode()).hexdigest()[:12]
-
-
-INPUTS_LINE = re.compile(r"^<!-- research inputs: (\w+) -->$", re.M)
-
-
-def _rounds_done(r: Run) -> tuple[int, bool]:
-    """(last critic round run, whether the critic has declared the research complete)."""
-    last, complete = 1, False
-    for p in sorted(r.path("research_dir").glob("critic_round*.md"),
-                    key=lambda p: int(re.search(r"(\d+)", p.stem).group(1))):
-        last = int(re.search(r"(\d+)", p.stem).group(1))
-        complete = not parse_topics(p.read_text(encoding="utf-8"))
-    return last, complete
-
-
-def run(r: Run, cfg: dict, plan_only: bool = False, topics: str | None = None, replan: bool = False):
-    angle = r.read("angle")
-    episode_map = r.read("map")
+def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
+    led = ledger.load(r, cfg)
+    angle, episode_map = r.read("angle"), r.read("map")
+    transcript = r.path("transcript").read_text(encoding="utf-8") if r.path("transcript").exists() else ""
+    if led.get("inputs") and transcript and led["inputs"] != ledger.inputs_hash(transcript, episode_map, angle):
+        print("  warning: the transcript, map or angle has changed since the ledger was made. If its rows no "
+              "longer fit the angle, edit ledger.json or run ledger --force.")
     if r.path("dossier").exists() and not r.force and not plan_only:
         raise StageError("Output already exists: 04_dossier.md. Use --force to rebuild it "
-                         "(topic findings already paid for are kept).")
-    rc = cfg["research"]
-    if replan and r.path("research_dir").exists():
-        old = r.root / f"04_research.old-{time.strftime('%Y%m%d-%H%M%S')}"
-        shutil.move(str(r.path("research_dir")), old)
-        print(f"  moved the old research to {old.name}/")
-    r.path("topics_dir").mkdir(parents=True, exist_ok=True)
-
-    inputs = _inputs_hash(angle, episode_map)
-    if r.path("research_plan").exists():
-        plan = r.read("research_plan")
-        m = INPUTS_LINE.search(plan)
-        if m and m.group(1) != inputs:
-            raise StageError("03_angle.md or 01_map.md has changed since the research plan was made. "
-                             "Run research --replan to start over (the old research is moved aside, not "
-                             "deleted), or delete the 'research inputs' line at the end of "
-                             "04_research/plan.md to keep the plan.")
-        print("  using the existing 04_research/plan.md")
+                         "(row findings already paid for are kept).")
+    act = ledger.active(led)
+    if rows:
+        redo = {row_id(int(x)) for x in re.findall(r"\d+", rows)}
+        unknown = redo - {x["id"] for x in act}
+        if not redo or unknown:
+            raise StageError(f"--rows {rows!r}: not active rows in the ledger: {sorted(unknown) or rows}")
+        todo = [x for x in act if x["id"] in redo]
     else:
-        plan = make_plan(r, cfg, angle, episode_map)
-        plan = plan.rstrip() + f"\n\n<!-- research inputs: {inputs} -->\n"
-        r.path("research_plan").write_text(plan, encoding="utf-8")
-    all_topics = parse_topics(plan)
-    if not all_topics:
-        raise StageError("04_research/plan.md has no '## T1: Title' topics.")
-    print(f"  plan: {len(all_topics)} topics: " + "; ".join(f"T{t['id']} {t['title']}" for t in all_topics))
+        todo = [x for x in act if not row_paths(r, x["id"])[0].exists()]
+    stale = [x["id"] for x in act if x not in todo and row_paths(r, x["id"])[0].exists() and _stale(r, x)]
+    if stale:
+        print(f"  warning: {', '.join(stale)} changed in ledger.json after being researched; their findings "
+              f"answer the old question. Redo them with --rows {','.join(stale)} --force.")
+
+    print("  research plan, from ledger.json:")
+    for x in act:
+        s, f = ledger.budget(cfg, x)
+        state = ("to research" if x in todo else "researched" if row_paths(r, x["id"])[0].exists()
+                 else "not in this run")
+        print(f"    {x['id']} rank {x['rank']} {x['type']:9} {s} searches, {f} fetches   {state}")
+    planned = sum(ledger.budget(cfg, x)[0] for x in todo)
+    est = estimate(cfg, [(x, False) for x in todo])
+    print(f"  {len(todo)} agent(s) to run: up to {planned} searches ({searches_used(r)} used so far; cap "
+          f"{cfg['research']['max_searches']}), estimated up to ${est:.2f}.")
     if plan_only:
-        print(f"\n  Plan written. Estimated research cost: up to ${estimate(cfg, len(all_topics)):.2f}.\n"
-              "  Edit 04_research/plan.md if you like, then run research again.")
-        return r.path("research_plan")
-
-    redo = set()
-    if topics:
-        redo = {int(x) for x in re.findall(r"\d+", topics)}
-        unknown = redo - {t["id"] for t in all_topics}
-        if unknown:
-            raise StageError(f"Topics not in the plan: {sorted(unknown)}")
-    todo = [t for t in all_topics if t["id"] in redo or not topic_paths(r, t["id"])[0].exists()]
-
-    # Critic rounds pick up where earlier runs stopped, and never run for an explicit --topics redo.
-    last_round, complete = _rounds_done(r)
-    rounds_left = 0 if (topics or complete) else max(0, rc["rounds"] - last_round)
-
-    cap = rc["max_usd"]
-    if todo or rounds_left:
-        est = estimate(cfg, len(todo), rounds_left)
-        llm.guard(r, cfg, f"research ({len(todo)} topics now, up to {rounds_left} critic round(s); "
-                          f"hard stop at ${cap:.2f})", est)
-    spent_before = _research_spend(r)
-
-    def spent() -> float:
-        return _research_spend(r) - spent_before
-
-    def check_spend(_in_call: float = 0.0) -> None:
-        if spent() >= cap:
-            raise StageError(f"research has spent ${spent():.2f}, the research.max_usd cap. Finished "
-                             "topics are saved; raise the cap in config.yaml and re-run to continue.")
+        return None
 
     t0 = time.monotonic()
-    errors = run_topics(r, cfg, todo, angle, episode_map, plan, check_spend) if todo else []
-    if errors:
-        raise StageError("some research agents failed; their topics will be retried on the next run:\n  "
-                         + "\n  ".join(errors))
-
-    for round_no in range(last_round + 1, last_round + 1 + rounds_left):
-        if spent() >= cap:
-            print(f"  stopping follow-ups: research has spent ${spent():.2f} of the ${cap:.2f} cap")
-            break
-        new = critique(r, cfg, round_no, angle, plan)
-        if not new:
-            break
-        plan = r.read("research_plan")
-        errors = run_topics(r, cfg, new, angle, episode_map, plan, check_spend)
+    if todo:
+        check_search_cap(r, cfg, planned, f"Researching {len(todo)} row(s)")
+        llm.guard(r, cfg, f"research ({len(todo)} agents)", est)
+        errors = run_agents(r, cfg, [(x, None) for x in todo], led, angle, episode_map, spend_checker(r, cfg))
         if errors:
-            raise StageError("some follow-up agents failed; re-run research to retry them:\n  "
+            raise StageError("some research agents failed; their rows will be researched on the next run:\n  "
                              + "\n  ".join(errors))
-
-    dossier = merge(r, cfg, angle, plan)
+    missing = [x["id"] for x in act if not row_paths(r, x["id"])[0].exists()]
+    if missing:
+        print(f"  Still to research: {', '.join(missing)}. The dossier is built once every active row has "
+              f"findings: python cli.py research {r.name}")
+        return None
+    dossier = build_dossier(r, cfg, led, transcript)
     out = r.write("dossier", dossier)
-    print(f"  {len(ENTRY.findall(claims_section(dossier)))} numbered claims from {len(parse_topics(plan))} topics in "
-          f"{(time.monotonic() - t0) / 60:.1f} min, ${spent():.2f} this run. "
-          "See the source check at the end of 04_dossier.md.")
+    n = len(re.findall(r"^\[D\d+\]", dossier, re.M))
+    print(f"  04_dossier.md: {n} entries from {len(act)} rows in {(time.monotonic() - t0) / 60:.1f} min. "
+          "See its source check.")
+    if any(x["status"] for x in act):
+        print("  The ledger's dossier references predate this rebuild: run ledger-update --force.")
+    print(f"\n  Next: python cli.py ledger-update {r.name} (stage 04b: judge each row, one follow-up round).")
     return out
-
-
-def _research_spend(r: Run) -> float:
-    return sum(rec.get("cost_usd", 0) or 0 for rec in r.read_log() if rec.get("stage", "").startswith("research"))

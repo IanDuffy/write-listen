@@ -8,9 +8,9 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
-from .common import Run, claim_numbers, dossier_entries, spoken_text, word_count
+from .common import Run, dossier_entries, entry_id, entry_numbers, spoken_text, word_count
 
-MARKERS = re.compile(r"(?:\s*\[C\d+[^\]]*\])+")
+MARKERS = re.compile(r"(?:\s*\[D\d+[^\]]*\])+")
 
 
 def duration_seconds(mp3: Path) -> float | None:
@@ -32,7 +32,7 @@ def fmt_duration(s: float | None) -> str:
 
 
 def claim_sentences(script: str) -> list[tuple[str, list[int]]]:
-    """Sentences that carry a [Cn] marker, with the claim numbers they cite."""
+    """Sentences that carry a [Dn] marker, with the dossier entry numbers they cite."""
     # Anchored on the markers, not on sentence boundaries, so 'St. Augustine' or
     # '3.5' never cuts a sample short: each sample is the text since the previous
     # marker (or the paragraph start) up to this run of markers.
@@ -42,7 +42,7 @@ def claim_sentences(script: str) -> list[tuple[str, list[int]]]:
         start = 0
         for m in MARKERS.finditer(para):
             text = spoken_text(para[start:m.start()])
-            refs = claim_numbers(m.group(0))
+            refs = entry_numbers(m.group(0))
             if text and refs:
                 out.append((text, refs))
             start = m.end()
@@ -89,7 +89,7 @@ def run(r: Run, cfg: dict, sample: int = 10, seed: int | None = None):
         lines += [f"### {i}. {sentence}", ""]
         for c in refs:
             entry = entries.get(c)
-            lines += [f"> {entry}".replace("\n", "\n> ") if entry else f"> C{c}: not found in the dossier!", ""]
+            lines += [f"> {entry}".replace("\n", "\n> ") if entry else f"> {entry_id(c)}: not found in the dossier!", ""]
         lines += ["Verdict (supported / not supported / invented): ", ""]
     unmarked_note = ("Sentences without a marker are not sampled. A factual sentence with no marker "
                      "is itself a finding: note any you hear.")

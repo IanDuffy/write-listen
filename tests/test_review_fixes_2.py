@@ -11,33 +11,14 @@ from stages import ingest, llm, narrate, research
 from stages.brief import parse_segments
 from stages.common import StageError, load_prompt, parse_range
 from stages.report import claim_sentences
-from stages.research import URL_IN_TEXT, merge_claims, quote_check, retrieved, topic_paths
+from stages.research import URL_IN_TEXT, _norm_text, quote_found, retrieved
 
 
-def write_topic(run, n, text):
-    md, _ = topic_paths(run, n)
-    md.parent.mkdir(parents=True, exist_ok=True)
-    md.write_text(text)
-
-
-def test_conflict_citations_are_not_claims(run):
-    write_topic(run, 3, "## Claims\n  [T3.1] One. Source: https://a.org\n[T3.2] Two. Source: https://a.org\n"
-                        "[T3.3] Three. Source: https://a.org\n\n## Conflicts\n- [T3.2] and [T3.3] disagree; "
-                        "T3.2 is better sourced.\n")
-    claims, mapping, _ = merge_claims(run, [{"id": 3, "title": "X"}])
-    assert mapping == {"T3.1": 1, "T3.2": 2, "T3.3": 3}
-    assert "[C1] One." in claims  # indented entry keeps its first characters
-    assert "[C2] and [C3] disagree; C2 is better sourced." in claims
-    assert "[C4]" not in claims
-
-
-def test_quote_pairing_and_episode_quotes():
-    page = [{"url": "https://a.org", "text": "Beauty is the one thing that pulls us out of ourselves, said she."}]
-    d = ('## Claims\n[C1] Weil wrote "Beauty is the one thing that pulls us out of ourselves," in "Notebooks". '
-         'Source: https://a.org\n'
-         '[C2] "I think beauty makes us want to copy it, always and everywhere." Source: episode\n')
-    ok, missing, unchecked = quote_check(d, page)
-    assert ok == ["C1"] and missing == [] and unchecked == []
+def test_quote_pairing_ignores_short_titles():
+    page = [_norm_text("Beauty is the one thing that pulls us out of ourselves, said she.")]
+    body = 'Weil wrote "Beauty is the one thing that pulls us out of ourselves," in "Notebooks". Source: https://a.org'
+    assert quote_found(body, page) is True
+    assert quote_found('A claim with no quote, "Notebooks". Source: https://a.org', page) is None
 
 
 def test_urls_keep_balanced_parentheses():
@@ -59,45 +40,28 @@ def test_fetched_pdf_text_is_kept_for_quote_checks(tmp_path):
     assert "desire to replicate" in got["fetched"][0]["text"]
 
 
-def _setup(run, monkeypatch, responder=None):
+def _setup(run, cfg, monkeypatch, responder=None):
+    from stages import ledger
     run.yes = True
     run.path("angle").write_text("a")
     run.path("map").write_text("m")
+    run.path("source_dir").mkdir(exist_ok=True)
+    run.path("transcript").write_text("t")
     resp = responder or Responder()
     monkeypatch.setattr(llm, "_client", FakeAnthropic(resp))
+    ledger.run(run, cfg)
     return resp
 
 
-def test_rerun_resumes_rounds_and_topics_redo_skips_critic(run, cfg, monkeypatch):
-    resp = _setup(run, monkeypatch)
-    research.run(run, cfg)
-    assert resp.critic_calls == 2
-    run.force = True
-    research.run(run, cfg, topics="T2")
-    assert resp.critic_calls == 2  # an explicit redo runs no critic rounds
-    research.run(run, cfg)
-    assert resp.critic_calls == 2  # the critic already declared the research complete
-
-
 def test_spend_cap_stops_agents(run, cfg, monkeypatch):
-    _setup(run, monkeypatch)
+    _setup(run, cfg, monkeypatch)
     cfg["research"]["max_usd"] = 0.0001
     with pytest.raises(StageError, match="max_usd"):
         research.run(run, cfg)
 
 
-def test_changed_angle_needs_replan(run, cfg, monkeypatch):
-    _setup(run, monkeypatch)
-    research.run(run, cfg, plan_only=True)
-    run.path("angle").write_text("a different angle")
-    with pytest.raises(StageError, match="--replan"):
-        research.run(run, cfg, plan_only=True)
-    research.run(run, cfg, plan_only=True, replan=True)
-    assert list(run.root.glob("04_research.old-*"))
-
-
 def test_dossier_rebuild_does_not_trip_the_guard(run, cfg, monkeypatch):
-    _setup(run, monkeypatch)
+    _setup(run, cfg, monkeypatch)
     research.run(run, cfg)
     run.yes, run.force = False, True
     monkeypatch.setattr("builtins.input", lambda p: pytest.fail("should not ask"))
@@ -139,13 +103,8 @@ def test_ingest_keeps_lowercase_words_and_compounds():
     assert "have to listen." in text and "well-known" in text and "Diotima, Diotima" in text
 
 
-def test_brief_claims_as_sublist():
-    segs = parse_segments("## Segment 1: A\n- Claims:\n  - C3\n  - C7\n- Target words: 700\n")
-    assert segs[0]["claims"] == [3, 7] and segs[0]["target_words"] == 700
-
-
 def test_report_samples_whole_sentences_across_abbreviations():
-    s = claim_sentences("In 1940, St. Augustine's old city fell. [C3] She was 3.5 feet tall. [C9]")
+    s = claim_sentences("In 1940, St. Augustine's old city fell. [D03] She was 3.5 feet tall. [D9]")
     assert s[0] == ("In 1940, St. Augustine's old city fell.", [3])
     assert s[1] == ("She was 3.5 feet tall.", [9])
 
@@ -170,6 +129,10 @@ def test_smoketest_offline(run, cfg, monkeypatch, fake_tts):
     from stages import smoketest, tts
 
     def respond(kwargs):
+        if "format" in kwargs.get("output_config", {}):  # the structured-output check
+            assert kwargs["output_config"]["format"]["type"] == "json_schema"
+            return NS(content=[text_block('{"word": "ready", "count": 3}')], stop_reason="end_turn",
+                      usage=usage(), model=kwargs["model"], stop_details=None)
         return NS(content=[
             NS(type="server_tool_use", id="s1", name="web_search", input={"query": "q"}),
             NS(type="web_search_tool_result", tool_use_id="s1",

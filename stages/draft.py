@@ -1,8 +1,8 @@
 """Stage 6: brief + dossier + earlier segments -> 06_segments/segNN.md
 
 One call per segment, in order. Each call sees the style guide, the full brief,
-the full dossier, this segment's dossier claims, and the full text of every
-earlier segment. The style guide, brief and dossier are identical across calls
+the full dossier, this segment's dossier entries (its 'Dossier:' line), and the
+full text of every earlier segment. The style guide, brief and dossier are identical across calls
 and sit in a cached system prompt; the earlier segments get a second cache
 breakpoint so each call reuses the one before.
 
@@ -13,12 +13,13 @@ from __future__ import annotations
 
 from . import llm
 from .brief import parse_segments
-from .common import (Run, StageError, dossier_entries, load_prompt, parse_range,
+from .common import (Run, StageError, dossier_entries, entry_id, load_prompt, parse_range,
                      word_count)
 
 
 def context_block(style_guide: str, brief: str, dossier: str) -> str:
-    return load_prompt("draft_context", style_guide=style_guide, brief=brief, dossier=dossier)
+    return load_prompt("draft_context", style_guide=style_guide, brief=brief, dossier=dossier,
+                       source_tiers=load_prompt("source_tiers"))
 
 
 def run(r: Run, cfg: dict, segments: str | None = None):
@@ -56,13 +57,13 @@ def run(r: Run, cfg: dict, segments: str | None = None):
             earlier.append(p.read_text(encoding="utf-8").strip())
 
         seg = by_n[n]
-        if not seg["claims"]:
-            print(f"  seg{n:02d}: warning, the brief lists no claims for this segment")
-        missing = [c for c in seg["claims"] if c not in entries]
+        if not seg["entries"]:
+            print(f"  seg{n:02d}: warning, the brief lists no dossier entries for this segment")
+        missing = [c for c in seg["entries"] if c not in entries]
         if missing:
-            print(f"  seg{n:02d}: warning, brief cites claims not in the dossier: "
-                  f"{', '.join(f'C{c}' for c in missing)}")
-        claims_text = "\n\n".join(entries[c] for c in seg["claims"] if c in entries) or "(none listed)"
+            print(f"  seg{n:02d}: warning, brief cites entries not in the dossier: "
+                  f"{', '.join(entry_id(c) for c in missing)}")
+        entries_text = "\n\n".join(entries[c] for c in seg["entries"] if c in entries) or "(none listed)"
 
         content = []
         if earlier:
@@ -74,7 +75,7 @@ def run(r: Run, cfg: dict, segments: str | None = None):
             })
         content.append({"type": "text", "text": load_prompt(
             "draft",
-            n=n, total=len(segs), segment_brief=seg["text"], claims=claims_text,
+            n=n, total=len(segs), segment_brief=seg["text"], entries=entries_text,
             target_words=seg["target_words"] or f"{seg_words[0]}-{seg_words[1]}",
             first_or_later=("This is the first segment: open with the hook from the brief."
                             if n == 1 else

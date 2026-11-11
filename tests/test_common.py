@@ -2,8 +2,8 @@ import re
 
 import pytest
 
-from stages.common import (PROMPTS_DIR, StageError, dossier_entries, join_script_segments, load_prompt,
-                           parse_range, spoken_text, split_script_segments, word_count)
+from stages.common import (PROMPTS_DIR, StageError, dossier_entries, entry_tags, format_tags, join_script_segments,
+                           load_prompt, parse_range, parse_tags, spoken_text, split_script_segments, word_count)
 
 
 def test_load_prompt_drops_notes_and_fills():
@@ -26,7 +26,7 @@ def test_every_prompt_has_a_notes_header():
 
 
 def test_spoken_text_strips_markers():
-    s = "<!-- seg01 -->\n\nPlato wrote it. [C1] Then more [C2, C3].\n\n## Stray\n**Bold** words."
+    s = "<!-- seg01 -->\n\nPlato wrote it. [D01] Then more [D02, D03].\n\n## Stray\n**Bold** words."
     assert spoken_text(s) == "Plato wrote it. Then more.\n\nBold words."
     assert word_count(s) == 7
 
@@ -45,8 +45,21 @@ def test_parse_range():
 
 
 def test_dossier_entries():
-    d = "## Claims\n[C1] One. Source: x\n**[C2]** Two.\n  Quote: q\n\n### Next\n[C3] Three."
+    d = ("# Dossier\n- [D09] in the intro is not an entry\n## Entries\n[D01] (L01, claim, tier 2) One. Source: x\n"
+         "**[D02]** (L01, quote) Two.\n  Quote: q\n\n### L02: Next\n[D10] Three.\n## Source check\n[D11] no")
     e = dossier_entries(d)
-    assert e[1] == "[C1] One. Source: x"
-    assert e[2].startswith("**[C2]** Two.") and "Quote: q" in e[2]
-    assert e[3] == "[C3] Three."
+    assert sorted(e) == [1, 2, 10]
+    assert e[1] == "[D01] (L01, claim, tier 2) One. Source: x"
+    assert e[2].startswith("**[D02]** (L01, quote) Two.") and "Quote: q" in e[2]
+    assert e[10] == "[D10] Three."
+
+
+def test_tags_round_trip():
+    t = parse_tags("L01, L04, quote, tier 1, verbatim: yes")
+    assert t["rows"] == ["L01", "L04"] and t["kind"] == "quote" and t["tier"] == 1 and t["verbatim"] == "yes"
+    assert format_tags(t) == "(L01, L04, quote, tier 1, verbatim: yes)"
+    c = parse_tags("L3, connection, L5")
+    assert c["rows"] == ["L03"] and c["links"] == ["L05"]
+    v = entry_tags("**[D07]** (L02, claim, tier: episode, corrected) The episode says...")
+    assert v["tier"] == "episode" and v["verdict"] == "corrected"
+    assert entry_tags("[D07] no tags here")["kind"] is None

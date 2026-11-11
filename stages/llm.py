@@ -136,21 +136,25 @@ def estimate_tokens(text: str) -> int:
     return int(len(text) / 3.5) + 1
 
 
+def confirm(run: Run, tag: str, msg: str) -> None:
+    """Stop and ask. --yes (run.yes) pre-approves; anything but y/yes stops the stage."""
+    if run.yes:
+        print(f"[{tag}] {msg} Proceeding (--yes).")
+        return
+    try:
+        answer = input(f"[{tag}] {msg} Continue? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        raise StageError(f"Stopped by the {tag}: {msg} Re-run with --yes to approve.")
+
+
 def guard(run: Run, cfg: dict, what: str, estimate_usd: float) -> None:
     """Stop and ask before any call or stage expected to cost more than the limit."""
     limit = cfg["cost_guard_usd"]
     if estimate_usd <= limit:
         return
-    msg = f"{what} is estimated at ${estimate_usd:.2f}, over the ${limit:.2f} guard."
-    if run.yes:
-        print(f"[cost guard] {msg} Proceeding (--yes).")
-        return
-    try:
-        answer = input(f"[cost guard] {msg} Continue? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in ("y", "yes"):
-        raise StageError(f"Stopped by the cost guard: {msg} Re-run with --yes to approve.")
+    confirm(run, "cost guard", f"{what} is estimated at ${estimate_usd:.2f}, over the ${limit:.2f} guard.")
 
 
 def estimate_call(cfg: dict, model: str, input_tokens: int, expected_output_tokens: int,
@@ -169,6 +173,7 @@ class Result:
     message: object
     usage: Usage
     content: list = field(default_factory=list)  # every content block across continuations
+    paused: bool = False  # a tool loop stopped at pause_turn because resume_if said no
 
 
 def _text_of(content) -> str:
@@ -190,7 +195,7 @@ def _retryable(e: Exception) -> bool:
     return False
 
 
-def _send_with_retries(run, stream_fn, kwargs, label, stage, model, show_tools, all_content, total):
+def _send_with_retries(run, stream_fn, kwargs, label, stage, model, show_tools, all_content, total, extra):
     """One request, streamed, retried on dropped connections and overloads.
     A retry resends the same request: earlier content is only added after success."""
     import anthropic
@@ -209,7 +214,7 @@ def _send_with_retries(run, stream_fn, kwargs, label, stage, model, show_tools, 
             if not isinstance(e, anthropic.APIError) and not _retryable(e):
                 raise
             status = getattr(e, "status_code", None)
-            run.log({"stage": stage, "label": label, "provider": "anthropic", "model": model,
+            run.log({"stage": stage, **extra, "label": label, "provider": "anthropic", "model": model,
                      "error": f"{status or 'connection'}: {getattr(e, 'message', e)}",
                      "request_id": getattr(e, "request_id", None), "cost_usd": 0, "retry": i})
             if _retryable(e) and i < len(RETRY_DELAYS):
@@ -281,16 +286,27 @@ def call(
     expected_searches: int = 0,
     preapproved: bool = False,
     before_request=None,
+    resume_if=None,
+    json_schema: dict | None = None,
+    log_extra: dict | None = None,
 ) -> Result:
     """Send one request (plus any pause_turn continuations) and log it.
 
-    `role` picks the model from config: "writer" (Opus), "researcher" (Sonnet)
-    or "cheap" (Haiku). Stage settings (max_tokens, effort, max_continuations)
+    `role` picks the model from config: "writer", "researcher" (the ledger
+    research agents) or "cheap". Stage settings (max_tokens, effort, max_continuations)
     come from config unless overridden. `preapproved` skips the cost guard,
     for stages that guard their whole budget up front (research runs agents in
     parallel threads, where a prompt for input would be lost). `before_request`
     is called before every request, continuations included, and may raise
     StageError to stop (research uses it for its spend cap).
+
+    `resume_if(usage_so_far)` decides whether a paused server tool loop is
+    resumed. The API applies each tool's max_uses per request, so a resumed loop
+    gets a fresh budget; research says no once an agent has spent its own, and
+    gets back a Result with paused=True and whatever text came before the pause.
+    `json_schema` asks for structured output (output_config.format); the text
+    is then one JSON document. `log_extra` (e.g. {"row": "L01"}) goes into every
+    log record of this call.
     """
     model = cfg["models"][role]
     st = cfg["stages"].get(stage, {})
@@ -320,8 +336,14 @@ def call(
         # Server tool loops resend the growing context on every iteration and
         # continuation; automatic caching makes those re-reads cheap.
         kwargs["cache_control"] = {"type": "ephemeral"}
+    output_config = {}
     if effort:
-        kwargs["output_config"] = {"effort": effort}
+        output_config["effort"] = effort
+    if json_schema:
+        output_config["format"] = {"type": "json_schema", "schema": json_schema}
+    if output_config:
+        kwargs["output_config"] = output_config
+    extra = dict(log_extra or {})
 
     fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher") else None
     if fallbacks:
@@ -335,6 +357,7 @@ def call(
     all_content: list = []
     max_continuations = st.get("max_continuations", cfg.get("max_pause_continuations", 8))
     message = None
+    paused = False
     overrun_approved = False
     request_id = None
     base_messages = list(messages)
@@ -343,7 +366,7 @@ def call(
             before_request()
         t0 = time.monotonic()
         message, request_id = _send_with_retries(run, stream_fn, kwargs, label or stage, stage, model,
-                                                 bool(tools), all_content, total)
+                                                 bool(tools), all_content, total, extra)
         seconds = round(time.monotonic() - t0, 1)
 
         u = usage_and_cost(cfg, model, message)
@@ -357,6 +380,7 @@ def call(
 
         run.log({
             "stage": stage,
+            **extra,
             "label": label or stage,
             "provider": "anthropic",
             "model": model,
@@ -375,6 +399,9 @@ def call(
         })
 
         if message.stop_reason == "pause_turn":
+            if resume_if is not None and not resume_if(total):
+                paused = True
+                break
             # Server-side tool loop paused: send the whole turn so far back as one
             # assistant message and the API resumes it.
             kwargs["messages"] = base_messages + [
@@ -396,6 +423,12 @@ def call(
         raise StageError(f"{stage}: still paused after {max_continuations} continuations.")
 
     text = _text_of(all_content)
+    summary = (f"  {label or stage}: {total.input_tokens + total.cache_read + total.cache_write_5m + total.cache_write_1h:,} in "
+               f"({total.cache_read:,} cached), {total.output_tokens:,} out, "
+               f"{total.web_searches} searches, ${total.cost_usd:.3f}")
+    if paused:
+        print(summary + " (paused at its tool budget)")
+        return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
     if message.stop_reason == "refusal":
         details = getattr(message, "stop_details", None)
         raise StageError(f"{stage}: the model declined ({getattr(details, 'category', None)}). "
@@ -408,7 +441,5 @@ def call(
     if not text.strip():
         raise StageError(f"{stage}: the model returned no text (stop_reason={message.stop_reason}).")
 
-    print(f"  {label or stage}: {total.input_tokens + total.cache_read + total.cache_write_5m + total.cache_write_1h:,} in "
-          f"({total.cache_read:,} cached), {total.output_tokens:,} out, "
-          f"{total.web_searches} searches, ${total.cost_usd:.3f}")
+    print(summary)
     return Result(text=text.strip(), message=message, usage=total, content=all_content)
