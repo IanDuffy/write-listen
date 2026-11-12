@@ -177,9 +177,13 @@ saved by `start_chapter`) and `history.md` (each finished chapter: title, angle,
 parked ideas). When a conversation ends (the page closes, a new one starts, or
 `cli.py chat` exits), Opus rewrites `profile.md` and `guide.md` from its
 transcript (`prompts/memory.md`): only what the listener said, merged rather than
-appended, and anything they asked to forget removed. A server that stopped first
-catches up at its next start. The guide reads all of it at the start of the next
-conversation, so a returning listener is greeted as one.
+appended, and anything they asked to forget removed (a forgotten chapter also
+leaves `history.md` and `seeds/`). Passes run one at a time and in order: a new
+conversation waits for the last one's pass, and a conversation older than one
+already remembered is skipped, so an old pass can never bring back something
+forgotten. A server that stopped first catches up at its next start. The guide
+reads all of it at the start of the next conversation, so a returning listener
+is greeted as one.
 
 ## Ledger-driven research
 

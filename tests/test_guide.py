@@ -178,6 +178,19 @@ def test_an_empty_reply_after_a_tool_still_ends_the_turn(world, monkeypatch):
     monkeypatch.setattr(resp, "guide", quiet_after_tool)
     s = session()
     assert s.say("yes") == "Let me do that." and started  # no 503 after the chapter started
+    assert all(m["content"] for m in s.messages)  # no empty assistant message to break the next turn
+    real_tool = resp.guide
+
+    def bare_tool_then_quiet(kwargs):  # no words at all around the tool call
+        if isinstance(kwargs["messages"][-1]["content"], list):
+            return resp.msg(kwargs, None, content=[])
+        from types import SimpleNamespace as NS
+        return resp.msg(kwargs, None, stop="tool_use", content=[NS(type="tool_use", id="tq", name="start_chapter",
+                        input={"topic": "Bridges", "listener_said": "bridges", "why": "", "notes": ""})])
+
+    monkeypatch.setattr(resp, "guide", bare_tool_then_quiet)
+    s2 = session()
+    assert s2.say("go on then").startswith("It's under way.")
 
 
 def test_a_tool_that_raises_keeps_the_conversation_usable(world, monkeypatch):
@@ -205,3 +218,4 @@ def test_chat_after_a_restart_or_takeover_is_refused(client):
     sid = c.post("/api/chat/start").json()["session"]
     assert c.post("/api/chat", json={"message": "hi", "session": sid}).status_code == 200
     assert c.post("/api/chat", json={"message": "hi", "session": "someone-else"}).status_code == 409
+    assert c.post("/api/chat", json={"message": "hi"}).status_code == 409  # no id: not some other conversation

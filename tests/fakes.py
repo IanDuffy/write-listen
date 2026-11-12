@@ -151,10 +151,15 @@ class Responder:
         t = all_text(kwargs)
         if "You keep the memory of a guide" in t:
             self.memory_calls = getattr(self, "memory_calls", 0) + 1
-            forget = "forget" in t.split("<transcript>")[1].lower()
+            transcript = t.split("<transcript>")[1].split("</transcript>")[0].lower()
+            forget = "forget" in transcript
+            if getattr(self, "memory_delay", 0):
+                import time as _t
+                _t.sleep(self.memory_delay)
             profile = "# What the listener has said\n- Pours concrete for a living." + (
                 "" if forget else "\n- Has a daughter called Maya.")
-            return self.msg(kwargs, json.dumps({"profile": profile,
+            gone = re.findall(r"\(([a-z0-9.-]+-\d{8}),", t) if "forget the concrete chapter" in transcript else []
+            return self.msg(kwargs, json.dumps({"profile": profile, "forget_chapters": gone,
                                                 "guide": "# Wren\n- Chose the name for the bird that sings in winter."}))
         if "You are a guide. You make chapters" in t:
             return self.guide(kwargs)

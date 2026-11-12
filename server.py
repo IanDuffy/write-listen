@@ -168,30 +168,35 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return {"run": pipe.start_seed(req.seed, req.why, req.notes)}
 
     # --- the guide's conversation (milestone 3) ---------------------------------------
-    chat = {"session": None, "lock": threading.Lock()}
+    chat = {"session": None, "lock": threading.Lock(), "passes": []}
 
     def remember(transcript=None) -> None:
         """The memory pass (profile.md, guide.md) in the background, for one ended conversation or
-        for every one still waiting (after a restart)."""
+        for every one still waiting (after a restart). Passes run one at a time (memory.LOCK)."""
         def work():
             try:
                 memory.after_session(cfg, transcript) if transcript else memory.run_pending(cfg)
             except Exception as e:  # never take the server down over memory
                 print(f"  memory pass failed: {e}")
-        threading.Thread(target=work, daemon=True).start()
+        t = threading.Thread(target=work, daemon=True)
+        chat["passes"].append(t)
+        t.start()
 
     if remember_on_start:
         remember()
 
     def new_session() -> guide.Session:
-        if chat["session"] is not None:
-            remember(chat["session"].transcript)  # the previous conversation has ended
+        if chat["session"] is not None:  # the previous conversation has ended: remember it first
+            memory.after_session(cfg, chat["session"].transcript)
+        for t in chat["passes"]:  # a returning guide must know who it is: wait for passes in flight
+            t.join()
+        chat["passes"] = []
         chat["session"] = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
         return chat["session"]
 
     def talk(text: str | None, fresh: bool, session_id: str | None = None) -> dict:
         with chat["lock"]:  # one turn at a time
-            if not fresh and (chat["session"] is None or (session_id and session_id != chat["session"].id)):
+            if not fresh and (chat["session"] is None or session_id != chat["session"].id):
                 # The server restarted, or another conversation took over: don't answer out of context.
                 raise HTTPException(409, "That conversation has ended.")
             session = new_session() if fresh else chat["session"]
@@ -207,9 +212,16 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return talk(None, fresh=True)
 
     @app.post("/api/chat/end")
-    def chat_end() -> dict:
-        """The page is closing: the conversation has ended, so update the memory."""
+    async def chat_end(request: Request) -> dict:
+        """The page is closing: the conversation has ended, so update the memory. The beacon carries
+        the conversation's id, so a stale tab closing never ends another tab's conversation."""
+        try:
+            sid = (await request.json()).get("session")
+        except Exception:
+            sid = None
         with chat["lock"]:
+            if chat["session"] is None or sid != chat["session"].id:
+                return {"ended": False}
             session, chat["session"] = chat["session"], None
         if session is not None:
             remember(session.transcript)
@@ -268,11 +280,11 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     return app
 
 
-app = create_app()
+app = create_app(remember_on_start=False)  # importing the module (tests, cli chat) touches no memory
 
 if __name__ == "__main__":
     import uvicorn
 
     print(f"  open http://{HOST}:{PORT}")
     # An open page holds an event stream; don't wait for it to close on Ctrl-C.
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning", timeout_graceful_shutdown=2)
+    uvicorn.run(create_app(), host=HOST, port=PORT, log_level="warning", timeout_graceful_shutdown=2)

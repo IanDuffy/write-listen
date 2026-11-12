@@ -190,6 +190,11 @@ async function converse(message) {
   render();
   try {
     let res;
+    if (message && !sessionId) {  // typed before tapping: the guide speaks first, then hears this
+      const hello = await post("/api/chat/start");
+      sessionId = hello.session;
+      note(hello.reply, "guide");
+    }
     try {
       res = message ? await post("/api/chat", { message, session: sessionId }) : await post("/api/chat/start");
     } catch (err) {
@@ -234,12 +239,17 @@ $("orb").addEventListener("click", () => {
   if (status.state === "ready" && fresh) return a.play();
   if (!talking && !thinking) converse(null);  // tap to begin, whatever an earlier visit left behind
 });
-$("last").addEventListener("click", () => { fresh = true; $("audio").play(); });
+$("last").addEventListener("click", () => $("audio").play());  // the circle still begins a conversation
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
 
 // The conversation ends when the page goes away: the server updates what the guide remembers.
-addEventListener("pagehide", () => { if (talking) navigator.sendBeacon("/api/chat/end"); });
+addEventListener("pagehide", () => {
+  if (talking && sessionId) {
+    navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: sessionId })],
+                                                    { type: "application/json" }));
+  }
+});
 
 $("toggle").addEventListener("click", () => {
   const open = $("transcript").classList.toggle("open");

@@ -107,8 +107,17 @@ the first is the gate for the rest:
 - `save_seed` copies each chapter's seed to `listener/seeds/<run>.md` when
   `start_chapter` runs; `record_chapter` appends to `history.md` when an
   unattended seed run finishes (code only).
-- "Forget that" is honoured in profile.md and guide.md; the raw transcripts in
-  `sessions/` keep what was said (they are the record, like decisions.md).
+- "Forget that" is honoured in profile.md and guide.md, and a forgotten chapter
+  (`forget_chapters` in the pass's JSON) is removed from history.md and seeds/ by
+  code; the raw transcripts in `sessions/` keep what was said (they are the
+  record, like decisions.md).
+- Passes are serialized (`memory.LOCK`) and ordered: a conversation older than
+  the newest `.done` is marked skipped, not folded in. `server.new_session` runs
+  the previous session's pass synchronously and joins background passes first.
+  The module-level `server.app` does no catch-up at import; `python server.py` does.
+- `POST /api/chat` and `/api/chat/end` need the session id (409 if it is not the
+  current one); the page's beacon sends it. If the guide says nothing after a
+  tool, a line from `prompts/guide_quiet.md` is spoken instead of silence.
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage

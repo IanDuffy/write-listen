@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -30,9 +31,13 @@ from .common import ROOT, Run, StageError, load_prompt, parse_json
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["profile", "guide"],
-    "properties": {"profile": {"type": "string"}, "guide": {"type": "string"}},
+    "required": ["profile", "guide", "forget_chapters"],
+    "properties": {"profile": {"type": "string"}, "guide": {"type": "string"},
+                   "forget_chapters": {"type": "array", "items": {"type": "string"}}},
 }
+# One pass at a time: each reads the files the last one wrote, so an older pass can never
+# overwrite a newer one (or bring back something the listener asked to forget).
+LOCK = threading.Lock()
 
 
 def listener_dir(cfg: dict) -> Path:
@@ -64,16 +69,39 @@ def had_listener(path: Path) -> bool:
     return path.exists() and any('"who": "listener"' in line for line in path.read_text(encoding="utf-8").splitlines())
 
 
+def session_date(transcript: Path) -> str:
+    """The day a conversation happened, from its id (YYYYMMDD-HHMMSS)."""
+    m = re.match(r"(\d{4})(\d{2})(\d{2})-", transcript.stem)
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else time.strftime("%Y-%m-%d")
+
+
+def newest_done(cfg: dict) -> str | None:
+    done = sorted(p.stem for p in (listener_dir(cfg) / "sessions").glob("*.done"))
+    return done[-1] if done else None
+
+
 def after_session(cfg: dict, transcript: Path) -> bool:
     """Update profile.md and guide.md from one conversation. Returns whether it ran (a session in
-    which the listener said nothing is skipped). Each session is passed once (sessions/<id>.done)."""
+    which the listener said nothing is skipped). Each session is passed once (sessions/<id>.done),
+    in order: a conversation older than one already passed is skipped, since folding it in now
+    would let older facts (or something since forgotten) override newer ones."""
+    with LOCK:
+        return _after_session(cfg, transcript)
+
+
+def _after_session(cfg: dict, transcript: Path) -> bool:
     done = transcript.with_suffix(".done")
     if done.exists() or not had_listener(transcript):
+        return False
+    newest = newest_done(cfg)
+    if newest and transcript.stem < newest:
+        done.write_text("skipped: older than a conversation already remembered\n", encoding="utf-8")
         return False
     d = listener_dir(cfg)
     prompt = load_prompt("memory", profile=_read(d / "profile.md", "(none yet)"),
                          guide=_read(d / "guide.md", "(none yet: this was a first meeting)"),
-                         transcript=transcript_text(transcript), today=time.strftime("%Y-%m-%d"))
+                         history=_read(d / "history.md", "(none yet)"),
+                         transcript=transcript_text(transcript), today=session_date(transcript))
     log_run = Run(name="sessions", root=transcript.parent)
     res = llm.call(log_run, cfg, "memory", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA,
                    label="memory", preapproved=True, log_extra={"session": transcript.stem})
@@ -82,11 +110,27 @@ def after_session(cfg: dict, transcript: Path) -> bool:
         text = (data.get(name) or "").strip()
         if text:
             p = d / f"{name}.md"
-            tmp = p.with_suffix(".md.tmp")
+            tmp = p.with_name(f"{name}.md.{transcript.stem}.tmp")
             tmp.write_text(text + "\n", encoding="utf-8")
             tmp.replace(p)
+    forget_chapters(cfg, [x for x in data.get("forget_chapters") or [] if isinstance(x, str)])
     done.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     return True
+
+
+def forget_chapters(cfg: dict, runs: list[str]) -> None:
+    """Remove chapters the listener asked to forget from history.md and seeds/ (by run name)."""
+    if not runs:
+        return
+    d = listener_dir(cfg)
+    h = d / "history.md"
+    if h.exists():
+        parts = h.read_text(encoding="utf-8").split("\n## ")
+        keep = [parts[0]] + [p for p in parts[1:] if not any(f"({run}," in p.split("\n", 1)[0] for run in runs)]
+        h.write_text("\n## ".join(keep).rstrip() + "\n", encoding="utf-8")
+    for run in runs:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run):
+            (d / "seeds" / f"{run}.md").unlink(missing_ok=True)
 
 
 def pending_sessions(cfg: dict) -> list[Path]:

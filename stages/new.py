@@ -126,6 +126,8 @@ def run(r: Run, cfg: dict) -> None:
     t0 = time.monotonic()
     todo = [step for step, key, _, _ in STEPS if not r.path(key).exists()]
     if not todo:
+        from . import memory
+        memory.record_chapter(cfg, r)
         write_status(r, cfg, "ready", audio=str(r.path("chapter_mp3").relative_to(r.root)), minutes_left=0)
         print(f"  {r.name} is finished: {r.path('chapter_mp3').relative_to(r.root)}")
         return

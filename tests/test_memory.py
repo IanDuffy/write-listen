@@ -92,15 +92,12 @@ def test_the_server_remembers_when_a_conversation_ends(mem, cfg, tmp_path):
     pipe = server.Pipeline(runs_dir=tmp_path / "runs")
     (tmp_path / "runs").mkdir()
     c = TestClient(server.create_app(pipe, cfg, remember_on_start=False))
-    c.post("/api/chat/start")
-    c.post("/api/chat", json={"message": "I pour concrete for a living"})
-    assert c.post("/api/chat/end").json() == {"ended": True}
-    for _ in range(50):  # the pass runs in the background
-        if (listener / "profile.md").exists():
-            break
-        _t.sleep(0.05)
-    assert "Pours concrete" in (listener / "profile.md").read_text()
-    # A new conversation then opens as a returning one: guide.md is its identity.
+    resp.memory_delay = 0.5  # a slow pass: the next conversation must wait for it
+    sid = c.post("/api/chat/start").json()["session"]
+    c.post("/api/chat", json={"message": "I pour concrete for a living", "session": sid})
+    assert c.post("/api/chat/end", json={"session": "a-stale-tab"}).json() == {"ended": False}
+    assert c.post("/api/chat/end", json={"session": sid}).json() == {"ended": True}
+    # Reopened at once: the new conversation opens as a returning one, after the pass.
     c.post("/api/chat/start")
     system = all_text([x for x in resp.calls if "You are a guide. You make chapters" in all_text(x)][-1])
     assert "Chose the name for the bird" in system and "(none: this is your first meeting)" not in system
@@ -119,3 +116,35 @@ def test_a_restarted_server_catches_up_on_memory(mem, cfg, tmp_path):
             break
         _t.sleep(0.05)
     assert (listener / "sessions" / "20261112-080000.done").exists()
+
+
+def test_a_pass_without_a_forget_request_keeps_what_was_said(mem, cfg):
+    listener, resp = mem
+    t = session(listener, "a", TALK)
+    memory.after_session(cfg, t)
+    assert "Maya" in (listener / "profile.md").read_text()
+
+
+def test_an_older_conversation_is_not_folded_in_after_a_newer_one(mem, cfg):
+    listener, resp = mem
+    older = session(listener, "20261112-080000", TALK)
+    newer = session(listener, "20261112-090000", TALK + [{"who": "listener", "text": "Forget my daughter."}])
+    memory.after_session(cfg, newer)
+    assert memory.after_session(cfg, older) is False and resp.memory_calls == 1
+    assert "skipped" in older.with_suffix(".done").read_text() and "Maya" not in (listener / "profile.md").read_text()
+
+
+def test_forgetting_a_chapter_removes_it_from_history_and_seeds(mem, cfg, tmp_path):
+    listener, resp = mem
+    r = Run.open("concrete-20261112", create=True, runs_dir=tmp_path / "runs")
+    r.path("source_dir").mkdir()
+    r.path("seed").write_text("# Seed\n")
+    r.path("brief").write_text("# Brief: Concrete That Heals Itself\n")
+    memory.save_seed(cfg, r.root)
+    memory.record_chapter(cfg, r)
+    t = session(listener, "20261113-090000", TALK + [{"who": "listener", "text": "Please forget the concrete chapter."}])
+    memory.after_session(cfg, t)
+    assert "concrete-20261112" not in (listener / "history.md").read_text()
+    assert not (listener / "seeds" / "concrete-20261112.md").exists()
+    call = [c for c in resp.calls if "You keep the memory of a guide" in all_text(c)][-1]
+    assert "The conversation took place on 2026-11-13." in all_text(call)

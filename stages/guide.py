@@ -119,13 +119,14 @@ class Session:
                            allow_empty=bool(said) or len(self.messages) > 1 and self._after_tools(),
                            log_extra={"session": self.id})
             content = llm.echo_after_fallback(res.content)  # what the API accepts back after a fallback
-            self.messages.append({"role": "assistant", "content": content})
+            if content:  # an empty assistant message is a 400 on every later turn
+                self.messages.append({"role": "assistant", "content": content})
             text = "".join(getattr(b, "text", "") for b in content if getattr(b, "type", None) == "text").strip()
             if text:
                 said.append(text)
             uses = [b for b in content if getattr(b, "type", None) == "tool_use"]
             if res.message.stop_reason != "tool_use" or not uses:
-                reply = " ".join(said)
+                reply = " ".join(said) or self._quiet_line()
                 if not reply:
                     raise StageError("guide: the model returned no text.")
                 self.record("guide", text=reply)
@@ -144,6 +145,21 @@ class Session:
         if said:
             return " ".join(said)
         raise StageError("guide: too many tool calls in one turn.")
+
+    def _quiet_line(self) -> str:
+        """When the guide says nothing after its tools ran, a plain line from what they did, so the
+        listener still hears that the chapter started (prompts/guide_quiet.md)."""
+        last = self.messages[-1]["content"] if self.messages else None
+        if not isinstance(last, list):
+            return ""
+        results = [json.loads(x["content"]) for x in last if isinstance(x, dict) and x.get("type") == "tool_result"]
+        lines = dict(ln.split(": ", 1) for ln in load_prompt("guide_quiet").splitlines() if ": " in ln)
+        for r in results:
+            if r.get("started") is True:
+                return lines["started"].replace("{minutes}", str(r.get("minutes", 25)))
+            if r.get("added") is True:
+                return lines["noted"]
+        return lines["done"] if results else ""
 
     def _after_tools(self) -> bool:
         last = self.messages[-1]["content"]
@@ -165,7 +181,8 @@ class Session:
         if not topic.strip():
             return {"started": False, "reason": "The topic was empty."}
         now = self.status_fn() or {}
-        if self.run and now.get("run") == self.run and now.get("state") == "problem":
+        if (self.run and now.get("run") == self.run and now.get("state") == "problem"
+                and now.get("retryable") is not False):
             return {"started": False, "reason": "This conversation's chapter stopped. Don't start another: the "
                                                 "page's Try again button continues it (if it shows one)."}
         try:
