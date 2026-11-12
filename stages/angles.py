@@ -15,6 +15,5 @@ def run(r: Run, cfg: dict):
                          target_minutes=cfg["chapter"]["target_minutes"])
     res = llm.call(r, cfg, "angles", messages=[{"role": "user", "content": prompt}])
     out = r.write("angles", res.text)
-    print("\n  Next [Ian]: read 02_angles.md, then write 03_angle.md by hand: the angle you want,\n"
-          "  edited as you like, plus any notes on what you want from the chapter.")
+    print(f"\n  Next: python cli.py choose {r.name} (the commissioning editor picks the angle).")
     return out

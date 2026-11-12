@@ -365,7 +365,6 @@ def run(r: Run, cfg: dict):
         print(f"  the old research answered the old ledger: moved 04_research/ to {old.name}/")
     save(r, led)
     print(f"  {len(rows)} active rows, {len(led['parked'])} parked:\n{summary(led)}")
-    print("\n  Next [Ian]: read ledger.md, then edit ledger.json by hand: add, cut, re-rank, park or rewrite\n"
-          f"  rows (to park a row, move its idea into \"parked\"). `python cli.py ledger {r.name}` re-checks the\n"
-          f"  file and re-renders ledger.md. Then: {next_research(r, led)}")
+    print(f"\n  Next: {next_research(r, led)}\n  (Optional: edit ledger.json first; "
+          f"`python cli.py ledger {r.name}` re-checks it and re-renders ledger.md.)")
     return r.path("ledger")

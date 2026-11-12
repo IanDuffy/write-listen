@@ -526,7 +526,7 @@ def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
         raise StageError("research: no [Lnn.k] entries in any row's findings; nothing to merge.")
     chk = check_entries(cfg, entries, g["seen"], transcript)
     angle = r.path("angle").read_text(encoding="utf-8") if r.path("angle").exists() else ""
-    title = re.search(r"^#+\s+(.+)$", angle, re.M)
+    title = re.search(r"^#+\s+(?:Angle:\s*)?(.+)$", angle, re.M)  # the choose stage writes "# Angle: <title>"
     lines = [f"# Dossier: {title.group(1).strip() if title else r.name}", "",
              "Merged by code from 04_research/, one section per ledger row in rank order. Each entry keeps "
              "its row, its kind and its source tier. See the source check at the end.", "", "## Entries", ""]

@@ -3,7 +3,8 @@
 Read this first, then `docs/build-doc.md` (Ian's build doc, the spec),
 `docs/ledger-research-addon.md` (Ian's add-on that replaces the research stage)
 and `README.md` (how to run it). Ian does not build or run this himself: an agent
-drives the pipeline with him, stopping at his checkpoints.
+drives the pipeline **hands-off** (Ian, 2026-11-11). Model stages make the
+decisions the build doc gave Ian at checkpoints; Ian judges only by listening.
 
 ## What this is
 
@@ -19,45 +20,34 @@ success criteria, build doc § Goal).
 
 | Milestone (build doc § Build order) | State |
 | --- | --- |
-| 1. Skeleton | Built. `ping` and `smoketest` ready. ElevenLabs half of `smoketest` passed live; Anthropic half not yet run (no key yet). |
-| 2. Voice test | Built (`voices`, `voicetest`). Not run. Candidate voices George, Brian, Sarah confirmed to exist on the account. Ian picks one, then set `narration.voice_id`. |
-| 3. Ingest, map, angles | Built, tested offline. Waiting for the transcript PDF from Ian. |
-| 4. Research, brief | Built: ledger-driven research (docs/ledger-research-addon.md, see below), tested offline. |
-| 5. Pilot | Built (`draft --segments 1-2`, `narrate --pilot`). |
+| 1. Skeleton | Done. `ping` and `smoketest` pass live (local Mac, keys in `.env`). |
+| 2. Voice test | Done. Ian picked Jane (`RILOU7YmBhvwJGDGjNmP`, ElevenLabs shared library, used straight from the library without adding it to the account); pronunciations approved. |
+| 3. Ingest, map, angles | Done for `beauty-scarry`; `choose` (the editor) picked Angle 1, the ladder. |
+| 4. Research, brief | Ledger done (7 rows); research onward running. |
+| 5. Pilot | Skipped: hands-off, so no pilot listening stop. |
 | 6. Draft rest, assemble, edit, revise | Built, with the 07b coverage check before edit. |
 | 7. Narrate, baseline, compare, report | Built. |
 
-The ledger add-on is on branch `claude/script-research-focus-eqhyfe`, to be
-merged into main later. The offline tests pass (`.venv/bin/python -m pytest -q`).
-They run every stage end to end against fake Claude and ElevenLabs clients
-(`tests/fakes.py`) with real files and real ffmpeg. Nothing has run against
-the live Claude API.
+The ledger add-on (branch `claude/script-research-focus-eqhyfe`) is merged
+(fast-forward). Offline tests pass (`.venv/bin/python -m pytest -q`): every
+stage end to end against fake Claude and ElevenLabs clients (`tests/fakes.py`)
+with real files and real ffmpeg.
 
-**Next steps, in order:**
-1. Local setup (below), then `python cli.py ping` and `python cli.py smoketest`.
-   Fix anything it marks FAIL before spending more. The smoketest now also checks
-   structured output (`output_config.format`), which the ledger, ledger-update
-   and coverage stages depend on.
-2. `python cli.py voicetest`, send Ian the three MP3s in `voice_test/`, set
-   `narration.voice_id` from his pick, adjust `narration.pronunciations`.
-3. Get the transcript PDF from Ian: `python cli.py init beauty-scarry --source <pdf>`,
-   check `runs/beauty-scarry/00_source/removed_lines.txt`, then `map`, `angles`.
-   Stop: Ian writes `03_angle.md`.
-4. `ledger beauty-scarry`. Stop: Ian reviews `ledger.md` and edits `ledger.json`
-   (add, cut, re-rank, park, rewrite rows); `ledger beauty-scarry` again re-checks it.
-5. `research beauty-scarry --plan-only` (budgets and estimate), then
-   `research beauty-scarry --rows L01` (the rank-1 row; the `ledger` stage
-   prints its id if Ian re-ranked). Stop: show Ian `04_research/L01.md` before
-   running the rest (build order step 3 of the add-on).
-6. `research beauty-scarry` (the other rows; the estimate is over $5, so it
-   asks), then `ledger-update beauty-scarry`, then `brief`. Stop: Ian edits
-   `05_brief.md`.
+**The hands-off run, in order:** `init --source <pdf>`, `map`, `angles`,
+`choose`, `ledger`, `research --yes`, `ledger-update --yes`, `brief`, `draft`,
+`assemble`, `coverage`, `edit`, `revise`, `narrate`; then `baseline`,
+`narrate --baseline`, `compare`, `report`. `--yes` passes the $5 guard and
+needs Ian's say-so for that run (he gave it for `beauty-scarry` on 2026-11-11).
+Check the script's character count against the ElevenLabs balance before
+narrating: the `starter` plan has 40,000 characters a month and one chapter is
+about 36,000, so the baseline narration needs a bigger plan or the next month.
 
 ## Local setup
 
 ```bash
 uv sync                      # Python 3.12+; pinned versions in uv.lock
 brew install ffmpeg poppler  # macOS; on Linux: apt install ffmpeg poppler-utils
+                             # (poppler fails to build on Ian's macOS 14; ingest uses pypdf then)
 cp .env.example .env         # fill in ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
 
@@ -70,6 +60,25 @@ placeholder (that only works in the cloud session, where a proxy injects the
 real key), so locally it must be in `.env`.
 
 ## Decisions and deviations from the build doc
+
+- **Hands-off (Ian, 2026-11-11).** No [Ian] checkpoints. `choose` (stage 3,
+  `prompts/choose.md`) is the commissioning editor: it picks and tightens one
+  angle from `02_angles.md` and writes `03_angle.md`, which the baseline also
+  reads, so the comparison stays fair. The ledger, brief and script reviews are
+  covered by the model stages that already judge them (04b, 07b, edit); a human
+  may still edit those files, marked "(optional)" in `cli.py`. The pilot stop is
+  skipped.
+- **Ingest glyph repair** (`ingest.repair_glyphs`). The Atlantic's web font draws
+  capital "Th" from private-use code points, so pypdf yields "ese" for "These";
+  ff/ffi ligatures come out as single characters. Ligatures are written out;
+  a private-use code point is restored as "Th" by evidence in the text itself
+  (word position, spelled-out words), per use, and every guess, drop and
+  mid-word restore is listed in `removed_lines.txt`. Chrome patterns match whole
+  line shapes so dialogue is never cut. Two review rounds; regressions in
+  `tests/test_ingest.py`.
+- **Token caps.** Thinking counts against `max_tokens`: map needed ~40,000 and
+  angles ~18,000 on this transcript, so stages writing long documents get 64,000
+  (Opus 5.5 allows 128,000; billing is per token used).
 
 - **Ledger-driven research replaced deep research** (Ian's add-on,
   `docs/ledger-research-addon.md`; it replaced the earlier planner, Sonnet
@@ -117,7 +126,7 @@ real key), so locally it must be in `.env`.
   `[D03, D07]`. The editor checks them, narration strips them, the report
   samples them for the 10-claim spot-check.
 - **Style guide precedence.** `prompts/style_guide.md` is the house style; the
-  brief's own style section wins where they disagree, because Ian edits the brief.
+  brief's own style section wins where they disagree (the brief is written for this chapter).
 - **Refusal fallbacks are on** (`refusal_fallbacks: default`, server-side
   fallback beta). The log records which model served each call.
 - **Cost.** `python cli.py estimate` forecasts about $28 upper end for a full
@@ -127,7 +136,8 @@ real key), so locally it must be in `.env`.
 
 ## Rules (from Ian and the build doc)
 
-- Stop at every [Ian] checkpoint and at the end of each milestone, and report.
+- Run hands-off: no stops for Ian's judgment (an editor model decides); report
+  at the end, with what was decided and what it cost.
 - Stop and ask before any call or stage expected to cost more than $5. The code
   enforces this (`llm.guard`); `--yes` pre-approves. Do not pass `--yes` without
   Ian's say-so for that step.
@@ -145,6 +155,7 @@ real key), so locally it must be in `.env`.
 
 | Where | Format | Parsed by |
 | --- | --- | --- |
+| angle (choose) | `# Angle: <title>` first line of `03_angle.md` | `choose.run`, the dossier title in `research` |
 | ledger | `ledger.json`: `{"rows": [...], "parked": [...], "connections": [...]}`; row fields in `ledger.PLAN_FIELDS` and `LATER_FIELDS` | `ledger.validate`, `ledger.load` |
 | row findings | inside `<research>`; entries `[L01.3] (kind, tier N, verbatim: yes) ... Source: URL` in `## Entries`; `## Not found` (prompts/research_format.md) | `research.extract_tagged`, `parse_entries` |
 | dossier | `[D12] (L01, kind, tier N, ...) text. Source: URL` at line start inside `## Entries`; `Source: episode` for episode-only | `common.dossier_entries`, `entry_tags` |

@@ -89,5 +89,5 @@ def run(r: Run, cfg: dict):
     script = join_script_segments(revised)
     out = r.write("script_final", script)
     print(f"  final script: {word_count(script):,} words")
-    print("\n  Next [Ian]: read 09_script_final.md before narration, so writing and voice are judged separately.")
+    print(f"\n  Next: python cli.py narrate {r.name}. (Optional: read 09_script_final.md first.)")
     return out

@@ -2,27 +2,29 @@
 
     python cli.py <stage> <run> [options]
 
-Stages, in order ([Ian] marks where the pipeline stops for you):
+Stages, in order. The pipeline runs hands-off: model stages (choose, the 04b judge, the
+07b coverage check, the editor) make the decisions Ian once made at checkpoints. The
+"(optional)" lines are where a human may still step in.
 
     init <run> [--source FILE]   create runs/<run>/ (optionally copy in the transcript)
     ingest <run> [--source FILE] 00_source/transcript.pdf -> 00_source/transcript.txt
     map <run>                    -> 01_map.md
     angles <run>                 -> 02_angles.md
-                                 [Ian] write 03_angle.md
+    choose <run>                 -> 03_angle.md (the commissioning editor picks the angle; hands-off)
     ledger <run>                 -> ledger.json, ledger.md (5-7 ranked ideas the chapter must land)
-                                 [Ian] review and edit ledger.json; `ledger <run>` again re-checks it
+                                 (optional) edit ledger.json; `ledger <run>` again re-checks it
     research <run> --plan-only   each row's search budget and the cost estimate, nothing spent
     research <run> --rows L01    research just those rows (redoes them if already researched)
     research <run>               one agent per remaining row -> 04_research/Lnn.md -> 04_dossier.md
     ledger-update <run>          judge each row, one follow-up round -> ledger.json, 04_dossier.md
     brief <run>                  -> 05_brief.md
-                                 [Ian] edit 05_brief.md
+                                 (optional) edit 05_brief.md
     draft <run> [--segments 1-2] -> 06_segments/segNN.md
     assemble <run>               -> 07_script_draft.md
     coverage <run>               draft vs ledger -> 07b_coverage.md (the editor reads it)
     edit <run>                   -> 08_edit_notes.md
     revise <run>                 -> 09_script_final.md
-                                 [Ian] read 09_script_final.md
+                                 (optional) read 09_script_final.md
     narrate <run>                -> 10_audio/chapter.mp3
     narrate <run> --pilot        -> 10_audio/pilot.mp3 (segments 1-2 by default)
     baseline <run>               -> baseline/script.md
@@ -50,12 +52,12 @@ import sys
 from stages.common import ROOT, PATHS, Run, StageError, load_config
 
 STAGES_IN_ORDER = [
-    ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "[Ian] write 03_angle.md"),
-    ("ledger", "ledger, then [Ian] review ledger.json"), ("dossier", "research"),
-    ("ledger_update", "ledger-update"), ("brief", "brief"), (None, "[Ian] edit 05_brief.md, then draft"),
+    ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "choose"),
+    ("ledger", "ledger"), ("dossier", "research"),
+    ("ledger_update", "ledger-update"), ("brief", "brief"), (None, "draft"),
     ("script_draft", "assemble (after draft)"), ("coverage", "coverage"), ("edit_notes", "edit"),
     ("script_final", "revise"),
-    (None, "[Ian] read 09_script_final.md, then narrate"), ("chapter_mp3", "narrate"),
+    (None, "narrate"), ("chapter_mp3", "narrate"),
     ("baseline_script", "baseline"), ("baseline_mp3", "narrate --baseline"),
     ("compare_dir", "compare"), ("report", "report"),
 ]
@@ -165,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         elif st == "ledger-update":
             from stages import ledger_update
             ledger_update.run(r, cfg)
-        elif st in ("map", "angles", "ledger", "brief", "assemble", "coverage", "edit", "revise",
+        elif st in ("map", "angles", "choose", "ledger", "brief", "assemble", "coverage", "edit", "revise",
                     "baseline", "compare"):
             import importlib
             importlib.import_module(f"stages.{st}").run(r, cfg)

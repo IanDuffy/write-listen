@@ -58,6 +58,7 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
     rows_out = [
         ("map", est("map", transcript + 800), done("map")),
         ("angles", est("angles", episode_map + 600), done("angles")),
+        ("choose", est("choose", episode_map + tok("angles", 3000) + 600), done("angle")),
         ("ledger", est("ledger", transcript + episode_map + 2500), done("ledger")),
         ("research (upper end)", research.estimate(cfg, [(x, False) for x in todo]), done("dossier")),
         # Upper end: every row needs a follow-up, so the judge runs twice.

@@ -32,6 +32,16 @@ def _report(name: str, ok: bool, detail: str) -> bool:
     return ok
 
 
+def reply_quote_found(text: str, pages: list[str]) -> bool | None:
+    """Whether the sentence the reply copied (its longest quoted passage) is on a fetched page.
+
+    Only the longest quote is checked: Opus 5.5 also puts the search query it ran in quotation
+    marks ("I searched for "Diotima Symposium ...""), which is not on the page.
+    """
+    quotes = research.QUOTE.findall(text)
+    return research.quote_found(f"“{max(quotes, key=len)}”", pages) if quotes else None
+
+
 def check_claude(r: Run, cfg: dict) -> bool:
     print("Claude:")
     try:
@@ -54,7 +64,7 @@ def check_claude(r: Run, cfg: dict) -> bool:
                   if got["fetched"] else "no web_fetch_result with text; quote checks would find nothing")
     if got["fetched"]:
         pages = [research._norm_text(f["text"]) for f in got["fetched"]]
-        verified = research.quote_found(res.text, pages)
+        verified = reply_quote_found(res.text, pages)
         ok &= _report("quote check", bool(verified),
                       "the reply's quote was found on the fetched page" if verified
                       else f"the reply's quote was not found on the page (reply: {res.text[:120]!r})")

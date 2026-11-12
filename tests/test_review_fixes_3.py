@@ -318,3 +318,17 @@ def test_new_ledger_moves_old_research_aside(ledgered, cfg):
     ledger.run(r, cfg)
     assert not row_paths(r, "L01")[0].exists()
     assert list(r.root.glob("04_research.old-*/L01.md"))
+
+
+def test_smoketest_quote_check_ignores_quoted_search_query():
+    # Regression (live smoketest, 2026-11-11): Opus 5.5 put the search query it ran in quotation
+    # marks, which is not on the fetched page, so a faithful copied sentence was marked FAIL.
+    from stages import research, smoketest
+    page = research._norm_text("Plato (429?–347 B.C.E.) is, by any reckoning, one of the most dazzling "
+                               "writers in the Western literary tradition. More text follows here.")
+    reply = ('I ran one search for "Diotima Symposium Stanford Encyclopedia" and fetched the entry:\n\n'
+             '"Plato (429?–347 B.C.E.) is, by any reckoning, one of the most dazzling writers in the '
+             'Western literary tradition."')
+    assert smoketest.reply_quote_found(reply, [page]) is True
+    assert smoketest.reply_quote_found('"An invented sentence that is nowhere on the page."', [page]) is False
+    assert smoketest.reply_quote_found("no quotes at all", [page]) is None

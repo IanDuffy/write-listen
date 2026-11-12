@@ -5,7 +5,7 @@ import json
 import pytest
 from fakes import all_text
 
-from stages import (angles, assemble, baseline, brief, compare, coverage, draft, edit, ledger, ledger_update,
+from stages import (angles, assemble, baseline, brief, choose, compare, coverage, draft, edit, ledger, ledger_update,
                     map as map_stage, narrate, report, research, revise)
 from stages.common import StageError, split_script_segments
 
@@ -23,10 +23,16 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     map_stage.run(r, cfg)
     angles.run(r, cfg)
     with pytest.raises(StageError, match="03_angle.md"):
-        ledger.run(r, cfg)  # stops at the [Ian] angle checkpoint
-    r.path("angle").write_text("# The ladder and the self\n\nAngle 1, the ladder. Notes: more Weil, please.\n")
+        ledger.run(r, cfg)  # no angle chosen yet
+    # 03: the commissioning editor picks the angle (hands-off; this was Ian's checkpoint).
+    choose.run(r, cfg)
+    angle = r.path("angle").read_text()
+    assert angle.startswith("# Angle: The ladder and the self") and "More Weil" in angle
+    assert "candidate angles" in all_text(responder.calls[-1])  # the editor saw the angles
+    with pytest.raises(StageError, match="already exists"):
+        choose.run(r, cfg)  # a chosen (or hand-written) angle is never overwritten without --force
 
-    # 03b: the ledger, numbered by rank, then [Ian] reviews it.
+    # 03b: the ledger, numbered by rank.
     ledger.run(r, cfg)
     led = json.loads(r.path("ledger").read_text())
     assert [(x["id"], x["rank"], x["type"]) for x in led["rows"]] == [
@@ -169,7 +175,7 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     assert "0:00" not in rep.split("## Length")[1].split("## Cost")[0]
 
     log = [json.loads(line) for line in r.path("log").read_text().splitlines()]
-    assert {"map", "angles", "ledger", "research_row", "research_writeup", "research_followup", "ledger_update",
+    assert {"map", "angles", "choose", "ledger", "research_row", "research_writeup", "research_followup", "ledger_update",
             "brief", "draft", "coverage", "edit", "revise", "baseline",
             "narrate", "narrate_pilot", "narrate_baseline"} <= {rec["stage"] for rec in log}
     assert {rec.get("row") for rec in log if rec["stage"].startswith("research")} == {"L01", "L02", "L03"}

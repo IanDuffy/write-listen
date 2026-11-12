@@ -22,17 +22,21 @@ cost_guard_usd: 5.00
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
-  map:      {max_tokens: 32000, effort: high, expected_output_tokens: 10000}
-  angles:   {max_tokens: 16000, effort: high, expected_output_tokens: 5000}
-  ledger:   {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  # beauty-scarry, 2026-11-11: map hit 32000 (thinking + ~6,400 words of map) and angles used
+  # 17,838 (over its old 16000) before finishing, so stages that write a long document get
+  # 64000 (Opus 5.5 allows 128000). Billing is per token used; the guard uses expected_*.
+  map:      {max_tokens: 64000, effort: high, expected_output_tokens: 40000}
+  angles:   {max_tokens: 32000, effort: high, expected_output_tokens: 18000}
+  choose:   {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  ledger:   {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
   research_row:      {max_tokens: 64000, effort: high, expected_output_tokens: 16000, max_continuations: 6}
   research_followup: {max_tokens: 64000, effort: high, expected_output_tokens: 12000, max_continuations: 6}
-  research_writeup:  {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
-  ledger_update:     {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
-  brief:    {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
+  research_writeup:  {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
+  ledger_update:     {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
+  brief:    {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
   draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
-  coverage: {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
-  edit:     {max_tokens: 32000, effort: high, expected_output_tokens: 12000}
+  coverage: {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
+  edit:     {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
 
@@ -108,7 +112,7 @@ narration:
   # account on 2026-11-10: eleven_v4, 10,000 characters per request.
   # `python cli.py voices` lists the models and voices on the account.
   model_id: eleven_v4
-  voice_id: null              # set after the voice test (milestone 2)
+  voice_id: RILOU7YmBhvwJGDGjNmP  # Jane - Professional Audiobook Reader (British female, shared library). Ian's pick, 2026-11-10
   candidate_voices:
     # ElevenLabs premade voices, all three confirmed on the account.
     - {name: George, voice_id: JBFqnCBsd6RMkjVDRZzb}

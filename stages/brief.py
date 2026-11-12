@@ -136,6 +136,6 @@ def run(r: Run, cfg: dict):
             print(f"  Warning: {w}")
     except StageError as e:
         print(f"  Warning: {e} Fix the headings by hand before drafting.")
-    print("\n  Next [Ian]: edit 05_brief.md by hand. Keep the '## Segment N: Title' headings and the\n"
-          "  'Target words:', 'Ledger:' and 'Dossier:' lines; the draft and coverage stages read them.")
+    print(f"\n  Next: python cli.py draft {r.name}. (Optional: edit 05_brief.md first; keep the\n"
+          "  '## Segment N: Title' headings and the 'Target words:', 'Ledger:' and 'Dossier:' lines.)")
     return out

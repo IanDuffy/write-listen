@@ -135,6 +135,9 @@ class Responder:
             return self.msg(kwargs, "ready")
         if "Map the episode" in t:
             return self.msg(kwargs, "## Episode in brief\nA map.")
+        if "You are the commissioning editor" in t:  # before "candidate angles": the choose prompt quotes them
+            return self.msg(kwargs, "# Angle: The ladder and the self\n\nBeauty teaches.\n\n"
+                                    "## Notes for the writer\n- More Weil, please.")
         if "candidate angles" in t:
             return self.msg(kwargs, "### Angle 1: The ladder\n- **Thesis:** beauty teaches.")
         if "Before any research, we decide what the chapter must land" in t:

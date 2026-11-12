@@ -20,3 +20,6 @@ voice_test/*.mp3
 voice_test/*.wav
 voice_test/_work/
 voice_test/log.jsonl
+
+# macOS
+.DS_Store
