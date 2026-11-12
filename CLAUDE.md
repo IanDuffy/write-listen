@@ -27,6 +27,7 @@ success criteria, build doc § Goal).
 | 5. Pilot | Skipped: hands-off, so no pilot listening stop. |
 | 6. Draft rest, assemble, edit, revise | Built, with the 07b coverage check before edit. |
 | 7. Narrate, baseline, compare, report | Chapter narrated (42:51, $21.50 all in); Ian loved it. Baseline, compare and report not run yet (ElevenLabs characters). |
+| Cost-pass test | `beauty-scarry-short` (20-minute run config): 19:44, $7.34 Claude (about $5.35 without a research pass redone after the fetch fix) + $1.72 ElevenLabs. Blind panel vs the first chapter: similar overall (7.3 vs 7.0); better to listen to (opening, ending, pauses), weaker on depth and classical accuracy (Alcibiades paraphrased: his Jowett lines never fetched). Script trimmed by hand by two asides to fit the ElevenLabs balance (untrimmed copy kept). |
 
 The ledger add-on (branch `claude/script-research-focus-eqhyfe`) is merged
 (fast-forward). After the first chapter, a cost pass (below) and three style

@@ -540,7 +540,7 @@ def episode_intro(r: Run) -> str:
     if not p.exists():
         return ""
     text = p.read_text(encoding="utf-8")
-    title = re.search(r"^#\s+(?:Episode Map:\s*)?(.+)$", text, re.M)
+    title = re.search(r"^#\s+(?:Episode map:\s*)?(.+)$", text, re.M | re.I)
     brief = re.search(r"^##\s+Episode in brief\s*\n+(.+?)(?:\n\s*\n|\Z)", text, re.M | re.S)
     parts = [f"The episode: {title.group(1).strip()}." if title else "", brief.group(1).strip() if brief else ""]
     return " ".join(" ".join(p.split()) for p in parts if p)
