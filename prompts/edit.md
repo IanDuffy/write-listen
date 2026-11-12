@@ -77,7 +77,7 @@ Write the notes in markdown, in this shape:
 Numbered notes that apply to the whole chapter.
 
 ## seg01
-Numbered notes for this segment. Start each note with a tag: [CUT], [ADD], [MOVE], [REPEAT], [PACING], [TONE], [EAR] or [FACT]. Quote the words the note refers to, then say exactly what to do. For [FACT], name the entry number and say whether to cut, reword to what the entry supports, or re-cite to a different entry.
+Numbered notes for this segment. Start each note with a tag: [CUT], [ADD], [MOVE], [REPEAT], [PACING], [TONE], [EAR] or [FACT]. Quote the words the note refers to, then say exactly what to do. For [FACT], name the entry number and say whether to cut, reword to what the entry supports, or re-cite to a different entry. Any wording you propose is applied word for word, so every fact in it must come from an entry you name; a fact-checker reads your notes after you. If a quote or a translator's wording can't be verified, say to paraphrase it without quotation marks; never credit it to someone else, such as unnamed "older translations".
 
 ## seg02
 ...one section per segment, using the exact segment numbers from the markers, even if a segment needs no changes (then write "No changes.").

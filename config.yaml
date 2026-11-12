@@ -43,6 +43,7 @@ stages:
   draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   coverage: {max_tokens: 64000, effort: high, model: claude-sonnet-5-5, batch: true, expected_output_tokens: 8000}
   edit:     {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 12000}
+  factcheck: {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 10000}
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
 

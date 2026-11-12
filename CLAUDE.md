@@ -39,7 +39,7 @@ with real files and real ffmpeg.
 
 **The hands-off run, in order:** `init --source <pdf>`, `map`, `angles`,
 `choose`, `ledger`, `research --yes`, `ledger-update --yes`, `brief`, `draft`,
-`assemble`, `coverage`, `edit`, `revise`, `narrate`; then `baseline`,
+`assemble`, `coverage`, `edit`, `factcheck`, `revise`, `narrate`; then `baseline`,
 `narrate --baseline`, `compare`, `report`. `--yes` passes the $5 guard and
 needs Ian's say-so for that run (he gave it for `beauty-scarry` on 2026-11-11).
 Check the script's character count against the ElevenLabs balance before
@@ -154,6 +154,16 @@ real key), so locally it must be in `.env`.
     checks) on Sonnet 5.5. Drafting, editing and revising stay on Opus 5.5:
     they are the chapter's voice.
   Quality bar: the first chapter. Ian has $250 in Claude credits.
+- **Fact-check pass, 8b** (`stages/factcheck.py`, Ian: fix the slips before
+  pushing, 2026-11-12). On `beauty-scarry-short` a blind classicist found slips
+  the editor missed. Four were in the editor's own replacement wording, which
+  revise applies word for word and nothing checked afterwards; two came from a
+  dossier tension entry (the researchers' reasoning) cited as fact. So a
+  fact-checker in a fresh context checks every claim in the draft, marked or
+  not, and the editor's proposed wording, against the dossier; its notes are
+  merged under the editor's for revise and win where they conflict. The draft
+  rules now treat claims about what a text says or leaves out as factual, and
+  the editor is told its wording is checked. Batched, about $0.50 a chapter (it thinks at length: 45,000 output tokens on the short run).
 - **Opening, ending, held beats** (Ian's listen, 2026-11-11). In the style
   guide (so the baseline gets them too), the brief, draft, edit and revise
   prompts. `eleven_v4` has no `<break>` tag and its bracket tags can be read
@@ -194,7 +204,7 @@ real key), so locally it must be in `.env`.
 | ledger, ledger update, coverage | JSON per the `SCHEMA` in `ledger.py`, `ledger_update.py`, `coverage.py` | `common.parse_json` |
 | brief | `## Segment N: Title` with `Target words:`, `Ledger: L01, L03` and `Dossier: D03, D07` lines | `brief.parse_segments` |
 | script | `<!-- segNN -->` before each segment; `[Dn]` markers after sentences; `[pause]` for a held beat | `common.split_script_segments`, `spoken_text`, `tts.split_beats` |
-| edit notes | `## Global`, `## seg01` (or `## Segment 1`) sections | `revise.parse_notes` |
+| edit notes, fact-check notes | `## Global`, `## seg01` (or `## Segment 1`) sections, in `08_edit_notes.md` and `08b_factcheck.md` | `revise.parse_notes`, `revise.merge_notes` |
 | baseline | inside `<script>` tags | `baseline.run` |
 
 ## Layout

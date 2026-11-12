@@ -69,6 +69,7 @@ def test_notes_headings_variants():
 def test_revise_stops_when_a_segment_has_no_notes(run, cfg, responder):
     run.path("script_draft").write_text("<!-- seg01 -->\n\nOne.\n\n<!-- seg02 -->\n\nTwo.\n")
     run.path("edit_notes").write_text("## Global\nx\n\n## seg01\n1. [CUT] y\n")
+    run.path("factcheck").write_text("## Global\nNo changes.\n")
     run.path("brief").write_text("b")
     run.path("dossier").write_text("[D01] (L01, claim, tier episode) d. Source: episode")
     with pytest.raises(StageError, match="seg02"):

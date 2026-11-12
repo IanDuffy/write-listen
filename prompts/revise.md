@@ -3,11 +3,11 @@
 Inputs:
 - {{n}}, {{total}}: segment number and count
 - {{segment}}: the segment's draft text
-- {{notes}}: the '## segNN' section of 08_edit_notes.md for this segment
+- {{notes}}: the '## segNN' sections of 08_edit_notes.md and 08b_factcheck.md for this segment, merged by code
 ---
 Revise segment {{n}} of {{total}}.
 
-The editor's notes for this segment:
+The notes for this segment: the editor's, then the fact-checker's. Where they conflict, follow the fact-checker:
 
 <notes>
 {{notes}}

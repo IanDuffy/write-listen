@@ -245,3 +245,25 @@ def test_failed_fetches_are_recorded_and_passed_to_the_follow_up(run):
     src.write_text(json.dumps({**got, "row": "L01"}))
     _, job = ledger_update._followup_job(run, {"id": "L01", "gap": "Fetch Jowett."})
     assert job["gap"].startswith("Fetch Jowett.") and "https://en.wikisource.org/wiki/X (url_not_accessible)" in job["gap"]
+
+
+def test_fact_notes_merge_under_the_editors():
+    from stages.revise import FACT_HEAD, merge_notes
+    g, per = merge_notes("Warmer.", {1: "1. [CUT] x", 2: "1. [EAR] y"},
+                         "No changes.", {2: "1. [FACT] z", 3: "1. [FACT] w", 1: "No changes"})
+    assert g == "Warmer." and per[1] == "1. [CUT] x"
+    assert per[2] == f"1. [EAR] y\n\n{FACT_HEAD}\n1. [FACT] z" and per[3] == f"{FACT_HEAD}\n1. [FACT] w"
+
+
+def test_fact_notes_revise_cannot_read_stop_it(run, cfg, responder):
+    from stages import revise
+    run.path("script_draft").write_text("<!-- seg01 -->\n\nOne.\n\n<!-- seg02 -->\n\nTwo.\n")
+    run.path("edit_notes").write_text("## Global\nx\n\n## seg01\n1. [CUT] y\n\n## seg02\n1. [CUT] z\n")
+    run.path("brief").write_text("b")
+    run.path("dossier").write_text("[D01] (L01, claim, tier episode) d. Source: episode")
+    run.path("factcheck").write_text("# Fact-check\n\n### seg01\n1. [FACT] \"One.\" Cut it.\n")
+    with pytest.raises(StageError, match="1 \\[FACT\\] notes but only 0"):
+        revise.run(run, cfg)  # a '###' heading would have dropped the note silently
+    run.path("factcheck").write_text("## seg05\n1. [FACT] \"Five.\" Cut it.\n")
+    with pytest.raises(StageError, match="segment\\(s\\) \\[5\\]"):
+        revise.run(run, cfg)

@@ -72,6 +72,7 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
             cache_read=(n_seg - 1) * (dossier + brief + style) + n_seg * draft // 2), done("script_draft")),
         ("coverage", est("coverage", draft + brief + led_tokens + 3000), done("coverage")),
         ("edit", est("edit", draft + brief + dossier + style + 2000), done("edit_notes")),
+        ("factcheck", est("factcheck", draft + dossier + 4000 + 1500), done("factcheck")),
         ("revise", n_seg * est("revise", 0) + llm.token_cost(
             cfg, llm.stage_model(cfg, "revise"), cache_write_5m=dossier + brief + style + draft,
             cache_read=(n_seg - 1) * (dossier + brief + style + draft) + n_seg * draft // 2), done("script_final")),

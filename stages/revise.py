@@ -34,20 +34,53 @@ def parse_notes(notes: str) -> tuple[str, dict[int, str]]:
     return global_notes, per_seg
 
 
+def check_fact_notes(text: str, fact_global: str, fact_seg: dict[int, str]) -> None:
+    """Every [FACT] note must sit under a heading revise can read, or it would be silently dropped."""
+    parsed = fact_global.count("[FACT]") + sum(t.count("[FACT]") for t in fact_seg.values())
+    if text.count("[FACT]") > parsed:
+        raise StageError(f"08b_factcheck.md has {text.count('[FACT]')} [FACT] notes but only {parsed} under "
+                         "'## Global' or '## segNN' headings that revise can read. Fix the headings, or run "
+                         "factcheck --force.")
+
+
+FACT_HEAD = "Fact-checker's notes (they win where they conflict with the editor's):"
+
+
+def merge_notes(global_notes: str, per_seg: dict[int, str], fact_global: str,
+                fact_seg: dict[int, str]) -> tuple[str, dict[int, str]]:
+    """Add the fact-checker's notes under the editor's, section by section. 'No changes.' adds nothing."""
+    def add(editor: str, fact: str) -> str:
+        fact = fact.strip()
+        if not fact or re.fullmatch(r"no changes\.?", fact, re.I):
+            return editor
+        return f"{editor.strip()}\n\n{FACT_HEAD}\n{fact}".strip() if editor.strip() else f"{FACT_HEAD}\n{fact}"
+    merged = dict(per_seg)
+    for n, fact in fact_seg.items():
+        merged[n] = add(per_seg.get(n, ""), fact)
+    return add(global_notes, fact_global), merged
+
+
 def run(r: Run, cfg: dict):
     draft = r.read("script_draft")
     notes = r.read("edit_notes")
+    fact_notes = r.read("factcheck")
     brief = r.read("brief")
     dossier = r.read("dossier")
     r.check_writable("script_final")
 
     segments = split_script_segments(draft)
     global_notes, per_seg = parse_notes(notes)
+    fact_global, fact_seg = parse_notes(fact_notes)
     if not per_seg and not global_notes:
         raise StageError("08_edit_notes.md has no '## Global' or '## segNN' sections.")
-    unknown = sorted(set(per_seg) - {n for n, _ in segments})
+    check_fact_notes(fact_notes, fact_global, fact_seg)
+    in_draft = {n for n, _ in segments}
+    unknown = sorted(set(per_seg) - in_draft)
     if unknown:
         print(f"  warning: notes for segments not in the draft: {unknown}")
+    if lost := sorted(n for n, t in fact_seg.items() if n not in in_draft and "[FACT]" in t):
+        raise StageError(f"08b_factcheck.md has fact notes for segment(s) {lost}, which the draft does not have. "
+                         "Fix the section headings to the draft's segment numbers, or run factcheck --force.")
     missing = [n for n, _ in segments if n not in per_seg]
     if missing and not r.force:
         raise StageError(
@@ -56,6 +89,7 @@ def run(r: Run, cfg: dict):
             "usually means a heading the parser could not read. Fix the headings ('## seg01'), "
             "or use --force to revise those segments with the global notes only.")
 
+    global_notes, per_seg = merge_notes(global_notes, per_seg, fact_global, fact_seg)
     system = load_prompt(
         "revise_context",
         style_guide=load_prompt("style_guide"),

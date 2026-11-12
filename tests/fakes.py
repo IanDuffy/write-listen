@@ -205,6 +205,10 @@ class Responder:
         m = re.search(r"Write segment (\d+) of", t)
         if m:
             return self.msg(kwargs, segment_prose(int(m.group(1))))
+        if "You are the fact-checker for an audio chapter" in t:  # before the editor: it quotes the edit notes
+            return self.msg(kwargs, "## Global\nNo changes.\n\n## seg01\nNo changes.\n\n## seg02\n1. [FACT] "
+                                    "Editor's note 1 is fine, but \"Socrates tells the guests about Diotima\" needs "
+                                    "D01 to say who tells it: keep it, citing D01 only.\n\n## Summary\n12 checked, 1 flagged.")
         if "You are the editor of an audio chapter" in t:
             notes = "## Global\n1. [TONE] Warmer.\n\n" + "\n\n".join(
                 f"## seg{i:02d}\n1. [CUT] Cut 'slowly and plainly'." for i in range(1, self.n_segments + 1))

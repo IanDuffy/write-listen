@@ -23,6 +23,7 @@ Stages, in order. The pipeline runs hands-off: model stages (choose, the 04b jud
     assemble <run>               -> 07_script_draft.md
     coverage <run>               draft vs ledger -> 07b_coverage.md (the editor reads it)
     edit <run>                   -> 08_edit_notes.md
+    factcheck <run>              draft + edit notes vs dossier -> 08b_factcheck.md (revise applies both)
     revise <run>                 -> 09_script_final.md
                                  (optional) read 09_script_final.md
     narrate <run>                -> 10_audio/chapter.mp3
@@ -56,7 +57,7 @@ STAGES_IN_ORDER = [
     ("ledger", "ledger"), ("dossier", "research"),
     ("ledger_update", "ledger-update"), ("brief", "brief"), (None, "draft"),
     ("script_draft", "assemble (after draft)"), ("coverage", "coverage"), ("edit_notes", "edit"),
-    ("script_final", "revise"),
+    ("factcheck", "factcheck"), ("script_final", "revise"),
     (None, "narrate"), ("chapter_mp3", "narrate"),
     ("baseline_script", "baseline"), ("baseline_mp3", "narrate --baseline"),
     ("compare_dir", "compare"), ("report", "report"),
@@ -74,6 +75,8 @@ def status(r: Run, cfg: dict) -> None:
         p = r.path(key)
         exists = p.exists() and (p.is_file() or any(p.iterdir()))
         print(f"  [{'x' if exists else ' '}] {PATHS[key]}")
+        if key == "factcheck" and not exists and r.path("script_final").exists():
+            continue  # a run revised before stage 8b existed: not a step still to take
         if not exists and next_step is None:
             next_step = step
     if r.path("ledger").exists():
@@ -169,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         elif st == "ledger-update":
             from stages import ledger_update
             ledger_update.run(r, cfg)
-        elif st in ("map", "angles", "choose", "ledger", "brief", "assemble", "coverage", "edit", "revise",
+        elif st in ("map", "angles", "choose", "ledger", "brief", "assemble", "coverage", "edit", "factcheck", "revise",
                     "baseline", "compare"):
             import importlib
             importlib.import_module(f"stages.{st}").run(r, cfg)

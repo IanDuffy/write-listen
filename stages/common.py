@@ -77,6 +77,7 @@ PATHS = {
     "script_draft": "07_script_draft.md",
     "coverage": "07b_coverage.md",
     "edit_notes": "08_edit_notes.md",
+    "factcheck": "08b_factcheck.md",
     "script_final": "09_script_final.md",
     "audio_dir": "10_audio",
     "chapter_mp3": "10_audio/chapter.mp3",

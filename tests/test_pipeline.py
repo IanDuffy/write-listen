@@ -5,7 +5,7 @@ import json
 import pytest
 from fakes import all_text
 
-from stages import (angles, assemble, baseline, brief, choose, compare, coverage, draft, edit, ledger, ledger_update,
+from stages import (angles, assemble, baseline, brief, choose, compare, coverage, draft, edit, factcheck, ledger, ledger_update,
                     map as map_stage, narrate, report, research, revise)
 from stages.common import StageError, split_script_segments
 
@@ -146,7 +146,17 @@ def test_full_run(ingested, cfg, responder, fake_tts):
 
     edit.run(r, cfg)
     assert "Never lands." in all_text(responder.calls[-1])  # the editor read 07b_coverage.md
+    with pytest.raises(StageError, match="08b_factcheck.md"):
+        revise.run(r, cfg)  # revise needs the fact-check
+    # 8b: the fact-checker reads the draft and the editor's notes; its notes reach revise, and win.
+    factcheck.run(r, cfg)
+    fc_call = responder.calls[-1]
+    assert "Cut 'slowly and plainly'" in all_text(fc_call) and "Segment 2 opens" in all_text(fc_call)
     revise.run(r, cfg)
+    seg2 = [c for c in responder.calls if "Revise segment 2 of" in all_text(c)][0]
+    assert "Fact-checker's notes (they win" in all_text(seg2) and "citing D01 only" in all_text(seg2)
+    seg1 = [c for c in responder.calls if "Revise segment 1 of" in all_text(c)][0]
+    assert "Fact-checker's notes" not in all_text(seg1)  # 'No changes.' adds nothing
     final = r.path("script_final").read_text()
     assert "slowly and plainly" not in final
     assert [n for n, _ in split_script_segments(final)] == [1, 2, 3]
@@ -182,7 +192,7 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     assert all("cost_usd" in rec for rec in log)
     # Cost pass: single-shot stages go through the Batches API; per-row agents and drafting stream.
     batched = {rec["stage"] for rec in log if rec.get("batch")}
-    assert {"map", "angles", "choose", "ledger", "ledger_update", "brief", "coverage", "edit"} <= batched
+    assert {"map", "angles", "choose", "ledger", "ledger_update", "brief", "coverage", "edit", "factcheck"} <= batched
     assert not batched & {"research_row", "draft", "revise", "baseline"}
     assert not any("sk-" in json.dumps(rec) for rec in log)
 

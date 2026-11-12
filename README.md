@@ -88,10 +88,11 @@ Each milestone stops for Ian.
 5. **Pilot.** `draft beauty-scarry --segments 1-2`, then
    `narrate beauty-scarry --pilot` gives `10_audio/pilot.mp3`. Adjust
    `prompts/style_guide.md` and the prompts from the listen.
-6. **Draft the rest, assemble, coverage, edit, revise.** `draft` keeps the
+6. **Draft the rest, assemble, coverage, edit, fact-check, revise.** `draft` keeps the
    segments that already exist, so this drafts only the rest. Then run
    `assemble`, `coverage` (07b: the draft against the ledger), `edit` (which
-   reads `07b_coverage.md`) and `revise`, and read `09_script_final.md`.
+   reads `07b_coverage.md`), `factcheck` (8b: every claim in the draft and in the editor's
+   proposed wording, checked against the dossier) and `revise` (which applies both sets of notes), and read `09_script_final.md`.
 7. **Narrate, baseline, compare, report.**
    `narrate`, `baseline`, `narrate --baseline`, `compare`, `report`.
 
