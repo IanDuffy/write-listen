@@ -51,8 +51,8 @@ the first is the gate for the rest:
 
 | Milestone | State |
 | --- | --- |
-| 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Built, tested offline. Not yet run live: Ian runs it locally and listens. If it isn't good, fix it before anything else. |
-| 2. Status and page (`status.json`, FastAPI server, page) | Not started |
+| 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
+| 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
 | 3. The conversation in text (persona prompt, three tools) | Not started |
 | 4. Voice (ElevenLabs Agents) | Not started. Confirm in ElevenLabs' current docs first: client tools, per-session prompt overrides, and which Claude models the platform offers. |
 | 5. Memory (`listener/` files, profile update pass) | Not started (seed runs already read `listener/profile.md` if it exists) |
@@ -78,6 +78,21 @@ the first is the gate for the rest:
   `decisions.md`. Starting an unattended run is the approval for spending up to
   its cap (default $20; a lesson's upper-end forecast is about $15).
 - `--seed` is a string now; `report --seed N` still takes the sample seed.
+
+**Milestone 2 decisions.**
+- `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
+  and on ready or problem: `state` (making, ready, problem), `stage`, `label`
+  (plain words), `stages_done`/`stages_total`, `minutes_left` (from
+  `status_minutes`, rough until calibrated from `history`), `title`, `audio`,
+  `message` (one plain sentence), `detail` (the error, for Ian).
+- `server.py` (FastAPI, one file, 127.0.0.1:8765): the page, `POST /api/chapters`
+  (seed -> `new <run> --unattended` as a subprocess), `GET /api/status`,
+  `GET /api/events` (server-sent events), retry, audio. One run at a time. A
+  process that dies while status.json still says making is shown as a problem.
+- `page/index.html`: one file, plain JavaScript, system font, one accent color.
+  Milestone 2 has the idle, making, ready and problem states; listening,
+  thinking and speaking come with voice (milestone 4). The transcript toggle
+  shows what was typed and the stages, until the conversation (milestone 3).
 
 ## Local setup
 
@@ -211,7 +226,8 @@ real key), so locally it must be in `.env`.
   call; cost guard; retries dropped streams and overloads; resumes `pause_turn`.
 - `stages/tts.py`: the only ElevenLabs caller (`synthesize`), chunking,
   pronunciation table, on-disk chunk cache, ffmpeg join.
-- Seed runs: `new.py` (the unattended runner), `seed.py`, `scout.py`.
+- Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
+- `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestone 2.
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.

@@ -41,7 +41,8 @@ PATHS = {
     "transcript": "00_source/transcript.txt",
     "seed": "00_source/seed.md",  # a seed run (Phase 1): the listener's topic, in place of a transcript
     "scout_sources": "01_scout.sources.json",
-    "decisions": "decisions.md",  # every decision an unattended run made on its own, for Ian afterwards
+    "decisions": "decisions.md",
+    "status": "status.json",  # an unattended run's progress, for the page (Phase 1 milestone 2)  # every decision an unattended run made on its own, for Ian afterwards
     "map": "01_map.md",
     "angles": "02_angles.md",
     "angle": "03_angle.md",

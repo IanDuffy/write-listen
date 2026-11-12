@@ -94,6 +94,24 @@ scout:
 unattended:
   max_run_usd: 20.00
 
+# Minutes each step of an unattended seed run takes, for the page's "about N min". First guesses
+# (about 25 in all); status.json records each step's real duration ("history") to calibrate them.
+status_minutes:
+  scout: 3
+  angles: 1
+  choose: 1
+  ledger: 1
+  research: 6
+  ledger-update: 3
+  brief: 1
+  draft: 3
+  assemble: 0
+  coverage: 1
+  edit: 1
+  revise: 2
+  narrate: 2
+  report: 0
+
 # Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
 listener_dir: listener
 

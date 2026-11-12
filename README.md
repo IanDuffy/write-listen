@@ -141,6 +141,19 @@ python cli.py new --seed "I can't stop thinking about why Roman concrete lasted"
 
 `listener/` (the profile, later the guide's memory) is gitignored.
 
+**The page (milestone 2).** `.venv/bin/python server.py`, then open
+<http://127.0.0.1:8765>. Type a topic and press Make it: the server starts
+`new <run> --unattended` in its own process (its console output goes to
+`runs/<run>/run.log`) and streams the run's `status.json` to the page. The
+circle grows a progress ring with the stage in plain words and the minutes
+left ("Researching · about 12 min"); when the chapter is ready it becomes a
+play control under the chapter's title, and the browser sends a notification.
+If a run stops, the page says so in one sentence and offers Try again, which
+continues the run. The server listens on 127.0.0.1 only, and runs one chapter
+at a time. The minutes come from `status_minutes` in `config.yaml`, first
+guesses; each `status.json` records every stage's real duration (`history`)
+to calibrate them.
+
 ## Ledger-driven research
 
 Research is aimed by the chosen angle, not by general reading. The spec is

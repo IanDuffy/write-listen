@@ -23,27 +23,86 @@ from __future__ import annotations
 
 import time
 
+import json
+import os
+import re
+
 from . import (angles, assemble, brief, choose, coverage, draft, edit, estimate, ledger, ledger_update,
                narrate, report, research, revise, scout)
 from .common import Run, StageError, word_count
 
-# (label, the output that shows the stage is done, the stage)
+# (step, the output that shows it is done, the stage, what the page says while it runs)
 STEPS = [
-    ("scout", "map", scout.run),
-    ("angles", "angles", angles.run),
-    ("choose", "angle", choose.run),
-    ("ledger", "ledger", ledger.run),
-    ("research", "dossier", research.run),
-    ("ledger-update", "ledger_update", ledger_update.run),
-    ("brief", "brief", brief.run),
-    ("draft", "script_draft", draft.run),  # keeps segments already drafted
-    ("assemble", "script_draft", assemble.run),
-    ("coverage", "coverage", coverage.run),
-    ("edit", "edit_notes", edit.run),
-    ("revise", "script_final", revise.run),
-    ("narrate", "chapter_mp3", narrate.run),
-    ("report", "report", report.run),
+    ("scout", "map", scout.run, "Looking into it"),
+    ("angles", "angles", angles.run, "Choosing an angle"),
+    ("choose", "angle", choose.run, "Choosing an angle"),
+    ("ledger", "ledger", ledger.run, "Planning"),
+    ("research", "dossier", research.run, "Researching"),
+    ("ledger-update", "ledger_update", ledger_update.run, "Researching"),
+    ("brief", "brief", brief.run, "Planning the chapter"),
+    ("draft", "script_draft", draft.run, "Writing"),  # keeps segments already drafted
+    ("assemble", "script_draft", assemble.run, "Writing"),
+    ("coverage", "coverage", coverage.run, "Editing"),
+    ("edit", "edit_notes", edit.run, "Editing"),
+    ("revise", "script_final", revise.run, "Editing"),
+    ("narrate", "chapter_mp3", narrate.run, "Recording"),
+    ("report", "report", report.run, "Finishing"),
 ]
+
+
+# --- status.json: what the page shows ---------------------------------------------------
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def chapter_title(r: Run) -> str | None:
+    """The brief's title once there is one, else the chosen angle's."""
+    for key, pattern in (("brief", r"^#\s+Brief:\s*(.+)$"), ("angle", r"^#\s+Angle:\s*(.+)$")):
+        if r.path(key).exists():
+            m = re.search(pattern, r.path(key).read_text(encoding="utf-8"), re.M)
+            if m:
+                return m.group(1).strip()
+    return None
+
+
+def minutes_left(r: Run, cfg: dict) -> int:
+    """Estimated minutes for the steps not yet done (config.yaml status_minutes, rough until calibrated)."""
+    table = cfg.get("status_minutes") or {}
+    return round(sum(table.get(step, 1) for step, key, _, _ in STEPS if not r.path(key).exists()))
+
+
+def plain_problem(step_label: str, error: str) -> str:
+    """One plain sentence for the page; the full error stays in 'detail' and decisions.md."""
+    where = step_label.lower()
+    if "cap" in error:
+        return f"The chapter stopped while {where}: it reached its spending limit."
+    return f"Something went wrong while {where}."
+
+
+def write_status(r: Run, cfg: dict, state: str, **fields) -> dict:
+    """Write runs/<run>/status.json atomically (the server streams it to the page)."""
+    old = read_status(r) or {}
+    done = sum(1 for _, key, _, _ in STEPS if r.path(key).exists())
+    status = {
+        "run": r.name, "state": state, "stage": None, "label": None,
+        "stages_done": done, "stages_total": len(STEPS), "minutes_left": minutes_left(r, cfg),
+        "title": chapter_title(r), "audio": None, "message": None, "detail": None,
+        "started": old.get("started") or _now(), "updated": _now(), "history": old.get("history", []),
+        **fields,
+    }
+    tmp = r.path("status").with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, r.path("status"))
+    return status
+
+
+def read_status(r: Run) -> dict | None:
+    p = r.path("status")
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+    except json.JSONDecodeError:
+        return None
 
 
 def remaining_forecast(r: Run, cfg: dict) -> float:
@@ -54,8 +113,9 @@ def run(r: Run, cfg: dict) -> None:
     if not r.unattended:
         raise StageError("new runs the whole pipeline only with --unattended.")
     t0 = time.monotonic()
-    todo = [label for label, key, _ in STEPS if not r.path(key).exists()]
+    todo = [step for step, key, _, _ in STEPS if not r.path(key).exists()]
     if not todo:
+        write_status(r, cfg, "ready", audio=str(r.path("chapter_mp3").relative_to(r.root)), minutes_left=0)
         print(f"  {r.name} is finished: {r.path('chapter_mp3').relative_to(r.root)}")
         return
     ahead, spent = remaining_forecast(r, cfg), r.spent()
@@ -65,23 +125,35 @@ def run(r: Run, cfg: dict) -> None:
         msg = (f"The rest of this run could cost up to ${ahead:.2f} (upper end; ${spent:.2f} spent), past its "
                f"${r.max_usd:.2f} cap. Not started. Raise --max-usd or unattended.max_run_usd to go ahead.")
         r.decide("stopped", msg)
+        write_status(r, cfg, "problem", message="This chapter could cost more than its spending limit, so it "
+                                                 "did not start.", detail=msg)
         raise StageError(msg)
     r.decide("start" if spent == 0 else "continue",
              f"Running {', '.join(todo)} with no checkpoints; upper-end forecast ${ahead:.2f}, "
              f"cap ${r.max_usd:.2f}, ${spent:.2f} spent before this.")
-    for label, key, stage in STEPS:
+    for label, key, stage, plain in STEPS:
         if r.path(key).exists():
             continue
         print(f"\n== {label} ==")
+        write_status(r, cfg, "making", stage=label, label=plain)
+        t_stage = time.monotonic()
         try:
             stage(r, cfg)
-        except StageError as e:
+        except Exception as e:  # anything at all: the page must not keep saying "making"
             r.decide("stopped", f"Stopped at {label}: {e}")
+            write_status(r, cfg, "problem", stage=label, label=plain, message=plain_problem(plain, str(e)),
+                         detail=f"{type(e).__name__}: {e}")
+            if not isinstance(e, StageError):
+                raise
             raise StageError(f"stopped at {label}: {e}\n  To continue from {label}: python cli.py new {r.name} "
-                             f"--unattended (raise --max-usd if the cap stopped it). Decisions so far: {r.path('decisions')}")
+                             f"--unattended (raise --max-usd if the cap stopped it). Decisions so far: {r.path('decisions')}") from None
+        hist = (read_status(r) or {}).get("history", []) + [
+            {"stage": label, "seconds": round(time.monotonic() - t_stage, 1)}]
+        write_status(r, cfg, "making", stage=label, label=plain, history=hist)
     words = word_count(r.read("script_final"))
     minutes = (time.monotonic() - t0) / 60
     summary = (f"Finished in {minutes:.0f} min: {words:,} words, {r.path('chapter_mp3').relative_to(r.root)}, "
                f"${r.spent():.2f} spent in all.")
     r.decide("done", summary)
+    write_status(r, cfg, "ready", audio=str(r.path("chapter_mp3").relative_to(r.root)), minutes_left=0)
     print(f"\n  {summary}\n  Decisions: {r.path('decisions')}")

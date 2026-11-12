@@ -77,6 +77,12 @@ def test_seed_to_chapter_unattended(env):
     assert {"scout", "angles", "choose", "ledger", "research_row", "ledger_update", "brief", "draft",
             "coverage", "edit", "revise", "narrate"} <= {x["stage"] for x in log}
 
+    # status.json, for the page: ready, every stage done, with each stage's real duration.
+    st = json.loads(r.path("status").read_text())
+    assert st["state"] == "ready" and st["stages_done"] == st["stages_total"] == len(new.STEPS)
+    assert st["audio"] == "10_audio/chapter.mp3" and st["title"] == "Beauty" and st["minutes_left"] == 0
+    assert [h["stage"] for h in st["history"]] == [s[0] for s in new.STEPS]
+
     # Running it again does nothing more.
     n = len(resp.calls)
     assert cli.main(["new", root.name, "--unattended"]) == 0
@@ -88,6 +94,7 @@ def test_forecast_over_the_cap_stops_before_spending(env):
     assert cli.main(["new", "lesson", "--seed", TOPIC, "--unattended", "--max-usd", "1"]) == 1
     r = Run.open("lesson", runs_dir=runs)
     assert not resp.calls and r.read_log() == []
+    assert json.loads(r.path("status").read_text())["state"] == "problem"
     assert "## stopped" in r.read("decisions") and "Not started" in r.read("decisions")
 
 
@@ -99,6 +106,9 @@ def test_a_run_stopped_by_its_cap_continues_where_it_stopped(env, monkeypatch):
     r = Run.open("lesson", runs_dir=runs)
     assert r.path("map").exists() and r.path("ledger").exists() and not r.path("dossier").exists()
     assert "Stopped at research" in r.read("decisions")
+    st = json.loads(r.path("status").read_text())
+    assert st["state"] == "problem" and st["stage"] == "research"
+    assert st["message"] == "The chapter stopped while researching: it reached its spending limit."
     scouts = resp.scout_calls
     assert cli.main(["new", "lesson", "--unattended", "--max-usd", "50"]) == 0
     assert resp.scout_calls == scouts and r.path("chapter_mp3").exists()  # nothing paid for twice
