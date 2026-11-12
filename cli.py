@@ -49,7 +49,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from stages.common import ROOT, PATHS, Run, StageError, load_config
+from stages.common import ROOT, PATHS, Run, StageError, load_config, run_config
 
 STAGES_IN_ORDER = [
     ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "choose"),
@@ -132,7 +132,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if st == "estimate":
             from stages import estimate
-            estimate.run(Run.open(args.run) if args.run else None, cfg)
+            er = Run.open(args.run) if args.run else None
+            estimate.run(er, run_config(cfg, er.root) if er else cfg)
             return 0
         if st == "voices":
             from stages.voicetest import list_voices
@@ -147,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.run:
             ap.error(f"{st} needs a run name, e.g. python cli.py {st} beauty-scarry")
         r = Run.open(args.run, force=args.force, yes=args.yes, create=(st == "init"))
+        cfg = run_config(cfg, r.root)
 
         if st == "init":
             r.path("source_dir").mkdir(exist_ok=True)

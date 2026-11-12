@@ -10,6 +10,8 @@ parser contract: stages/research.py reads the <research> block, the
 '## Not found' section. The merge renumbers entries D01, D02, ... by code and
 keeps the tags, so change the format only together with research.parse_entries.
 ---
+Some hosts refuse the fetch tool: wikisource.org and sacred-texts.com so far. Fetch a primary text from Project Gutenberg (the gutenberg.org/cache/epub/N/pgN-images.html page or the plain .txt), Perseus or classics.mit.edu instead. If a fetch fails, fetch the same text from another host before you write: a quote seen only in a search result is never verbatim.
+
 When your research is done, write what you found inside <research> tags, exactly in this shape:
 
 <research>

@@ -582,6 +582,15 @@ def call(
     if paused:
         print(summary + " (paused at its tool budget)")
         return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
+    if message.stop_reason == "tool_use" and resume_if is not None and tools:
+        # Only server tools were offered, yet the turn ended on a tool call for the client to run
+        # (seen with Sonnet 5.5 on beauty-scarry-short, 2026-11-11). Nothing can answer it, so treat
+        # it like a loop paused at its budget: the caller writes up from what was gathered.
+        tail = [{k: getattr(b, k, None) for k in ("type", "name", "input")} for b in message.content[-3:]]
+        (run.root / f"_tool_use_{re.sub(r'[^A-Za-z0-9.-]+', '_', label or stage)}.json").write_text(
+            json.dumps(tail, default=str, indent=1), encoding="utf-8")
+        print(summary + " (ended on a tool call nothing here can run; writing up what it gathered)")
+        return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
     if message.stop_reason == "refusal":
         details = getattr(message, "stop_details", None)
         raise StageError(f"{stage}: the model declined ({getattr(details, 'category', None)}). "

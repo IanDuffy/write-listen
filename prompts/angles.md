@@ -20,7 +20,7 @@ For each angle write:
 
 ### Angle N: a working title
 - **Thesis:** one sentence the chapter will argue. A thesis is a claim someone could disagree with, not a topic.
-- **Why it is compelling:** why this listener would keep listening for forty minutes, and what they would learn that the episode did not give them.
+- **Why it is compelling:** why this listener would keep listening for {{target_minutes}} minutes, and what they would learn that the episode did not give them.
 - **Threads it develops:** which threads from the map, especially the skimmed ones, and how.
 - **Shape:** the arc in three or four sentences, from the opening scene to the closing turn.
 - **Research it needs:** the primary texts to read closely (with the passages if you know them) and the secondary sources or facts to establish. Say which of these are freely available online, for example on Project Gutenberg or the Stanford Encyclopedia of Philosophy.

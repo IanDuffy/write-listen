@@ -123,6 +123,7 @@ class Responder:
         self.row_calls: dict[str, int] = {}
         self.judge_calls = 0
         self.pause_at: dict[str, tuple[int, int]] = {}  # row -> (searches, fetches) used when it pauses
+        self.tool_use_stop: set[str] = set()  # rows whose first turn ends on a client tool_use (Sonnet 5.5)
         self.judge_rounds: list[dict] = [  # one verdict set per judge call; the last repeats
             {"L01": "filled", "L02": "partial", "L03": "filled"},
             {"L01": "filled", "L02": "filled", "L03": "filled"},
@@ -160,6 +161,10 @@ class Responder:
                 s_used, f_used = self.pause_at[rid]  # pauses part-way through its budget
                 return self.msg(kwargs, None, stop="pause_turn", content=[searched, fetched],
                                 u=usage(searches=s_used, fetches=f_used))
+            if rid in self.tool_use_stop and key == rid and self.row_calls[key] == 1:
+                return self.msg(kwargs, None, stop="tool_use", content=[
+                    searched, fetched, NS(type="tool_use", id="t1", name="code_execution", input={"code": "x"})],
+                    u=usage(searches=2, fetches=1))
             if rid == "L01" and key == rid and self.row_calls[key] == 1:
                 # Pauses with its whole budget spent: must be written up, not resumed.
                 return self.msg(kwargs, None, stop="pause_turn", content=[

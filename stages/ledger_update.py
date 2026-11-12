@@ -138,11 +138,15 @@ def apply(led: dict, data: dict, dossier: str, cfg: dict, seen_urls: set[str] | 
 
 
 def _followup_job(r: Run, row: dict) -> tuple[dict, dict]:
-    md, _ = research.row_paths(r, row["id"])
+    md, src = research.row_paths(r, row["id"])
     earlier = md.read_text(encoding="utf-8") if md.exists() else "(none)"
     start = max((e["n"] for e in research.parse_entries(earlier)), default=0) + 1
-    return row, {"earlier": earlier, "gap": row["gap"] or "The research question is not answered yet.",
-                 "start": start}
+    gap = row["gap"] or "The research question is not answered yet."
+    failed = json.loads(src.read_text(encoding="utf-8")).get("failed", []) if src.exists() else []
+    if failed:  # don't spend the follow-up's few page reads on hosts that already refused
+        gap += ("\n\nThese pages failed to load in the first round; fetch the same texts from another host: "
+                + ", ".join(f"{f['url']} ({f['error']})" for f in failed) + ".")
+    return row, {"earlier": earlier, "gap": gap, "start": start}
 
 
 def _record(led: dict, rounds: list[str], ran_now: list[str], skipped: list[str] = (),

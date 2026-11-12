@@ -337,7 +337,7 @@ def run(r: Run, cfg: dict):
     rc = cfg["research"]
     prompt = load_prompt("ledger", transcript=transcript, map=episode_map, angle=angle,
                          min_rows=rc["min_rows"], max_rows=rc["max_rows"],
-                         budgets=budgets_text(cfg), source_tiers=load_prompt("source_tiers"))
+                         target_minutes=cfg["chapter"]["target_minutes"], budgets=budgets_text(cfg), source_tiers=load_prompt("source_tiers"))
     res = llm.call(r, cfg, "ledger", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA)
     data = parse_json(r, res.text, "ledger")
     rows = sorted(data.get("rows") or [], key=lambda x: x.get("rank", 99) if _int(x.get("rank")) else 99)

@@ -195,3 +195,53 @@ def test_quote_check_tolerates_editorial_brackets():
     script = '<!-- seg01 -->\n\nScarry says, "the beautiful brings copies of itself into being at once." [D01]\n'
     assert unbacked_quotes(script, dossier) == []
     assert research.quote_found('"[T]he beautiful brings copies"', ["the beautiful brings copies of itself"])
+
+
+def test_run_config_overrides_settings_for_one_run(run, cfg):
+    from stages.common import run_config
+    assert run_config(cfg, run.root) is cfg  # no run config: unchanged
+    (run.root / "config.yaml").write_text("chapter: {target_words: 3000, target_minutes: 20}\n"
+                                          "research: {max_rows: 4}\n")
+    c = run_config(cfg, run.root)
+    assert c["chapter"]["target_words"] == 3000 and c["chapter"]["min_segments"] == cfg["chapter"]["min_segments"]
+    assert c["research"]["max_rows"] == 4 and c["research"]["budgets"] == cfg["research"]["budgets"]
+    assert cfg["chapter"]["target_words"] == 6000  # the shared config is untouched
+
+
+def test_tool_use_stop_in_a_research_loop_is_written_up(run, cfg, responder):
+    r = run
+    r.yes = True
+    r.path("source_dir").mkdir()
+    r.path("transcript").write_text("David Brooks: Can beauty make us good?\n\nElaine Scarry: Yes.\n")
+    for stage in (map_stage, angles, choose, ledger):
+        stage.run(r, cfg)
+    responder.tool_use_stop = {"L03"}
+    research.run(r, cfg)
+    assert json.loads(research.row_paths(r, "L03")[1].read_text())["written_up"] is True
+    assert "your search and fetch budget is now spent" in all_text_of_last(responder, "This idea is row L03")
+    assert json.loads((r.root / "_tool_use_research_L03.json").read_text())[-1]["name"] == "code_execution"
+
+
+def all_text_of_last(responder, needle):
+    from fakes import all_text
+    return all_text([c for c in responder.calls if needle in all_text(c)][-1])
+
+
+def test_failed_fetches_are_recorded_and_passed_to_the_follow_up(run):
+    from types import SimpleNamespace as NS
+
+    content = [  # dynamic filtering: the fetch is called from code, and the host refuses it
+        NS(type="server_tool_use", id="c1", name="code_execution", input={"code": "await web_fetch(...)"}),
+        NS(type="server_tool_use", id="f1", name="web_fetch", input={"url": "https://en.wikisource.org/wiki/X"}),
+        NS(type="web_fetch_tool_result", tool_use_id="f1",
+           content=NS(type="web_fetch_tool_result_error", error_code="url_not_accessible")),
+    ]
+    got = research.retrieved(content)
+    assert got["failed"] == [{"url": "https://en.wikisource.org/wiki/X", "error": "url_not_accessible"}]
+    assert got["fetched"] == []
+    md, src = research.row_paths(run, "L01")
+    md.parent.mkdir(parents=True)
+    md.write_text("[L01.1] (claim, tier 2) x. Source: https://a\n")
+    src.write_text(json.dumps({**got, "row": "L01"}))
+    _, job = ledger_update._followup_job(run, {"id": "L01", "gap": "Fetch Jowett."})
+    assert job["gap"].startswith("Fetch Jowett.") and "https://en.wikisource.org/wiki/X (url_not_accessible)" in job["gap"]

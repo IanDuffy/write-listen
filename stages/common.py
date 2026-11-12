@@ -34,6 +34,30 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
         return yaml.safe_load(f)
 
 
+def _merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merge(base[k], v) if isinstance(v, dict) and isinstance(base.get(k), dict) else v
+    return out
+
+
+def run_config(cfg: dict, run_root: Path) -> dict:
+    """config.yaml with the run's own runs/<run>/config.yaml (if any) merged over it, key by
+    key: e.g. a shorter chapter for one run. Every stage of that run then sees the same settings."""
+    p = run_root / "config.yaml"
+    if not p.exists():
+        return cfg
+    over = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    if not isinstance(over, dict):
+        raise StageError(f"{p}: expected a mapping of settings.")
+
+    def keys(d: dict, pre: str = "") -> list[str]:
+        return [x for k, v in d.items() for x in (keys(v, f"{pre}{k}.") if isinstance(v, dict) else [f"{pre}{k}"])]
+
+    print(f"  run settings from {run_root.name}/config.yaml: {', '.join(keys(over))}")
+    return _merge(cfg, over)
+
+
 # Every file a stage reads or writes, relative to the run folder.
 PATHS = {
     "source_dir": "00_source",

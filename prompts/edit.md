@@ -60,7 +60,7 @@ As a listener, look for:
 - Whether it delivers the brief's through-line, thesis, hook and closing line.
 - The opening: within the first minute, does the listener know what they are listening to, who the voices are, and what question the chapter chases?
 - The ending: does it stand alone, closing on an image or open question? Cut any preview of another chapter, "where we go next" or sign-off.
-- Held beats: a [pause] belongs after a turn, a striking quote or a question left hanging. Add one where such a moment rushes past; cut any that crowd together, and any beyond about eight in the chapter. Tag these [PACING].
+- Held beats: a [pause] belongs after a turn, a striking quote or a question left hanging. Add one where such a moment rushes past; cut any that crowd together, and any beyond about one every five minutes. Tag these [PACING].
 - The coverage check: a ledger idea marked thin needs its concrete material ([ADD]); one marked missing needs a home or a reason to drop it; one marked repeated needs the repeats cut ([REPEAT]); drift that does not earn its place is cut.
 
 As a fact-checker, check every factual sentence:

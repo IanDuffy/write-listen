@@ -5,6 +5,7 @@ Inputs:
 - {{transcript}}: 00_source/transcript.txt, in full (no summarizing step)
 - {{map}}: 01_map.md
 - {{min_rows}}, {{max_rows}}: config.yaml, research.min_rows and max_rows
+- {{target_minutes}}: config.yaml, chapter.target_minutes
 - {{budgets}}: each research agent's search budget, from config.yaml
 - {{source_tiers}}: prompts/source_tiers.md
 
@@ -13,11 +14,11 @@ Code numbers the rows L01, L02, ... in rank order and writes ledger.json and
 ledger.md. Ian then reviews the ledger and can add, cut, re-rank, park or
 rewrite rows before research runs.
 ---
-We are commissioning one long-form audio chapter, about forty minutes for a single narrator. It starts from a podcast episode and goes further than the episode did, along one angle the commissioning editor has chosen. The listener is curious and not a specialist.
+We are commissioning one long-form audio chapter, about {{target_minutes}} minutes for a single narrator. It starts from a podcast episode and goes further than the episode did, along one angle the commissioning editor has chosen. The listener is curious and not a specialist.
 
 Before any research, we decide what the chapter must land. That is the ledger: a short list of ideas, ranked. Each idea gets its own research agent, aimed by the angle rather than by general reading. After the script is drafted, the same ledger is used to check which ideas the script actually landed.
 
-Depth beats breadth. A forty-minute chapter lands five to seven ideas well, not ten thinly.
+Depth beats breadth. A {{target_minutes}}-minute chapter lands {{min_rows}} to {{max_rows}} ideas well, not twice as many thinly.
 
 The chosen angle, with the editor's notes:
 

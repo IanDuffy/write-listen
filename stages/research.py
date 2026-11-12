@@ -74,11 +74,22 @@ def tools(cfg: dict) -> list[dict]:
 
 
 def retrieved(content: list) -> dict:
-    """Everything the web tools returned: {'urls': {url: title}, 'fetched': [{url, title, text}]}."""
+    """Everything the web tools returned: {'urls': {url: title}, 'fetched': [{url, title, text}],
+    'failed': [{url, error}]} (fetches the host refused; with dynamic filtering, from code too)."""
     urls: dict[str, str] = {}
     fetched: list[dict] = []
+    failed: list[dict] = []
+    asked = {getattr(b, "id", None): (getattr(b, "input", None) or {}).get("url") for b in content
+             if getattr(b, "type", None) == "server_tool_use" and getattr(b, "name", None) == "web_fetch"
+             and isinstance(getattr(b, "input", None), dict)}
     for block in content:
         btype = getattr(block, "type", None)
+        if btype == "web_fetch_tool_result" and getattr(getattr(block, "content", None), "type", "") \
+                == "web_fetch_tool_result_error":  # the host refused, or the page is missing
+            url = asked.get(getattr(block, "tool_use_id", None))
+            if url:
+                failed.append({"url": url, "error": getattr(block.content, "error_code", None) or "error"})
+            continue
         if btype == "web_search_tool_result":
             items = getattr(block, "content", None)
             if isinstance(items, list):  # an error result is a single object, not a list
@@ -104,7 +115,7 @@ def retrieved(content: list) -> dict:
             for c in getattr(block, "citations", None) or []:
                 if getattr(c, "url", None):
                     urls.setdefault(c.url, getattr(c, "title", "") or "")
-    return {"urls": urls, "fetched": fetched}
+    return {"urls": urls, "fetched": fetched, "failed": failed}
 
 
 def _pdf_text(b64: str) -> str | None:
@@ -234,7 +245,7 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
         # An earlier run paid for the tool loop and then failed in the write-up: write up again only.
         saved = json.loads(pending.read_text(encoding="utf-8"))
         print(f"  {label}: writing up the research an earlier run paid for")
-        got = {"urls": saved.get("urls", {}), "fetched": saved.get("fetched", [])}
+        got = {"urls": saved.get("urls", {}), "fetched": saved.get("fetched", []), "failed": saved.get("failed", [])}
         n_search, n_fetch, notes, cost = (saved.get("searches", 0), saved.get("fetches", 0),
                                           saved.get("notes", ""), saved.get("cost_usd", 0.0))
         paused = True
@@ -413,7 +424,7 @@ def gather(r: Run, led: dict) -> dict:
     """Every active row's entries (first round, then follow-up), deduplicated and numbered."""
     numbered: list[dict] = []
     by_text: dict[str, dict] = {}
-    seen = {"urls": {}, "fetched": []}
+    seen = {"urls": {}, "fetched": [], "failed": []}
     not_found, stats, merged, renumbered = [], [], [], []
     for row in ledger.active(led):
         rnum = int(row["id"][1:])
@@ -427,6 +438,7 @@ def gather(r: Run, led: dict) -> dict:
                 s = json.loads(src.read_text(encoding="utf-8"))
                 seen["urls"].update(s.get("urls", {}))
                 seen["fetched"].extend(s.get("fetched", []))
+                seen["failed"] += [{**f, "row": row["id"] + (" follow-up" if fu else "")} for f in s.get("failed", [])]
                 stats.append((row["id"] + (" follow-up" if fu else ""), s.get("searches", 0),
                               (s.get("budget") or {}).get("searches"), s.get("written_up", False)))
             here: dict[int, int] = {}  # this file's own numbers
@@ -582,6 +594,9 @@ def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
                       ("episode", "Entries sourced to the episode")):
         if chk[key]:
             lines.append(f"- {text}: {', '.join(chk[key])}")
+    if g["seen"].get("failed"):
+        lines.append("- Fetches that failed (fetch the same text from another host): " + "; ".join(
+            f"{f['row']} {f['url']} ({f['error']})" for f in g["seen"]["failed"]))
     if chk["unseen_urls"]:
         lines.append("- Cited URLs that no search or fetch returned. Check these by hand; "
                      "the agent may have written them from memory:")
