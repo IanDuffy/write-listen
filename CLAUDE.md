@@ -164,6 +164,10 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   and the typed chat; sessions go to `listener/voice_compare/listener/`, the agent
   stays the listener's. Cost: a 6-message text-only conversation is about $0.06
   (LLM $0.04, mostly the first cache write; platform $0.003 a message).
+- Effort check (2026-11-12): median time to first sentence on the platform was
+  ~0.99 s at `none` and ~0.87 s at `low` (3 conversations each); a blind panel
+  scored voice-none 8.0, voice-low 6.3, typed-low 6.0 (a lean). `none` stays.
+  Reports in `listener/voice_compare/`; my test memory is in `listener/_tests_20261112/`.
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
