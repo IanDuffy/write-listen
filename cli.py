@@ -135,6 +135,9 @@ def chat(cfg: dict) -> int:
         print(f"\nguide> {session.say(text)}\n")
     if pipe.run:
         print(f"  A chapter is being made: python cli.py status {pipe.run}")
+    from stages import memory
+    if memory.after_session(cfg, session.transcript):
+        print(f"  Updated what the guide remembers: {memory.listener_dir(cfg)}/profile.md, guide.md")
     return 0
 
 

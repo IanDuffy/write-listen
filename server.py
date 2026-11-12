@@ -13,6 +13,7 @@ exposed to the network. One listener, one run at a time.
     POST /api/chapters/{run}/retry  continue a run that stopped
     POST /api/chat/start            a new conversation with the guide; it speaks first
     POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
+    POST /api/chat/end              the page is closing: run the memory pass for the conversation
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
@@ -36,7 +37,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from stages import guide
+from stages import guide, memory
 from stages import seed as seed_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config
 
@@ -151,7 +152,7 @@ class ChatRequest(BaseModel):
     message: str
 
 
-def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None) -> FastAPI:
+def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, remember_on_start: bool = True) -> FastAPI:
     pipe = pipeline or Pipeline()
     cfg = cfg or load_config()
     app = FastAPI(title="write-listen")
@@ -168,7 +169,22 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None) -> Fas
     # --- the guide's conversation (milestone 3) ---------------------------------------
     chat = {"session": None, "lock": threading.Lock()}
 
+    def remember(transcript=None) -> None:
+        """The memory pass (profile.md, guide.md) in the background, for one ended conversation or
+        for every one still waiting (after a restart)."""
+        def work():
+            try:
+                memory.after_session(cfg, transcript) if transcript else memory.run_pending(cfg)
+            except Exception as e:  # never take the server down over memory
+                print(f"  memory pass failed: {e}")
+        threading.Thread(target=work, daemon=True).start()
+
+    if remember_on_start:
+        remember()
+
     def new_session() -> guide.Session:
+        if chat["session"] is not None:
+            remember(chat["session"].transcript)  # the previous conversation has ended
         chat["session"] = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
         return chat["session"]
 
@@ -185,6 +201,15 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None) -> Fas
     def chat_start() -> dict:
         """A new conversation; the guide speaks first."""
         return talk(None, fresh=True)
+
+    @app.post("/api/chat/end")
+    def chat_end() -> dict:
+        """The page is closing: the conversation has ended, so update the memory."""
+        with chat["lock"]:
+            session, chat["session"] = chat["session"], None
+        if session is not None:
+            remember(session.transcript)
+        return {"ended": session is not None}
 
     @app.post("/api/chat")
     def chat_turn(req: ChatRequest) -> dict:

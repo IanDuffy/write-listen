@@ -212,6 +212,9 @@ $("orb").addEventListener("click", () => {
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
 
+// The conversation ends when the page goes away: the server updates what the guide remembers.
+addEventListener("pagehide", () => { if (talking) navigator.sendBeacon("/api/chat/end"); });
+
 $("toggle").addEventListener("click", () => {
   const open = $("transcript").classList.toggle("open");
   $("toggle").textContent = open ? "Hide transcript" : "Show transcript";

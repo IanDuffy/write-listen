@@ -150,6 +150,8 @@ class Session:
             self.run = self.start_fn(topic, why, notes)
         except Exception as e:  # busy, a bad seed: the guide says so plainly
             return {"started": False, "reason": str(getattr(e, "detail", None) or e)}
+        from . import memory
+        memory.save_seed(self.cfg, self.runs_dir / self.run)  # listener/seeds/<run>.md
         return {"started": True, "minutes": round(sum((self.cfg.get("status_minutes") or {}).values())) or 25}
 
     def _current_run(self) -> str | None:

@@ -30,7 +30,7 @@ def client(tmp_path, monkeypatch):
         pipe.proc, pipe.run = FakeProc(), run
 
     monkeypatch.setattr(pipe, "start", start)
-    return TestClient(server.create_app(pipe)), pipe, started, tmp_path
+    return TestClient(server.create_app(pipe, remember_on_start=False)), pipe, started, tmp_path
 
 
 def write_status(runs, name, **fields):

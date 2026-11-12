@@ -83,6 +83,9 @@ def test_seed_to_chapter_unattended(env):
     assert st["audio"] == "10_audio/chapter.mp3" and st["title"] == "Beauty" and st["minutes_left"] == 0
     assert [h["stage"] for h in st["history"]] == [s[0] for s in new.STEPS]
 
+    # listener/history.md: what the guide has made for this listener.
+    assert "## Beauty (" in (runs.parent / "listener" / "history.md").read_text()
+
     # Running it again does nothing more.
     n = len(resp.calls)
     assert cli.main(["new", root.name, "--unattended"]) == 0

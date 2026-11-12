@@ -25,6 +25,7 @@ cost_guard_usd: 5.00
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
   guide:    {max_tokens: 4000, effort: low, expected_output_tokens: 400}
+  memory:   {max_tokens: 16000, effort: high, expected_output_tokens: 3000}  # after a conversation (Opus)
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   # beauty-scarry, 2026-11-11: map hit 32000 (thinking + ~6,400 words of map) and angles used
   # 17,838 (over its old 16000) before finishing, so stages that write a long document get

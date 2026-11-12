@@ -169,5 +169,7 @@ def run(r: Run, cfg: dict) -> None:
     summary = (f"Finished in {minutes:.0f} min: {words:,} words, {r.path('chapter_mp3').relative_to(r.root)}, "
                f"${r.spent():.2f} spent in all.")
     r.decide("done", summary)
+    from . import memory
+    memory.record_chapter(cfg, r)  # listener/history.md: what the guide has made for this listener
     write_status(r, cfg, "ready", audio=str(r.path("chapter_mp3").relative_to(r.root)), minutes_left=0)
     print(f"\n  {summary}\n  Decisions: {r.path('decisions')}")

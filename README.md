@@ -169,6 +169,18 @@ cost to `listener/sessions/log.jsonl`; one stops talking past
 `guide.max_session_usd` ($2). `python cli.py chat` is the same conversation in
 the terminal, the cheapest way to tune its tone.
 
+**Memory (milestone 5).** Plain files in `listener/` (gitignored), readable and
+hand-editable: `profile.md` (what the listener has said about themselves, under a
+page), `guide.md` (the guide's name, how it chose it, when they met),
+`sessions/<id>.jsonl` (each conversation), `seeds/<run>.md` (each chapter's seed,
+saved by `start_chapter`) and `history.md` (each finished chapter: title, angle,
+parked ideas). When a conversation ends (the page closes, a new one starts, or
+`cli.py chat` exits), Opus rewrites `profile.md` and `guide.md` from its
+transcript (`prompts/memory.md`): only what the listener said, merged rather than
+appended, and anything they asked to forget removed. A server that stopped first
+catches up at its next start. The guide reads all of it at the start of the next
+conversation, so a returning listener is greeted as one.
+
 ## Ledger-driven research
 
 Research is aimed by the chosen angle, not by general reading. The spec is

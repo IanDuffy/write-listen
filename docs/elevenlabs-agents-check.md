@@ -1,9 +1,26 @@
 # ElevenLabs Agents: the three things to confirm before milestone 4
 
 The Phase 1 doc asks to confirm these in ElevenLabs' current docs before building
-voice. Checked 2026-11-12 from search results that quote the docs. The pages
-themselves (elevenlabs.io) were not reachable from the cloud session, so
-**reconfirm on the pages before building milestone 4.**
+voice. Checked 2026-11-12. The docs site (elevenlabs.io) was not reachable from the
+cloud session, so points 1 and 2 were confirmed from the JavaScript SDK's own type
+definitions (`@elevenlabs/client` 1.36.0 from npm, published 2026-11-10), and point 3
+from search results quoting the docs. **Reconfirm point 3 with `GET /v1/convai/llm/list`
+on Ian's account before building milestone 4.**
+
+## Confirmed from the SDK types (`@elevenlabs/client` 1.36.0)
+
+- `Conversation.startSession(options)`, where options include
+  `clientTools: Record<string, (parameters) => Promise<string | number | void>>`:
+  a handler can return a value to the agent.
+- `overrides: { agent: { prompt, firstMessage, language }, tts: { voiceId, modelId,
+  speed, stability, similarityBoost }, asr: { keywords }, conversation: { textOnly } }`
+  and `dynamicVariables: Record<string, string | number | boolean>`.
+- What milestone 4 also needs is there: `onModeChange` (speaking or listening, for
+  the circle's states), `getInputVolume()` and `getOutputByteFrequencyData()` (for
+  the circle to respond to the mic and the guide's voice), `onMessage` (for the
+  transcript), `sendContextualUpdate(text)` (to tell the guide the chapter is
+  ready without a user turn), `sendUserMessage(text)` (the text box), and a
+  `textOnly` mode.
 
 ## 1. Client tools: yes, as the doc describes
 

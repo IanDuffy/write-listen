@@ -55,7 +55,7 @@ the first is the gate for the rest:
 | 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
 | 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
 | 4. Voice (ElevenLabs Agents) | Not started. Checked from search results (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered, Haiku 5.5 not. Reconfirm on the pages first. |
-| 5. Memory (`listener/` files, profile update pass) | Not started (seed runs already read `listener/profile.md` if it exists) |
+| 5. Memory (`listener/` files, profile update pass) | Built ahead of 4 (it needs no ElevenLabs account), tested offline with a fake model. |
 | 6. End to end with a second person | Not started |
 
 **Milestone 1 decisions.**
@@ -97,6 +97,18 @@ the first is the gate for the rest:
   `listener/sessions/log.jsonl`; `guide.max_session_usd` ($2) per conversation.
 - The ideas doc the Phase 1 doc cites for the opening tone is not in the repo;
   the prompt follows the Phase 1 doc's own words (arrival, curiosity, short).
+
+**Milestone 5 decisions** (built before 4 because voice needs Ian's ElevenLabs account).
+- `stages/memory.py`: `after_session` (Opus, `prompts/memory.md`, structured
+  output) rewrites `listener/profile.md` and `guide.md` from one transcript, once
+  per session (`sessions/<id>.done`), skipping sessions where the listener said
+  nothing. Triggers: a new conversation (the old one ended), `POST /api/chat/end`
+  (the page's `pagehide` beacon), server start (`run_pending`), `cli.py chat` exit.
+- `save_seed` copies each chapter's seed to `listener/seeds/<run>.md` when
+  `start_chapter` runs; `record_chapter` appends to `history.md` when an
+  unattended seed run finishes (code only).
+- "Forget that" is honoured in profile.md and guide.md; the raw transcripts in
+  `sessions/` keep what was said (they are the record, like decisions.md).
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
@@ -247,7 +259,7 @@ real key), so locally it must be in `.env`.
   pronunciation table, on-disk chunk cache, ffmpeg join.
 - Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
 - `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestones 2-3.
-- `guide.py`: the guide's conversation (milestone 3).
+- `guide.py`: the guide's conversation (milestone 3); `memory.py`: the listener's memory (milestone 5).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.

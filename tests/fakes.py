@@ -149,6 +149,13 @@ class Responder:
     def __call__(self, kwargs):
         self.calls.append(kwargs)
         t = all_text(kwargs)
+        if "You keep the memory of a guide" in t:
+            self.memory_calls = getattr(self, "memory_calls", 0) + 1
+            forget = "forget" in t.split("<transcript>")[1].lower()
+            profile = "# What the listener has said\n- Pours concrete for a living." + (
+                "" if forget else "\n- Has a daughter called Maya.")
+            return self.msg(kwargs, json.dumps({"profile": profile,
+                                                "guide": "# Wren\n- Chose the name for the bird that sings in winter."}))
         if "You are a guide. You make chapters" in t:
             return self.guide(kwargs)
         if "single word: ready" in t:

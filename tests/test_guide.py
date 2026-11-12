@@ -132,7 +132,7 @@ def client(world, cfg, monkeypatch):
         pipe.proc, pipe.run = type("P", (), {"returncode": None, "poll": lambda self: None})(), run
 
     monkeypatch.setattr(pipe, "start", start)
-    return TestClient(server.create_app(pipe, cfg)), started, runs
+    return TestClient(server.create_app(pipe, cfg, remember_on_start=False)), started, runs
 
 
 def test_chat_endpoints_start_a_real_seed_run(client):
