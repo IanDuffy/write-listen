@@ -149,6 +149,8 @@ class Responder:
     def __call__(self, kwargs):
         self.calls.append(kwargs)
         t = all_text(kwargs)
+        if "You are a guide. You make chapters" in t:
+            return self.guide(kwargs)
         if "single word: ready" in t:
             return self.msg(kwargs, "ready")
         if "Map the episode" in t:
@@ -238,6 +240,36 @@ class Responder:
             return self.msg(kwargs, None, content=[text_block(
                 "Let me research.<script>\nA baseline paragraph about Diotima.\n\nAnother one.\n</script>")])
         raise AssertionError(f"fake API got an unexpected prompt: {t[:200]}")
+
+    def guide(self, kwargs):
+        """The guide: greets, starts the chapter on a yes, reports status, passes on notes."""
+        self.guide_calls = getattr(self, "guide_calls", 0) + 1
+        last = kwargs["messages"][-1]["content"]
+        if isinstance(last, list):  # tool results came back
+            result = json.loads(last[0]["content"])
+            if "started" in result:
+                return self.msg(kwargs, "It's under way. About 25 minutes; I'll let you know." if result["started"]
+                                else f"I couldn't start it: {result['reason']}")
+            if "added" in result:
+                return self.msg(kwargs, "Noted, I'll fold that in.")
+            return self.msg(kwargs, f"It's {result.get('stage', result['state'])} now.")
+        text = last.lower()
+
+        def tool(name, args):
+            return self.msg(kwargs, None, stop="tool_use", content=[
+                text_block("Let me do that."), NS(type="tool_use", id=f"tu{self.guide_calls}", name=name, input=args)])
+        if "opened the page" in text:
+            return self.msg(kwargs, "Hello, I'm Wren. I've been reading about bridges that sing in the wind.")
+        if text.startswith("yes"):
+            return tool("start_chapter", {"topic": "Why Roman concrete lasted",
+                                          "why": "I pour concrete for a living", "notes": ""})
+        if "how" in text and "going" in text:
+            return tool("get_status", {})
+        if text.startswith("also"):
+            return tool("add_note", {"note": last[5:].strip()})
+        if "loop" in text:
+            return tool("get_status", {})
+        return self.msg(kwargs, "Concrete! There's a harbor in Caesarea that's still standing. Shall I make you a chapter on why?")
 
     @staticmethod
     def msg(kwargs, text, stop="end_turn", content=None, u=None):

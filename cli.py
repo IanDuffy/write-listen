@@ -40,6 +40,8 @@ Seed runs (Phase 1, docs/phase1-onboarding.md): a 20-minute lesson from a listen
                                  The same command again continues a stopped run.
     new [run] --seed "..."       just write 00_source/seed.md; then run the stages one by one:
     scout <run>                  seed -> 01_map.md (10 searches), then angles, choose, ... as above
+    chat                         talk with the guide in the terminal (milestone 3); it starts the
+                                 chapter itself (start_chapter), as on the page (server.py)
 
 Utilities:
 
@@ -112,6 +114,28 @@ def status(r: Run, cfg: dict) -> None:
     print(f"  cost so far: ${total:.2f} " + (f"({', '.join(f'{s} ${c:.2f}' for s, _, c in rows if c)})" if total else ""))
     if next_step:
         print(f"  next: {next_step}")
+
+
+def chat(cfg: dict) -> int:
+    """The guide's conversation in the terminal: the same session, prompt and tools as the page."""
+    import server
+    from stages import guide
+
+    pipe = server.Pipeline()
+    session = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
+    print(f"  (transcript: {session.transcript}; Ctrl-D or an empty line ends it)\n")
+    print(f"guide> {session.say(None)}\n")
+    while True:
+        try:
+            text = input("you> ").strip()
+        except EOFError:
+            break
+        if not text:
+            break
+        print(f"\nguide> {session.say(text)}\n")
+    if pipe.run:
+        print(f"  A chapter is being made: python cli.py status {pipe.run}")
+    return 0
 
 
 def new_run(args, cfg: dict) -> int:
@@ -190,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if st == "new":
             return new_run(args, cfg)
+        if st == "chat":
+            return chat(cfg)
         if st == "voices":
             from stages.voicetest import list_voices
             list_voices(cfg, args.search)

@@ -154,6 +154,21 @@ at a time. The minutes come from `status_minutes` in `config.yaml`, first
 guesses; each `status.json` records every stage's real duration (`history`)
 to calibrate them.
 
+**The guide (milestone 3, typed).** Tap the circle and the guide speaks first;
+the text box talks to it. Its persona is `prompts/guide.md` (the doc's rules for
+finding a seed without an interview: share first, never two questions in a row,
+ordinary answers are doors, offer tastes, decide), its tools
+`prompts/guide_tools.json`: `start_chapter` starts the unattended run,
+`add_note` passes on something said afterwards (stages still to come read
+`00_source/notes.md` with the seed), `get_status` reads `status.json`. A first
+meeting gets five names drawn from `prompts/guide_names.md` to choose from. It
+runs on Claude Sonnet 5.5 (`models.guide`), the fastest Claude that ElevenLabs
+Agents offers natively (`docs/elevenlabs-agents-check.md`), so voice will use the
+same model. Each conversation is saved to `listener/sessions/<id>.jsonl`, its
+cost to `listener/sessions/log.jsonl`; one stops talking past
+`guide.max_session_usd` ($2). `python cli.py chat` is the same conversation in
+the terminal, the cheapest way to tune its tone.
+
 ## Ledger-driven research
 
 Research is aimed by the chosen angle, not by general reading. The spec is

@@ -11,6 +11,8 @@ exposed to the network. One listener, one run at a time.
     GET  /api/status                the current run's status.json (or idle)
     GET  /api/events                the same, as server-sent events, whenever it changes
     POST /api/chapters/{run}/retry  continue a run that stopped
+    POST /api/chat/start            a new conversation with the guide; it speaks first
+    POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
@@ -34,8 +36,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
+from stages import guide
 from stages import seed as seed_stage
-from stages.common import ROOT, RUNS_DIR, Run, StageError
+from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config
 
 PAGE = ROOT / "page" / "index.html"
 HOST, PORT = "127.0.0.1", 8765
@@ -73,6 +76,26 @@ class Pipeline:
                                          stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                          start_new_session=True)
         self.run = run
+
+    def start_seed(self, topic: str, why: str = "", notes: str = "") -> str:
+        """Start (or continue) the unattended run for this seed; returns the run's name. Used by the
+        text box (POST /api/chapters) and by the guide's start_chapter tool."""
+        topic = topic.strip()
+        if not topic:
+            raise HTTPException(400, "Say what the chapter should be about.")
+        with self.lock:
+            if self.busy():
+                raise HTTPException(409, "A chapter is already being made.")
+            text = seed_stage.seed_text(topic, why, notes)
+            name = seed_stage.find_run(text, self.runs_dir) or seed_stage.run_name(topic, self.runs_dir)
+            r = Run.open(name, create=True, runs_dir=self.runs_dir)
+            if not r.path("seed").exists():
+                try:
+                    seed_stage.write(r, topic, why, notes)
+                except StageError as e:
+                    raise HTTPException(400, str(e)) from None
+            self.start(["new", name, "--unattended"], name)
+        return name
 
     def _own_child_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
@@ -124,8 +147,13 @@ class ChapterRequest(BaseModel):
     notes: str = ""
 
 
-def create_app(pipeline: Pipeline | None = None) -> FastAPI:
+class ChatRequest(BaseModel):
+    message: str
+
+
+def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None) -> FastAPI:
     pipe = pipeline or Pipeline()
+    cfg = cfg or load_config()
     app = FastAPI(title="write-listen")
     app.state.pipeline = pipe
 
@@ -135,22 +163,34 @@ def create_app(pipeline: Pipeline | None = None) -> FastAPI:
 
     @app.post("/api/chapters")
     def start(req: ChapterRequest) -> dict:
-        topic = req.seed.strip()
-        if not topic:
-            raise HTTPException(400, "Say what the chapter should be about.")
-        with pipe.lock:
-            if pipe.busy():
-                raise HTTPException(409, "A chapter is already being made.")
-            text = seed_stage.seed_text(topic, req.why, req.notes)
-            name = seed_stage.find_run(text, pipe.runs_dir) or seed_stage.run_name(topic, pipe.runs_dir)
-            r = Run.open(name, create=True, runs_dir=pipe.runs_dir)
-            if not r.path("seed").exists():
-                try:
-                    seed_stage.write(r, topic, req.why, req.notes)
-                except StageError as e:
-                    raise HTTPException(400, str(e)) from None
-            pipe.start(["new", name, "--unattended"], name)
-        return {"run": name}
+        return {"run": pipe.start_seed(req.seed, req.why, req.notes)}
+
+    # --- the guide's conversation (milestone 3) ---------------------------------------
+    chat = {"session": None, "lock": threading.Lock()}
+
+    def new_session() -> guide.Session:
+        chat["session"] = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
+        return chat["session"]
+
+    def talk(text: str | None, fresh: bool) -> dict:
+        with chat["lock"]:  # one turn at a time
+            session = new_session() if fresh or chat["session"] is None else chat["session"]
+            try:
+                reply = session.say(text)
+            except StageError as e:
+                raise HTTPException(503, f"The guide can't talk right now: {e}") from None
+        return {"reply": reply, "session": session.id}
+
+    @app.post("/api/chat/start")
+    def chat_start() -> dict:
+        """A new conversation; the guide speaks first."""
+        return talk(None, fresh=True)
+
+    @app.post("/api/chat")
+    def chat_turn(req: ChatRequest) -> dict:
+        if not req.message.strip():
+            raise HTTPException(400, "Say something first.")
+        return talk(req.message, fresh=False)
 
     @app.post("/api/chapters/{run}/retry")
     def retry(run: str) -> dict:

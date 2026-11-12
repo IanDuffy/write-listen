@@ -116,6 +116,12 @@ status_minutes:
   narrate: 2
   report: 0
 
+# The guide's conversation (Phase 1, milestone 3): prompts/guide.md, prompts/guide_tools.json.
+guide:
+  name_draw: 5            # names drawn from prompts/guide_names.md for a first meeting
+  max_tool_rounds: 4      # tool calls the guide may chain in one turn
+  max_session_usd: 2.00   # a conversation stops talking past this
+
 # Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
 listener_dir: listener
 

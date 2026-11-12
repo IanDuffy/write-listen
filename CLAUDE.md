@@ -53,8 +53,8 @@ the first is the gate for the rest:
 | --- | --- |
 | 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
 | 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
-| 3. The conversation in text (persona prompt, three tools) | Not started |
-| 4. Voice (ElevenLabs Agents) | Not started. Confirm in ElevenLabs' current docs first: client tools, per-session prompt overrides, and which Claude models the platform offers. |
+| 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
+| 4. Voice (ElevenLabs Agents) | Not started. Checked from search results (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered, Haiku 5.5 not. Reconfirm on the pages first. |
 | 5. Memory (`listener/` files, profile update pass) | Not started (seed runs already read `listener/profile.md` if it exists) |
 | 6. End to end with a second person | Not started |
 
@@ -78,6 +78,25 @@ the first is the gate for the rest:
   `decisions.md`. Starting an unattended run is the approval for spending up to
   its cap (default $20; a lesson's upper-end forecast is about $15).
 - `--seed` is a string now; `report --seed N` still takes the sample seed.
+
+**Milestone 3 decisions.**
+- `stages/guide.py` `Session`: one conversation; each turn calls `models.guide`
+  (Claude Sonnet 5.5, effort low) with `prompts/guide.md` and the tools in
+  `prompts/guide_tools.json`, runs any tool and calls again (`llm.call` returns
+  on `tool_use`). The same prompt and tools become the ElevenLabs agent's in
+  milestone 4. The guide speaks first: the first user turn is a page note
+  (`prompts/guide_opened.md`).
+- `start_chapter` calls `server.Pipeline.start_seed` (the text box's path too);
+  `add_note` appends to `00_source/notes.md`, which `common.seed_inputs` reads
+  with the seed (so angles, choose, ledger and brief see it if they have not run;
+  the guide is told when it is too late); `get_status` reads `status.json`.
+- Names: a first meeting draws `guide.name_draw` (5) from `prompts/guide_names.md`.
+  If `listener/guide.md` exists its text is the guide's identity (writing it is
+  milestone 5).
+- Transcripts: `listener/sessions/<id>.jsonl` as it happens; costs in
+  `listener/sessions/log.jsonl`; `guide.max_session_usd` ($2) per conversation.
+- The ideas doc the Phase 1 doc cites for the opening tone is not in the repo;
+  the prompt follows the Phase 1 doc's own words (arrival, curiosity, short).
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
@@ -227,7 +246,8 @@ real key), so locally it must be in `.env`.
 - `stages/tts.py`: the only ElevenLabs caller (`synthesize`), chunking,
   pronunciation table, on-disk chunk cache, ffmpeg join.
 - Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
-- `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestone 2.
+- `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestones 2-3.
+- `guide.py`: the guide's conversation (milestone 3).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.

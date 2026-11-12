@@ -8,8 +8,9 @@
   The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
   One element in the middle and a line of text under it; a text box as a fallback for typing; a
   toggle for the transcript. No framework, system font, one accent color.
-  Milestone 2 shows: idle, making the chapter, ready, problem. Listening, thinking and speaking
-  arrive with the voice guide (milestone 4).
+  Milestones 2-3: idle, thinking (the guide is composing a reply), making the chapter, ready,
+  problem. Tapping the circle starts a conversation with the guide; the text box talks to it,
+  and the guide starts the chapter. Listening and speaking arrive with voice (milestone 4).
 -->
 <style>
   :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
@@ -35,6 +36,8 @@
   body.ready #orb .icon.play, body.ready.playing #orb .icon.pause { opacity: 1; }
   body.ready.playing #orb .icon.play { opacity: 0; }
   body.problem #orb .core { opacity: .28; }
+  body.thinking #orb .core { animation: breathe 2.4s ease-in-out infinite; }
+  body.idle:not(.talking) #orb { cursor: pointer; }
   @keyframes breathe { 50% { opacity: .75; } }
   #line { min-height: 1.4em; text-align: center; color: var(--muted); max-width: 34em; }
   body.ready #line { color: var(--fg); font-weight: 600; }
@@ -52,9 +55,12 @@
   #send:disabled, #say:disabled { opacity: .5; cursor: default; }
   #toggle { margin-top: 10px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
             padding: 0; cursor: pointer; }
-  #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 30vh; overflow: auto; }
+  #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 42vh; overflow: auto; }
   #transcript.open { display: block; }
-  #transcript p { margin: 4px 0; }
+  #transcript p { margin: 6px 0; }
+  #transcript p.you { color: var(--fg); }
+  #transcript p.guide { color: var(--fg); border-left: 2px solid var(--accent); padding-left: 10px; }
+  #transcript p.stage { font-style: italic; }
 </style>
 </head>
 <body class="idle">
@@ -68,14 +74,14 @@
       <g class="icon pause"><rect x="72" y="64" width="12" height="52" rx="2"/><rect x="96" y="64" width="12" height="52" rx="2"/></g>
     </svg>
   </button>
-  <div id="line">Type what you'd like to hear about</div>
+  <div id="line">Tap to begin</div>
   <button id="retry">Try again</button>
   <audio id="audio" preload="none"></audio>
 </main>
 <footer>
   <form id="form" autocomplete="off">
-    <input id="say" placeholder="I can't stop thinking about…" aria-label="What should the chapter be about?">
-    <button id="send">Make it</button>
+    <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
+    <button id="send">Send</button>
   </form>
   <button id="toggle" aria-expanded="false">Show transcript</button>
   <div id="transcript" aria-live="polite"></div>
@@ -87,9 +93,11 @@ const ring = document.querySelector("#orb .ring");
 ring.style.strokeDasharray = CIRC;
 ring.style.strokeDashoffset = CIRC;
 let status = { state: "idle" }, lastState = "idle", lastLabel = null;
+let talking = false, thinking = false;  // a conversation has started; a reply is on its way
 
-function note(text) {
+function note(text, kind = "stage") {
   const p = document.createElement("p");
+  p.className = kind;
   p.textContent = text;
   $("transcript").appendChild(p);
   $("transcript").scrollTop = $("transcript").scrollHeight;
@@ -108,11 +116,12 @@ function render() {
     const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
     if (!$("audio").src.endsWith(src)) $("audio").src = src;
   }
-  document.body.className = s.state + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "");
+  document.body.className = s.state + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
+    + (thinking ? " thinking" : "") + (talking ? " talking" : "");
+  $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
-  $("say").disabled = $("send").disabled = busy;
   if (s.state === "idle") {
-    $("line").textContent = "Type what you'd like to hear about";
+    $("line").textContent = talking ? "" : "Tap to begin";
   } else if (busy) {
     const done = s.stages_total ? s.stages_done / s.stages_total : 0;
     ring.style.strokeDashoffset = CIRC * (1 - Math.min(1, done));
@@ -127,7 +136,7 @@ function render() {
 
 function onStatus(s) {
   status = s;
-  if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…");
+  if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
   if (s.state === "ready" && lastState === "making") {
     note("Ready: " + (s.title || "your chapter"));
     if ("Notification" in window && Notification.permission === "granted") {
@@ -155,17 +164,38 @@ async function post(url, body) {
   return res.json();
 }
 
+function openTranscript() {  // typed, the transcript is the conversation
+  $("transcript").classList.add("open");
+  $("toggle").textContent = "Hide transcript";
+  $("toggle").setAttribute("aria-expanded", true);
+}
+
+async function converse(message) {
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  talking = thinking = true;
+  openTranscript();
+  render();
+  try {
+    const res = message ? await post("/api/chat", { message }) : await post("/api/chat/start");
+    note(res.reply, "guide");
+    return true;
+  } catch (err) {
+    note(err.message, "stage");
+    if (!message) talking = false;
+    return false;
+  } finally {
+    thinking = false;
+    render();
+  }
+}
+
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const seed = $("say").value.trim();
-  if (!seed) return;
-  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
-  try {
-    await post("/api/chapters", { seed });
-    note("You: " + seed);
-    $("say").value = "";
-    onStatus({ state: "making", label: "Starting", stages_done: 0, stages_total: 1 });
-  } catch (err) { $("line").textContent = err.message; note(err.message); }
+  const text = $("say").value.trim();
+  if (!text || thinking) return;
+  note("You: " + text, "you");
+  $("say").value = "";
+  if (!(await converse(text))) $("say").value = text;  // keep what they typed if it didn't go through
 });
 
 $("retry").addEventListener("click", async () => {
@@ -176,7 +206,8 @@ $("retry").addEventListener("click", async () => {
 $("orb").addEventListener("click", () => {
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
-  if (status.state === "ready") a.play();
+  if (status.state === "ready") return a.play();
+  if (status.state === "idle" && !talking && !thinking) converse(null);  // tap to begin
 });
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
