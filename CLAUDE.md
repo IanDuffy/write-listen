@@ -58,7 +58,7 @@ the first is the gate for the rest:
 | 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
 | 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
 | 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
-| 4. Voice (ElevenLabs Agents) | Not started; the three checks are done (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered as `claude-sonnet-5-5` with reasoning effort down to `none` (Ian confirmed 2026-11-12), Haiku 5.5 not. Next: build it locally with Ian's ElevenLabs account. |
+| 4. Voice (ElevenLabs Agents) | Built (2026-11-12, local): agent `write-listen guide` on Ian's account, page voice, voice-compare. Checked live: agent create/update, signed URL, text-only sessions from Python and from the page (client tool round trip). Not yet spoken to with a microphone (Ian's test). |
 | 5. Memory (`listener/` files, profile update pass) | Built ahead of 4 (it needs no ElevenLabs account), tested offline with a fake model. |
 | 6. End to end with a second person | Not started |
 
@@ -135,6 +135,35 @@ editorial brackets, the editor's wording checked, fetch rules, judge names sites
 (Sonnet 5.5's dynamic filtering); a call with client tools (the guide) returns.
 The episode entry in the dossier is for episode runs only. Checked live locally:
 `server.py` serves the page and the typed guide answers; `cli.py chat` works.
+
+**Milestone 4 decisions** (`stages/voice.py`, server `/api/voice/*`, the page).
+- One persona: the agent's prompt is `prompts/guide.md` below its `---`, whose
+  `{{placeholders}}` are ElevenLabs dynamic variables (same syntax), filled per
+  conversation from `guide.Session.values`; nothing about the listener is stored
+  on ElevenLabs. The three tools are ElevenLabs client tools (separate tool
+  objects; `input_schema` -> `parameters`, no `additionalProperties`).
+- `voice.sync_agent` creates or updates tools and agent so the repo stays the
+  source of truth, keyed by a hash of prompt, tools and config (`listener/voice.json`).
+  Config `voice`: `claude-sonnet-5-5`, effort `none` (Ian's pick; `llm.list` shows
+  Sonnet 5.5 offers none..max, and Haiku 5.5 is listed too, despite the docs),
+  `eleven_v4_turbo` (~100 ms; `eleven_v4` is not offered for agents), the
+  narration voice, turn eagerness patient, 40-minute maximum.
+- Private agent: `/api/voice/start` mints a signed URL (15 minutes, WebSocket).
+  `first_message` is empty and the page sends `prompts/guide_opened.md` as a user
+  message once connected, so the guide speaks first in its own words, as typed.
+  Tools run server-side in the conversation's `guide.Session` (`/api/voice/tool`);
+  lines go to the same transcript (`/api/voice/line`); ending runs the memory
+  pass and saves ElevenLabs' call record (`save_conversation`). A chapter
+  finishing mid-conversation is sent as a page note once the guide is listening
+  (`prompts/guide_ready.md`; a contextual update would not make it speak).
+  `sync_agent` saves ids as soon as each object exists and recreates only on a 404.
+- Page: `@elevenlabs/client` 1.32.1 IIFE, pinned in config (`voice.client_js`,
+  the newest release at least two weeks old) and injected when the page is
+  served. Mic asked from the tap; any failure falls back to the typed chat.
+- `voice-compare`: the same scripted turns to the agent (text-only, tools mocked)
+  and the typed chat; sessions go to `listener/voice_compare/listener/`, the agent
+  stays the listener's. Cost: a 6-message text-only conversation is about $0.06
+  (LLM $0.04, mostly the first cache write; platform $0.003 a message).
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage

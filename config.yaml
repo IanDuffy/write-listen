@@ -144,6 +144,22 @@ guide:
   max_tool_rounds: 4      # tool calls the guide may chain in one turn
   max_session_usd: 2.00   # a conversation stops talking past this
 
+# The guide's voice (Phase 1, milestone 4): an ElevenLabs agent made from prompts/guide.md and
+# prompts/guide_tools.json by `python cli.py voice-agent`, kept in step with them (the server re-syncs
+# it when they change). The id is saved in listener/voice.json. Effort `none` is Ian's pick for
+# latency (2026-11-12); the typed chat runs at `low` (stages.guide). `python cli.py voice-compare`
+# sends the same scripted turns to both and writes the replies side by side.
+voice:
+  agent_name: write-listen guide
+  llm: claude-sonnet-5-5        # offered with reasoning effort none..max (llm.list, 2026-11-12)
+  reasoning_effort: none
+  tts_model: eleven_v4_turbo    # ~100 ms; eleven_v4 (narration) is not offered for agents
+  voice_id: null                # null: narration.voice_id, so the guide sounds like the chapters
+  turn_eagerness: patient       # let the listener finish a thought
+  max_duration_seconds: 2400    # a conversation can outlast the ~20-minute wait
+  tool_timeout_secs: 30         # start_chapter starts a run on the local server
+  client_js: https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.32.1/dist/lib.iife.js  # pinned, 2026-10-29
+
 # Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
 listener_dir: listener
 

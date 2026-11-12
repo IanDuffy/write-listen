@@ -39,6 +39,14 @@ def elevenlabs_client():
     return _el_client
 
 
+class ElevenLabsError(StageError):
+    """An ElevenLabs API error, with its HTTP status (None when the service could not be reached)."""
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
 def el_call(fn, *args, **kwargs):
     """Call the ElevenLabs SDK, turning its errors into a StageError with a readable message."""
     import httpx
@@ -49,9 +57,9 @@ def el_call(fn, *args, **kwargs):
     except ApiError as e:
         hint = (" Check the ElevenLabs key: ELEVENLABS_API_KEY in .env locally, or the saved "
                 "network secret for api.elevenlabs.io in a cloud session.") if e.status_code in (401, 403) else ""
-        raise StageError(f"ElevenLabs error {e.status_code}: {e.body}.{hint}") from None
+        raise ElevenLabsError(f"ElevenLabs error {e.status_code}: {e.body}.{hint}", e.status_code) from None
     except httpx.HTTPError as e:
-        raise StageError(f"Could not reach ElevenLabs: {e}") from None
+        raise ElevenLabsError(f"Could not reach ElevenLabs: {e}") from None
 
 
 @dataclass

@@ -170,6 +170,21 @@ cost to `listener/sessions/log.jsonl`; one stops talking past
 `guide.max_session_usd` ($2). `python cli.py chat` is the same conversation in
 the terminal, the cheapest way to tune its tone.
 
+**Voice (milestone 4).** Tapping the circle starts a voice conversation with the
+same guide: an ElevenLabs agent whose prompt is `prompts/guide.md` and whose
+client tools are `prompts/guide_tools.json`, on Claude Sonnet 5.5 at reasoning
+effort `none`, speaking with the chapters' voice on `eleven_v4_turbo`.
+`python cli.py voice-agent` creates it (the server also re-syncs it whenever the
+prompt, tools or `voice` settings change; its id is in `listener/voice.json`).
+The agent is private: the server mints a signed URL per conversation, the page
+runs the tools by calling the server, and the transcript and memory work as in
+the typed chat; ElevenLabs' record of each call (per-turn latency, cost) is saved
+to `listener/sessions/<id>.voice.json`. Without a microphone or voice the page
+falls back to typing. `python cli.py voice-compare` sends the same scripted
+turns (`prompts/voice_compare_turns.md`) to the voice agent, text-only with its
+tools mocked, and to the typed chat, and writes them side by side to
+`listener/voice_compare/`.
+
 **Memory (milestone 5).** Plain files in `listener/` (gitignored), readable and
 hand-editable: `profile.md` (what the listener has said about themselves, under a
 page), `guide.md` (the guide's name, how it chose it, when they met),

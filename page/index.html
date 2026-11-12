@@ -8,9 +8,11 @@
   The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
   One element in the middle and a line of text under it; a text box as a fallback for typing; a
   toggle for the transcript. No framework, system font, one accent color.
-  Milestones 2-3: idle, thinking (the guide is composing a reply), making the chapter, ready,
-  problem. Tapping the circle starts a conversation with the guide; the text box talks to it,
-  and the guide starts the chapter. Listening and speaking arrive with voice (milestone 4).
+  Milestones 2-4: idle, thinking (the guide is composing a reply), listening and speaking (voice:
+  the circle follows the mic and the guide's voice), making the chapter, ready, problem. Tapping
+  the circle starts a voice conversation with the guide (the ElevenLabs agent, milestone 4); tap
+  again to finish. Without a microphone or voice, it falls back to the typed conversation. The text
+  box talks to the guide either way, and the guide starts the chapter.
 -->
 <style>
   :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
@@ -37,7 +39,8 @@
   body.ready.playing #orb .icon.play { opacity: 0; }
   body.problem #orb .core { opacity: .28; }
   body.thinking #orb .core { animation: breathe 2.4s ease-in-out infinite; }
-  body.idle:not(.talking) #orb { cursor: pointer; }
+  body.idle:not(.talking) #orb, body.voice #orb { cursor: pointer; }
+  body.voice #orb .core { transition: opacity .6s; animation: none; }  /* follows the sound, not a timer */
   @keyframes breathe { 50% { opacity: .75; } }
   #line { min-height: 1.4em; text-align: center; color: var(--muted); max-width: 34em; }
   body.ready #line { color: var(--fg); font-weight: 600; }
@@ -90,6 +93,7 @@
   <button id="toggle" aria-expanded="false">Show transcript</button>
   <div id="transcript" aria-live="polite"></div>
 </footer>
+<script src="__VOICE_CLIENT_JS__" async></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const R = 88, CIRC = 2 * Math.PI * R;
@@ -100,6 +104,11 @@ let status = { state: "idle" }, lastState = "idle", lastLabel = null;
 let talking = false, thinking = false;  // a conversation has started; a reply is on its way
 let sessionId = null;                   // the conversation the server knows this page by
 let fresh = false;                      // the ready chapter was made (or played) during this visit
+let voiceConv = null, voiceMode = null; // the live voice conversation; "listening" or "speaking"
+let readyNote = "";                     // what to tell the voice guide when the chapter is ready
+let pendingReady = "";                  // told once the guide is listening (a contextual update wouldn't make it speak)
+let starting = false;                   // a tap is setting up a conversation: further taps wait
+const core = document.querySelector("#orb .core");
 
 function note(text, kind = "stage") {
   const p = document.createElement("p");
@@ -126,7 +135,8 @@ function render() {
   const past = s.state === "ready" && !fresh && $("audio").paused;
   const shown = past ? "idle" : s.state;
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
-    + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "");
+    + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
+    + (voiceConv ? " voice " + (voiceMode || "") : "");
   $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
@@ -149,6 +159,7 @@ function onStatus(s) {
   if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
   if (s.state === "ready" && lastState === "making") {
     fresh = true;
+    if (voiceConv && readyNote) { pendingReady = readyNote.replace("{title}", s.title || "your chapter"); flushReady(); }
     note("Ready: " + (s.title || "your chapter"));
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification("Your chapter is ready", { body: s.title || "" });
@@ -219,9 +230,121 @@ async function converse(message) {
   }
 }
 
+// --- voice (milestone 4) -------------------------------------------------------------------
+function voiceLost() {  // the server no longer knows this conversation (it restarted, or another tab took over)
+  if (!voiceConv) return;
+  note("The guide lost the thread. Tap to start again.");
+  setTimeout(endVoice, 0);  // not from inside the SDK's own callback
+}
+
+async function voiceTool(name, params) {  // a client tool the agent called: the server runs it
+  try {
+    return JSON.stringify(await post("/api/voice/tool", { session: sessionId, name, args: params || {} }));
+  } catch (err) {  // a plain result the guide can say, not a thrown SDK error
+    if (err.conflict) voiceLost();
+    return JSON.stringify({ error: err.conflict ? "This conversation has ended." : err.message });
+  }
+}
+
+function voiceLine(who, text, extra = {}) {  // the transcript the memory pass reads
+  post("/api/voice/line", { session: sessionId, who, text, ...extra }).catch((err) => { if (err.conflict) voiceLost(); });
+}
+
+function flushReady() {  // the chapter is ready: tell the guide as a turn, once it is listening
+  if (voiceConv && voiceMode === "listening" && pendingReady) {
+    voiceConv.sendUserMessage(pendingReady);
+    pendingReady = "";
+  }
+}
+
+function animate() {  // the circle follows the mic while listening and the guide's voice while speaking
+  if (!voiceConv) { core.style.transform = ""; return; }
+  const v = voiceMode === "speaking" ? voiceConv.getOutputVolume() : voiceConv.getInputVolume();
+  const base = status.state === "making" ? 0.82 : 1;
+  core.style.transform = `scale(${base * (1 + Math.min(1, v || 0) * 0.2)})`;
+  requestAnimationFrame(animate);
+}
+
+async function startVoice() {  // false: voice can't start here, so the caller types instead
+  const EL = window.ElevenLabsClient;
+  if (!EL || !navigator.mediaDevices) return false;
+  try {  // ask for the mic from the tap itself, so a refusal is ours to handle
+    (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
+  } catch (e) {
+    note("No microphone, so let's type instead.");
+    return false;
+  }
+  talking = thinking = true;
+  render();
+  let start;
+  try {
+    start = await post("/api/voice/start");
+  } catch (err) {
+    note(err.message);
+    talking = thinking = false;
+    render();
+    return false;
+  }
+  sessionId = start.session;
+  readyNote = start.ready_note || "";
+  let conv = null;
+  try {
+    conv = voiceConv = await EL.Conversation.startSession({
+      signedUrl: start.signed_url, connectionType: "websocket", dynamicVariables: start.dynamic_variables,
+      clientTools: {
+        start_chapter: (p) => voiceTool("start_chapter", p),
+        add_note: (p) => voiceTool("add_note", p),
+        get_status: (p) => voiceTool("get_status", p),
+      },
+      onConnect: ({ conversationId }) => voiceLine("", "", { conversation_id: conversationId }),
+      onMessage: ({ role, message }) => {
+        const who = role === "agent" ? "guide" : "listener";
+        note(who === "guide" ? message : "You: " + message, who === "guide" ? "guide" : "you");
+        voiceLine(who, message);
+      },
+      onModeChange: ({ mode }) => { voiceMode = mode; thinking = false; render(); flushReady(); },
+      onDisconnect: () => { if (!voiceConv || voiceConv === conv) voiceEnded(); },  // only the live one
+      onError: (m) => note(typeof m === "string" ? m : "The voice connection had a problem."),
+    });
+  } catch (err) {
+    note("Voice couldn't start, so let's type.");
+    talking = thinking = false;
+    render();
+    return false;
+  }
+  voiceConv.sendUserMessage(start.opened);  // the guide speaks first, as in the typed chat
+  animate();
+  render();
+  return true;
+}
+
+async function endVoice() {  // tap again to finish talking
+  const c = voiceConv;
+  if (!c) return;
+  try { await c.endSession(); } catch (e) { /* already closed */ }
+  voiceEnded();
+}
+
+function voiceEnded() {  // the conversation is over: the server updates what the guide remembers
+  if (!voiceConv && !talking) return;
+  voiceConv = null;
+  voiceMode = null;
+  talking = thinking = false;
+  if (sessionId) post("/api/chat/end", { session: sessionId }).catch(() => {});
+  sessionId = null;
+  render();
+}
+
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = $("say").value.trim();
+  if (voiceConv && text) {  // typing during a voice conversation: the guide hears it as a turn
+    note("You: " + text, "you");
+    voiceConv.sendUserMessage(text);
+    voiceLine("listener", text);
+    $("say").value = "";
+    return;
+  }
   if (!text || thinking) return;
   note("You: " + text, "you");
   $("say").value = "";
@@ -233,18 +356,27 @@ $("retry").addEventListener("click", async () => {
   catch (err) { note(err.message); }
 });
 
-$("orb").addEventListener("click", () => {
+$("orb").addEventListener("click", async () => {
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
-  if (status.state === "ready" && fresh) return a.play();
-  if (!talking && !thinking) converse(null);  // tap to begin, whatever an earlier visit left behind
+  if (status.state === "ready" && fresh) { await endVoice(); return a.play(); }  // the mic would hear it
+  if (voiceConv) return endVoice();
+  // Tap to begin, whatever an earlier visit left behind: by voice, or typed if voice can't start.
+  if (talking || thinking || starting) return;  // one conversation at a time, even on a double tap
+  starting = true;
+  try {
+    if (!(await startVoice())) await converse(null);
+  } finally {
+    starting = false;
+  }
 });
-$("last").addEventListener("click", () => $("audio").play());  // the circle still begins a conversation
+$("last").addEventListener("click", async () => { await endVoice(); $("audio").play(); });  // the mic would hear it
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
 
 // The conversation ends when the page goes away: the server updates what the guide remembers.
 addEventListener("pagehide", () => {
+  if (voiceConv) voiceConv.endSession();
   if (talking && sessionId) {
     navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: sessionId })],
                                                     { type: "application/json" }));

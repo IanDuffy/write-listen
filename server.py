@@ -14,6 +14,9 @@ exposed to the network. One listener, one run at a time.
     POST /api/chat/start            a new conversation with the guide; it speaks first
     POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
     POST /api/chat/end              the page is closing: run the memory pass for the conversation
+    POST /api/voice/start           a voice conversation: a signed URL for the guide agent + dynamic variables
+    POST /api/voice/tool            {"session", "name", "args"}: a client tool the agent called, run here
+    POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
@@ -37,9 +40,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
-from stages import guide, memory
+from stages import guide, memory, voice
 from stages import seed as seed_stage
-from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config
+from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
 
 PAGE = ROOT / "page" / "index.html"
 HOST, PORT = "127.0.0.1", 8765
@@ -153,6 +156,19 @@ class ChatRequest(BaseModel):
     session: str | None = None  # the id /api/chat/start returned
 
 
+class VoiceTool(BaseModel):
+    session: str
+    name: str
+    args: dict = {}
+
+
+class VoiceLine(BaseModel):
+    session: str
+    who: str            # "listener" or "guide"
+    text: str = ""
+    conversation_id: str | None = None  # sent once, when the voice connection opens
+
+
 def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, remember_on_start: bool = True) -> FastAPI:
     pipe = pipeline or Pipeline()
     cfg = cfg or load_config()
@@ -161,7 +177,8 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     @app.get("/", response_class=HTMLResponse)
     def page() -> str:
-        return PAGE.read_text(encoding="utf-8")
+        # The ElevenLabs browser client, pinned in config.yaml (voice.client_js).
+        return PAGE.read_text(encoding="utf-8").replace("__VOICE_CLIENT_JS__", cfg["voice"]["client_js"])
 
     @app.post("/api/chapters")
     def start(req: ChapterRequest) -> dict:
@@ -211,6 +228,52 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         """A new conversation; the guide speaks first."""
         return talk(None, fresh=True)
 
+    # --- the guide's voice (milestone 4): the ElevenLabs agent talks; the tools run here ------------
+
+    def current(session_id: str) -> guide.Session:
+        if chat["session"] is None or session_id != chat["session"].id:
+            raise HTTPException(409, "That conversation has ended.")
+        return chat["session"]
+
+    @app.post("/api/voice/start")
+    def voice_start() -> dict:
+        """A new voice conversation: a signed URL for the private agent (the key stays here), and the
+        guide prompt's values as dynamic variables. The page then tells the guide the listener arrived."""
+        with chat["lock"]:
+            try:
+                url = voice.signed_url(cfg)  # creates or updates the agent first if the prompt or tools changed
+            except Exception as e:
+                raise HTTPException(503, f"Voice isn't available: {e}") from None
+            session = new_session()
+            opened = load_prompt("guide_opened").strip()
+            session.record("page", text=opened, mode="voice")
+        return {"session": session.id, "signed_url": url, "dynamic_variables": voice.dynamic_variables(session),
+                "opened": opened, "ready_note": load_prompt("guide_ready").strip()}
+
+    @app.post("/api/voice/tool")
+    def voice_tool(req: VoiceTool) -> dict:
+        """A client tool the agent called: run it in the conversation's session (as the typed chat does)."""
+        with chat["lock"]:
+            session = current(req.session)
+            try:
+                out = session.tool(req.name, dict(req.args or {}))
+            except Exception as e:
+                out = {"error": f"{type(e).__name__}: {e}"}
+            session.record("tool", name=req.name, input=req.args, result=out)
+        return out
+
+    @app.post("/api/voice/line")
+    def voice_line(req: VoiceLine) -> dict:
+        """What was said, for the transcript the memory pass reads; or the connection's id."""
+        with chat["lock"]:
+            session = current(req.session)
+            if req.conversation_id:
+                session.voice_conversation = req.conversation_id
+                session.record("session", conversation_id=req.conversation_id)
+            if req.text.strip() and req.who in ("listener", "guide"):
+                session.record(req.who, text=req.text.strip())
+        return {"ok": True}
+
     @app.post("/api/chat/end")
     async def chat_end(request: Request) -> dict:
         """The page is closing: the conversation has ended, so update the memory. The beacon carries
@@ -225,6 +288,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             session, chat["session"] = chat["session"], None
         if session is not None:
             remember(session.transcript)
+            cid = getattr(session, "voice_conversation", None)
+            if cid:  # ElevenLabs' record of the call (latency per turn, cost), once it has processed it
+                threading.Thread(target=lambda: _save_voice(cfg, session.id, cid), daemon=True).start()
         return {"ended": session is not None}
 
     @app.post("/api/chat")
@@ -278,6 +344,13 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return FileResponse(mp3, media_type="audio/mpeg")
 
     return app
+
+
+def _save_voice(cfg: dict, session_id: str, conversation_id: str) -> None:
+    try:
+        voice.save_conversation(cfg, session_id, conversation_id)
+    except Exception as e:  # never take the server down over a call record
+        print(f"  saving the voice record failed: {e}")
 
 
 app = create_app(remember_on_start=False)  # importing the module (tests, cli chat) touches no memory

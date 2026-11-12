@@ -43,6 +43,10 @@ Seed runs (Phase 1, docs/phase1-onboarding.md): a 20-minute lesson from a listen
     scout <run>                  seed -> 01_map.md (10 searches), then angles, choose, ... as above
     chat                         talk with the guide in the terminal (milestone 3); it starts the
                                  chapter itself (start_chapter), as on the page (server.py)
+    voice-agent [--force]        create or update the ElevenLabs voice guide from prompts/guide.md and
+                                 guide_tools.json (milestone 4); the server also does this when they change
+    voice-compare [--rounds N]   the same scripted turns to the voice agent (text-only, tools mocked) and
+                                 the typed chat -> listener/voice_compare/<time>.md
 
 Utilities:
 
@@ -205,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--plan-only", action="store_true",
                     help="research: show each row's budget and the estimate, spend nothing")
     ap.add_argument("--rows", help="research: ledger rows to research (or redo), e.g. L01 or L01,L03")
+    ap.add_argument("--rounds", type=int, help="voice-compare: conversations per side (replies vary)")
     args = ap.parse_args(argv)
 
     cfg = load_config()
@@ -227,6 +232,20 @@ def main(argv: list[str] | None = None) -> int:
             return new_run(args, cfg)
         if st == "chat":
             return chat(cfg)
+        if st == "voice-agent":
+            from stages import voice
+            print(f"  agent id: {voice.sync_agent(cfg, force=args.force)} (saved in {voice.state_path(cfg)})")
+            return 0
+        if st == "voice-compare":
+            import time as _time
+
+            from stages import voice
+            from stages.common import load_prompt as _lp
+            out = voice.listener_dir(cfg) / "voice_compare" / f"{_time.strftime('%Y%m%d-%H%M%S')}.md"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            turns = [t.strip() for t in _lp("voice_compare_turns").split("\n") if t.strip()]
+            print(f"  -> {voice.compare(cfg, turns, out, rounds=args.rounds or 1)}")
+            return 0
         if st == "voices":
             from stages.voicetest import list_voices
             list_voices(cfg, args.search)

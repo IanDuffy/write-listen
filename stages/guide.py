@@ -88,12 +88,15 @@ class Session:
         now = status() or {}
         chapter_now = (json.dumps({"run": now.get("run"), **plain_status(now)}, ensure_ascii=False)
                        if now.get("state") in ("making", "ready", "problem") else "(none)")
-        self.system = load_prompt(
-            "guide", identity=known or "(none: this is your first meeting)",
-            names=", ".join(names) or "(you already have a name: see above)",
-            profile=listener_profile(cfg), history=recent_history(cfg), chapter_now=chapter_now,
-            minutes=round(sum((cfg.get("status_minutes") or {}).values())) or 25,
-        )
+        # The prompt's values: the typed chat renders them here; the voice agent (stages/voice.py) gets
+        # them as dynamic variables, since its prompt is prompts/guide.md with the same {{placeholders}}.
+        self.values = {
+            "identity": known or "(none: this is your first meeting)",
+            "names": ", ".join(names) or "(you already have a name: see above)",
+            "profile": listener_profile(cfg), "history": recent_history(cfg), "chapter_now": chapter_now,
+            "minutes": str(round(sum((cfg.get("status_minutes") or {}).values())) or 25),
+        }
+        self.system = load_prompt("guide", **self.values)
         self.record("session", names=names, returning=bool(known))
 
     def record(self, who: str, **fields) -> None:

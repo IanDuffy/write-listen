@@ -72,3 +72,32 @@ config.yaml), already in milestone 3's typed chat, so the persona is tuned on th
 model voice will use. The typed chat runs at effort `low` (the API's lowest
 setting here); for voice, try `none` first for latency and compare the guide's
 replies against the typed chat's.
+
+## Confirmed live, building milestone 4 (2026-11-12, local, Ian's account)
+
+- `conversational_ai.llm.list()`: `claude-sonnet-5-5` offers reasoning effort
+  `none`, `low`, `medium`, `high`, `xhigh`, `max`. `claude-haiku-5-5` is listed too
+  (same efforts), although the docs page leaves it out: a lower-latency option if
+  needed.
+- Agent from code (`stages/voice.py`): `agents.create/update` with
+  `conversation_config.agent.prompt.{prompt, llm, reasoning_effort, tool_ids}`,
+  `tts.{model_id: eleven_v4_turbo, voice_id}`, and dynamic variable placeholders.
+  The library voice `RILOU7YmBhvwJGDGjNmP` is accepted by id. The platform sets
+  `temperature: 0.0` itself; conversations on Sonnet 5.5 work regardless.
+- Client tools as separate tool objects (`tools.create` with a `client` tool
+  config, then `tool_ids` on the agent): `parameters` is ElevenLabs' schema subset
+  (no `additionalProperties`); a no-argument tool takes empty `properties`. The
+  `start_chapter` handler receives `{topic, listener_said, why, notes}` (the
+  example above predates the tool's final parameters).
+- Private agent + signed URL (`conversations.get_signed_url`) works from the page
+  with `@elevenlabs/client` 1.32.1 (IIFE build), and text-only sessions work over
+  it once `platform_settings.overrides.conversation_config_override.conversation.text_only`
+  is allowed. A client tool round trip (agent -> page -> local server -> agent)
+  works.
+- The call record (`conversations.get`) carries per-turn metrics
+  `convai_llm_service_ttfb`, `convai_llm_service_ttf_sentence`,
+  `convai_llm_service_tt_last_sentence`, `convai_ttf_response_since_user_message`
+  and `convai_llm_tool_request_generation_latency`, and the cost in credits and
+  dollars. A 6-message text-only conversation cost $0.06.
+- Deleting an agent leaves its tools "in use" by the deleted agent's branch:
+  delete them with `force=True`.
