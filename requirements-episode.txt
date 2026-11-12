@@ -1,0 +1,6 @@
+# The episode page add-on (episode/): word timing and the browser test.
+# Install into the project venv:  uv pip install -r requirements-episode.txt
+# (a later `uv sync` removes them, since they are not in pyproject.toml; reinstall, or add them
+#  as an optional group when the branches come together: see episode/INTEGRATION.md)
+faster-whisper==1.2.1
+playwright==1.58.0

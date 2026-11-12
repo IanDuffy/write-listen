@@ -1,0 +1,11 @@
+{"sentences": [
+ {"id": "seg02-s001", "sources": [{"dossier": "D02", "title": "Symposium", "creator": "Plato, trans. Jowett", "note": "Diotima as teacher"},
+                                  {"dossier": "D99", "title": "Invented", "creator": "", "note": "an id that does not exist"}],
+  "works": [], "people": [{"name": "Diotima", "dossier": "", "note": "Socrates' teacher in love"}], "quotes": []},
+ {"id": "seg02-s002", "sources": [{"dossier": "D01", "title": "Example Review", "creator": "", "note": "not offered for this segment"}],
+  "works": [], "people": [], "quotes": [{"text": "words nobody said", "speaker": "Socrates", "dossier": "D02"}]},
+ {"id": "seg02-s003", "sources": [{"dossier": "D02", "title": "Symposium", "creator": "Plato", "note": "again, within a minute"},
+                                  {"dossier": "D03", "title": "Example Encyclopedia: Plato's Symposium", "creator": "", "note": "the retelling"}],
+  "works": [{"title": "Symposium", "creator": "Plato", "dossier": "D02", "note": "the dialogue"}],
+  "people": [{"name": "Socrates", "dossier": "", "note": "at the party"}], "quotes": []}
+]}

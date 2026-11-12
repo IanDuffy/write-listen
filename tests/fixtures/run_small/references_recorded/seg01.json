@@ -1,0 +1,5 @@
+{"sentences": [
+ {"id": "seg01-s001", "sources": [], "works": [], "people": [], "quotes": []},
+ {"id": "seg01-s003", "sources": [{"dossier": "D01", "title": "Example Review of the Novel", "creator": "", "note": "the father's letter"}],
+  "works": [], "people": [], "quotes": [{"text": "a houseful of children", "speaker": "narrator", "dossier": ""}]}
+]}
