@@ -4,8 +4,8 @@ The Phase 1 doc asks to confirm these in ElevenLabs' current docs before buildin
 voice. Checked 2026-11-12. The docs site (elevenlabs.io) was not reachable from the
 cloud session, so points 1 and 2 were confirmed from the JavaScript SDK's own type
 definitions (`@elevenlabs/client` 1.36.0 from npm, published 2026-11-10), and point 3
-from search results quoting the docs. **Reconfirm point 3 with `GET /v1/convai/llm/list`
-on Ian's account before building milestone 4.**
+from search results quoting the docs. Ian confirmed point 3 on ElevenLabs' docs and
+changelog the same day (below).
 
 ## Confirmed from the SDK types (`@elevenlabs/client` 1.36.0)
 
@@ -58,14 +58,17 @@ identity, the name draw) as dynamic variables. Sources:
 [overrides](https://elevenlabs.io/docs/eleven-agents/customization/personalization/overrides),
 [dynamic variables](https://elevenlabs.io/docs/eleven-agents/customization/personalization/dynamic-variables).
 
-## 3. Which Claude models the platform offers: Sonnet 5.5, not Haiku 5.5
+## 3. Which Claude models the platform offers: Sonnet 5.5 (confirmed by Ian, 2026-11-12)
 
-The Agents LLM page lists Claude Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6,
-Sonnet 4.5 and Haiku 4.5 as natively supported. Haiku 5.5 is not listed. The
-live list comes from `GET /v1/convai/llm/list` (filtered by the account's data
-residency), and a Custom LLM option (OpenAI Chat Completions format) can reach
-any model through a gateway. Source: [LLM](https://elevenlabs.io/docs/eleven-agents/customization/llm).
+ElevenLabs' Agents docs list Claude Sonnet 5.5 among the natively supported
+Anthropic models, configured in the agent's settings, alongside Opus 5.5, Opus 5,
+Sonnet 5 and Haiku 4.5. Haiku 5.5 is not listed. The changelog gives the API id
+`claude-sonnet-5-5`, and says agents on Sonnet 5.5 can set reasoning effort to
+`none`. A Custom LLM option (OpenAI Chat Completions format) can reach any other
+model through a gateway. Source: [LLM](https://elevenlabs.io/docs/eleven-agents/customization/llm).
 
 **Decision:** the guide runs on Claude Sonnet 5.5 (`models.guide` in
 config.yaml), already in milestone 3's typed chat, so the persona is tuned on the
-model voice will use.
+model voice will use. The typed chat runs at effort `low` (the API's lowest
+setting here); for voice, try `none` first for latency and compare the guide's
+replies against the typed chat's.

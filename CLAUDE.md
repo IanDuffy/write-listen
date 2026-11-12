@@ -54,7 +54,7 @@ the first is the gate for the rest:
 | 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
 | 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
 | 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
-| 4. Voice (ElevenLabs Agents) | Not started. Checked from search results (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered, Haiku 5.5 not. Reconfirm on the pages first. |
+| 4. Voice (ElevenLabs Agents) | Not started; the three checks are done (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered as `claude-sonnet-5-5` with reasoning effort down to `none` (Ian confirmed 2026-11-12), Haiku 5.5 not. Next: build it locally with Ian's ElevenLabs account. |
 | 5. Memory (`listener/` files, profile update pass) | Built ahead of 4 (it needs no ElevenLabs account), tested offline with a fake model. |
 | 6. End to end with a second person | Not started |
 
@@ -302,5 +302,6 @@ real key), so locally it must be in `.env`.
 
 A personal Claude Code cloud environment `write-listen` exists, with the
 ElevenLabs key saved as a network secret for `api.elevenlabs.io`. Anthropic
-keys can't be added there (Anthropic hosts bypass the proxy), which is why
-work moved to a local environment.
+keys can't be added there (Anthropic hosts bypass the proxy), and elevenlabs.io's
+docs site was not reachable from it, so Phase 1 development continues locally
+(Ian, 2026-11-12).
