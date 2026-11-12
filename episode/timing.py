@@ -7,9 +7,15 @@ across the chapter. Otherwise the whole chapter file is recognized at once. Eith
 (all segments) is aligned against all the recognized words in order, so segment boundaries come
 from the script.
 
-Recognizer output is cached per piece in 11_episode/recognizer.json (keyed by recognizer, file name
-and size),
-so re-running timing after a script fix costs seconds, not minutes.
+Two timing sources, one aligner:
+- ElevenLabsTimings: the character timings ElevenLabs returns with each chunk it narrates, kept in
+  the chunk's .json beside its WAV (stages/tts.py, once narration asks for them). Preferred: they
+  cover every word sent, and on chapter-one test lines they matched the audio's pauses within
+  0.05 s where Whisper ended words 0.15-0.2 s early.
+- A recognizer (Whisper): for audio narrated without timings, or a whole file with no chunk list.
+  Its output is cached per piece in 11_episode/recognizer.json (keyed by recognizer, file name and
+  size), so re-running timing after a script fix costs seconds, not minutes.
+pick_timings chooses: 'auto' takes ElevenLabs' timings when every chunk has them.
 
 Also here, for later features (interruptions, streaming): nearest_sentence_boundary and current_word.
 """
@@ -21,6 +27,8 @@ import json
 import subprocess
 import wave
 from pathlib import Path
+
+from stages.common import StageError
 
 from . import align, script
 
@@ -73,6 +81,72 @@ def recognize_pieces(pieces: list[dict], recognizer, cache_path: Path | None) ->
                 cache_path.write_text(json.dumps(cache), encoding="utf-8")
         words += [{**w, "start": w["start"] + p["offset"], "end": w["end"] + p["offset"]} for w in cache[key]]
     return words
+
+
+# --- timings from generation ---------------------------------------------------------------------
+
+def chunk_alignment(wav: Path) -> dict | None:
+    """The ElevenLabs alignment narration kept for this chunk ({characters,
+    character_start_times_seconds, character_end_times_seconds}), or None."""
+    meta = wav.with_suffix(".json")
+    if not meta.exists():
+        return None
+    a = json.loads(meta.read_text(encoding="utf-8")).get("alignment")
+    return a if a and a.get("characters") else None
+
+
+def alignment_words(a: dict) -> list[dict]:
+    """Characters to words, split at whitespace. A word ends with its last letter or digit:
+    ElevenLabs gives the pause after a punctuation mark to the mark itself."""
+    words, cur = [], []
+    for c, start, end in zip(a["characters"], a["character_start_times_seconds"], a["character_end_times_seconds"]):
+        if c.isspace():
+            if cur:
+                words.append(cur)
+            cur = []
+        else:
+            cur.append((c, start, end))
+    if cur:
+        words.append(cur)
+    out = []
+    for w in words:
+        core = [x for x in w if x[0].isalnum()] or w
+        out.append({"w": "".join(x[0] for x in w), "start": core[0][1], "end": core[-1][2]})
+    return out
+
+
+class ElevenLabsTimings:
+    """A timing source with the recognizer's interface: a chunk's WAV -> its timed words."""
+    name = "elevenlabs"
+    cacheable = False  # already on disk beside the chunk
+    reheard = False    # a clip of the joined file has no timings of its own
+
+    def __call__(self, wav: Path) -> list[dict]:
+        a = chunk_alignment(wav)
+        if a is None:
+            raise StageError(f"{wav.name} has no ElevenLabs timings")
+        return alignment_words(a)
+
+
+def has_generation_timings(pieces: list[dict]) -> bool:
+    speech = [p for p in pieces if p["speech"]]
+    return bool(speech) and all(chunk_alignment(p["path"]) for p in speech)
+
+
+def pick_timings(run: Path, mode: str, make_recognizer, audio_rel: str = "10_audio/chapter.mp3"):
+    """mode: 'auto' (ElevenLabs' timings when every chunk has them, else the recognizer),
+    'elevenlabs' (stop if any chunk lacks them) or 'whisper'. make_recognizer() builds the recognizer
+    only when it is needed (loading Whisper takes seconds)."""
+    if mode not in ("auto", "elevenlabs", "whisper"):
+        raise ValueError("timings must be 'auto', 'elevenlabs' or 'whisper'")
+    if mode != "whisper":
+        if has_generation_timings(audio_pieces(run, run / audio_rel)):
+            return ElevenLabsTimings()
+        if mode == "elevenlabs":
+            raise StageError("This run's narration has no ElevenLabs timings for every chunk (it was narrated "
+                             "before they were kept, or 10_audio/concat.txt no longer matches the MP3). "
+                             "Use --timings whisper.")
+    return make_recognizer()
 
 
 REPAIR_CONTEXT = 4  # matched words kept on each side of a gap when it is heard again
@@ -128,14 +202,15 @@ def build(run: Path, recognizer, pronunciations: dict[str, str], audio_rel: str 
     segments = script.parse((run / script_rel).read_text(encoding="utf-8"), pronunciations)
     flat = [(si, xi, w) for si, s in enumerate(segments) for xi, x in enumerate(s.sentences) for w in x.words]
     pieces = audio_pieces(run, audio)
-    cache_path = (run / EPISODE_DIR / "recognizer.json") if cache else None
+    cache_path = (run / EPISODE_DIR / "recognizer.json") if cache and getattr(recognizer, "cacheable", True) else None
     if cache_path:
         cache_path.parent.mkdir(exist_ok=True)
     rec = recognize_pieces(pieces, recognizer, cache_path)
     duration = audio_duration(audio)
     words = [{"w": w.w, "spoken": w.spoken} for _, _, w in flat]
     times = align.align(words, rec, limit=duration)
-    repaired = repair_gaps(audio, words, times, recognizer, cache_path, duration)
+    repaired = (repair_gaps(audio, words, times, recognizer, cache_path, duration)
+                if getattr(recognizer, "reheard", True) else 0)
 
     out_segments, k = [], 0
     for s in segments:

@@ -58,7 +58,7 @@ The server listens on 127.0.0.1 only, so serving `runs/` stays on the laptop. Un
 `python -m http.server 8077` from the repository root, then
 `http://localhost:8077/episode/page/index.html?run=/runs/<run>`.
 
-## 3. Timings from ElevenLabs at generation time (the `elevenlabs` provider, not built)
+## 3. Timings from ElevenLabs at generation time (provider built; narration change at merge)
 
 **What the docs confirm (checked 2026-11-12):** `POST /v1/text-to-speech/{voice_id}/with-timestamps`
 (SDK: `client.text_to_speech.convert_with_timestamps`, also `stream_with_timestamps`) takes the
@@ -82,20 +82,39 @@ Details that matter for the code:
 - The characters are the text that was sent, i.e. the spoken form (after pronunciations), so
   they map onto `episode.script`'s spoken words directly; the displayed words come from there.
 
-**The change**, in `stages/tts.py`, once confirmed:
-- `synthesize()` calls `convert_with_timestamps` through `with_raw_response` (to keep the
-  `request-id` header that stitching needs: `r = ...; r.data, r.headers`), decodes
-  `r.data.audio_base_64`, and returns `r.data.alignment` with the audio in `Synth`.
-- `narrate_segments()` writes each chunk's alignment next to its WAV
-  (`chunks/<key>.alignment.json`), so the existing chunk cache carries timings too.
-- A timing provider `episode.timing.ElevenLabsTimings` reads those files, turns characters into
-  the chunk's spoken words (split on spaces), places each chunk at its `concat.txt` offset, and
-  feeds the same aligner (`episode.align.align`) in place of the recognizer's words. The script
-  alignment, `estimated` marking and all of stages 2-4 stay as they are.
+**Which is more accurate (decided 2026-11-12, Ian left it to me): ElevenLabs.** Against the
+audio's own silences in the two test clips (ffmpeg `silencedetect`, the four pauses inside speech),
+ElevenLabs' word ends fell within 0.05 s of where the silence starts and the next word's start
+within 0.02 s of where it ends; Whisper ended words 0.15-0.2 s early (starts within 0.1 s). That
+counts a word as ending on its last letter, not on the punctuation mark that holds the pause. It
+is a small sample, but it also matches the larger point: ElevenLabs times the text it was given,
+so it cannot skip a stretch the way Whisper skipped two in chapter one's long chunks.
 
-The recognizer provider remains useful either way: it hears what was actually said, so it is the
-check that the narration said every word (ElevenLabs' timings describe the text it was asked to
-say). With timings from generation, Whisper becomes an optional audit rather than a required step.
+**Built on this branch** (`episode/timing.py`, tests in `tests/episode/test_elevenlabs_timings.py`):
+- `ElevenLabsTimings` reads `alignment` from each chunk's existing `chunks/<key>.json` (the file
+  narration already writes with `request_id`, `segment`, `text`), splits the characters into
+  words at spaces, and ends each word on its last letter or digit. It has the recognizer's
+  interface, so the chunk offsets from `concat.txt`, the aligner, `estimated` marking and stages
+  2-4 are unchanged. Nothing is cached (the timings are already on disk) and gaps are not heard
+  again (a clip has no timings of its own).
+- `pick_timings(run, mode, make_recognizer)`, and `python -m episode timing|build --timings
+  auto|elevenlabs|whisper`. `auto` (the default) uses ElevenLabs' timings when every chunk has
+  them, else Whisper. So chapter one and every run narrated before the change keep Whisper with
+  no re-narration; `elevenlabs` stops with a message if any chunk lacks them.
+- Checked on the live test's real output: every word matched (the respelled "Diotima" through
+  the character pass), none estimated.
+
+**The narration change, at merge** (`stages/tts.py`; not done here, since this branch leaves the
+stages alone):
+- `synthesize()` calls `convert_with_timestamps` through `with_raw_response`, keeping the
+  `request-id` header stitching needs: `r = client.text_to_speech.with_raw_response.convert_with_timestamps(...)`,
+  then `r.data`, `r.headers` (not a context manager). It decodes `r.data.audio_base_64` and returns
+  `r.data.alignment` (as a dict) in `Synth`.
+- `narrate_segments()` adds `"alignment": syn.alignment` to the chunk's `.json`. Same characters
+  billed; the cache key does not change, so cached chunks are reused (they just lack timings, and
+  `auto` falls back to Whisper for that run).
+- Whisper stays as the audit: `python -m episode check` (check 10) re-hears 20 words in one-second
+  clips, which tests the timings against what was actually said, whichever source made them.
 
 ## 4. Where the repo differed from the spec
 

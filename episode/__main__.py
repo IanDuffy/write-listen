@@ -1,6 +1,7 @@
 """python -m episode <timing|references|build> <run> [options]
 
-    timing <run>       -> <run>/11_episode/timing.json (local recognizer, no cost)
+    timing <run>       -> <run>/11_episode/timing.json (ElevenLabs' timings from narration, else
+                          the local recognizer; no cost either way)
     references <run>   -> <run>/11_episode/references.json (one Sonnet 5.5 call per segment)
     build <run>        both, then <run>/11_episode/episode.json, the one file the page reads
     check <run>        the end-to-end checks on a built run -> <run>/11_episode/checks.json, screenshots/
@@ -32,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("run")
     ap.add_argument("--model", default="small.en", help="faster-whisper model (timing)")
     ap.add_argument("--device", default="auto", help="auto | mps | cpu (timing)")
+    ap.add_argument("--timings", default="auto", choices=["auto", "elevenlabs", "whisper"],
+                    help="timing source: auto takes ElevenLabs' timings when every chunk has them (timing)")
     ap.add_argument("--recorded", help="replay saved recognizer output instead of running Whisper (tests)")
     ap.add_argument("--max-usd", type=float, default=3.0, help="spending cap for the references calls")
     args = ap.parse_args(argv)
@@ -41,7 +44,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command in ("timing", "build"):
             from . import recognize, timing
             rec = (recognize.RecordedRecognizer(Path(args.recorded)) if args.recorded
-                   else recognize.WhisperRecognizer(args.model, args.device))
+                   else timing.pick_timings(run, args.timings,
+                                            lambda: recognize.WhisperRecognizer(args.model, args.device)))
+            print(f"  timing from {rec.name}")
             t = timing.build(run, rec, cfg["narration"].get("pronunciations") or {})
             s = t["stats"]
             print(f"  timing: {s['words']} words, {s['exact']} exact, {s['fuzzy']} fuzzy, {s['estimated']} estimated "

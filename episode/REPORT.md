@@ -31,7 +31,7 @@ reuses its caches: no recognition, no model calls. First install the add-on's pa
 
 ## Tests (checks 1-7, on `tests/fixtures/run_small`)
 
-`.venv/bin/python -m pytest -q`: **195 passed**, 23 of them in `tests/episode/`. That covers
+`.venv/bin/python -m pytest -q`: **199 passed**, 27 of them in `tests/episode/`. That covers
 every script word once and in order; sane times; displayed text exactly the script (with the
 respelled "Diotima" kept as spoken text); `nearest_sentence_boundary` at 0, at the end and at
 segment edges; references (sentence ids, dossier-only URLs, thinning, rejected ids and quotes);
@@ -114,8 +114,9 @@ by a skeptic) confirmed 16 findings, all fixed with regression tests. In brief:
 - Images for references.
 - The interruption feature (it will call `nearest_sentence_boundary`).
 - Streaming.
-- The `elevenlabs` timing provider. A small live test since (about 500 characters, with Ian's
-  OK) confirmed that `eleven_v4` returns character timings with narration's exact settings and
-  stitching. They are on a 40 ms grid and within a median 0.10-0.15 s of Whisper's word starts.
-  The narration change and the provider are described in `INTEGRATION.md` §3; building them means
-  editing the narration stage, which this branch had to leave alone.
+- The narration side of ElevenLabs timings (`stages/tts.py` asking for and keeping them). The
+  provider that reads them is built: a small live test (about 500 characters, with Ian's OK)
+  confirmed `eleven_v4` returns character timings with narration's exact settings and stitching,
+  and against the clips' silences they were more accurate than Whisper's (word ends within 0.05 s,
+  Whisper's 0.15-0.2 s early). `--timings auto` uses them when every chunk has them, else Whisper.
+  The narration change is two small edits, described in `INTEGRATION.md` §3, for the merge.
