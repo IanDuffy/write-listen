@@ -109,7 +109,7 @@ def run(r: Run, cfg: dict):
     code_quotes = unbacked_quotes(draft, dossier)
     verbatim = "\n\n".join(verbatim_entries(dossier).values()) or "(none)"
     prompt = load_prompt(
-        "coverage", ledger=ledger.describe(ledger.active(led), research=True), brief=brief, draft=draft,
+        "coverage", ledger=ledger.describe(ledger.active(led), research=True, led=led), brief=brief, draft=draft,
         verbatim=verbatim,
         quote_check="\n".join(f"- seg{n:02d}: \"{q}\"" for n, q in code_quotes) or "(none)",
     )

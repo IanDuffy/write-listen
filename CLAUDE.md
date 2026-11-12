@@ -42,6 +42,43 @@ Check the script's character count against the ElevenLabs balance before
 narrating: the `starter` plan has 40,000 characters a month and one chapter is
 about 36,000, so the baseline narration needs a bigger plan or the next month.
 
+## Phase 1: real-time onboarding (branch `claude/realtime-onboarding`)
+
+Spec: `docs/phase1-onboarding.md` (Ian, 2026-11-11). A listener talks with a
+voice guide for a few minutes and, about half an hour later, hears a chapter
+made from that conversation, with no human checkpoints. Milestones, in order;
+the first is the gate for the rest:
+
+| Milestone | State |
+| --- | --- |
+| 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Built, tested offline. Not yet run live: Ian runs it locally and listens. If it isn't good, fix it before anything else. |
+| 2. Status and page (`status.json`, FastAPI server, page) | Not started |
+| 3. The conversation in text (persona prompt, three tools) | Not started |
+| 4. Voice (ElevenLabs Agents) | Not started. Confirm in ElevenLabs' current docs first: client tools, per-session prompt overrides, and which Claude models the platform offers. |
+| 5. Memory (`listener/` files, profile update pass) | Not started (seed runs already read `listener/profile.md` if it exists) |
+| 6. End to end with a second person | Not started |
+
+**Milestone 1 decisions.**
+- A run with `00_source/seed.md` is a seed run (`common.is_seed`). Its stages
+  load `prompts/<name>_seed.md` where one exists (`common.prompt_name`); the
+  episode prompts are untouched, so an episode run renders exactly as before.
+  Each variant's header names its original: keep the two in step. A test checks
+  that no variant mentions the episode and that the research entry format
+  (a parser contract) matches its original.
+- `seed_runs` in config.yaml resizes a seed run (`common.run_config`, applied by
+  the CLI to every stage): 3,000 words, 4 segments, 3-4 ledger rows.
+- The scout replaces the map stage and writes `01_map.md`. Covered ledger rows
+  mean "the scout's sources already settle it"; their verify agents check the
+  claims the lesson would take from those sources. The JSON field stays
+  `episode_has` (ledger.md labels it "Scout has").
+- `--unattended` (`Run.unattended`, `Run.max_usd`): `llm.guard` approves against
+  the run's cap instead of asking, `llm.call` checks the cap before every
+  request, `llm.confirm` stops rather than ask, and the follow-up round trims to
+  what fits (`ledger_update._fit_unattended`). `Run.decide` writes
+  `decisions.md`. Starting an unattended run is the approval for spending up to
+  its cap (default $20; a lesson's upper-end forecast is about $15).
+- `--seed` is a string now; `report --seed N` still takes the sample seed.
+
 ## Local setup
 
 ```bash
@@ -174,11 +211,13 @@ real key), so locally it must be in `.env`.
   call; cost guard; retries dropped streams and overloads; resumes `pause_turn`.
 - `stages/tts.py`: the only ElevenLabs caller (`synthesize`), chunking,
   pronunciation table, on-disk chunk cache, ffmpeg join.
+- Seed runs: `new.py` (the unattended runner), `seed.py`, `scout.py`.
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.
 - `config.yaml`: models, per-stage settings, research budgets, prices, narration.
-- `docs/build-doc.md`: the spec; `docs/ledger-research-addon.md`: its research add-on.
+- `docs/build-doc.md`: the spec; `docs/ledger-research-addon.md`: its research add-on;
+  `docs/phase1-onboarding.md`: Phase 1, real-time onboarding.
 
 ## API facts that matter (checked against installed SDKs, anthropic 2.7, elevenlabs 2.77)
 

@@ -43,7 +43,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import ledger, llm
-from .common import (KINDS, Run, StageError, entry_id, format_tags, load_prompt, parse_tags,
+from .common import (KINDS, Run, StageError, entry_id, format_tags, is_seed, load_prompt, parse_tags, prompt_name,
                      row_id)
 
 # URLs may hold balanced parentheses (Wikipedia), but a markdown link's closing ')' is not part of one.
@@ -174,19 +174,20 @@ def parse_entries(findings: str) -> list[dict]:
 
 # --- one research agent ----------------------------------------------------------------
 
-def agent_prompt(cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
+def agent_prompt(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
                  followup: dict | None = None) -> str:
+    """A row agent's prompt. Seed runs use the _seed variants (no episode)."""
     searches, fetches = ledger.budget(cfg, row, followup=bool(followup))
     others = "\n".join(f"- {o['id']}: {o['idea']}" for o in ledger.active(led) if o["id"] != row["id"])
-    fmt = load_prompt("research_format", row_id=row["id"], start=followup["start"] if followup else 1)
+    fmt = load_prompt(prompt_name(r, "research_format"), row_id=row["id"], start=followup["start"] if followup else 1)
     note = load_prompt("research_followup", earlier=followup["earlier"], gap=followup["gap"]) if followup else ""
     return load_prompt(
-        "research_verify" if row["type"] == "covered" else "research_row",
+        prompt_name(r, "research_verify" if row["type"] == "covered" else "research_row"),
         angle=angle, map=episode_map, row_id=row["id"], idea=row["idea"], rank=row["rank"],
         type=row["type"], episode_has=row["episode_has"] or "Nothing.",
         research_question=row["research_question"], tier_needed=row["tier_needed"],
         other_rows=others or "(none)", searches=searches, fetches=fetches,
-        source_tiers=load_prompt("source_tiers"), format=fmt, followup=note,
+        source_tiers=load_prompt(prompt_name(r, "source_tiers")), format=fmt, followup=note,
     )
 
 
@@ -200,7 +201,7 @@ def material_text(got: dict) -> str:
 def _write_up(r: Run, cfg: dict, label: str, prompt: str, notes: str, got: dict, extra: dict, check_spend):
     return llm.call(r, cfg, "research_writeup", role="researcher", label=f"{label} write-up",
                     messages=[{"role": "user", "content": load_prompt(
-                        "research_writeup", instructions=prompt, notes=notes or "(none)",
+                        prompt_name(r, "research_writeup"), instructions=prompt, notes=notes or "(none)",
                         material=material_text(got))}],
                     preapproved=True, before_request=check_spend, log_extra=extra)
 
@@ -226,7 +227,7 @@ def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: 
     stage = "research_followup" if followup else "research_row"
     label = f"research {row['id']}" + (" follow-up" if followup else "")
     extra = {"row": row["id"]}
-    prompt = agent_prompt(cfg, row, led, angle, episode_map, followup)
+    prompt = agent_prompt(r, cfg, row, led, angle, episode_map, followup)
     md, src = row_paths(r, row["id"], followup=bool(followup))
     pending = pending_path(r, row["id"], followup=bool(followup))
     md.parent.mkdir(parents=True, exist_ok=True)
@@ -639,7 +640,8 @@ def run(r: Run, cfg: dict, rows: str | None = None, plan_only: bool = False):
     led = ledger.load(r, cfg)
     angle, episode_map = r.read("angle"), r.read("map")
     transcript = r.path("transcript").read_text(encoding="utf-8") if r.path("transcript").exists() else ""
-    if led.get("inputs") and transcript and led["inputs"] != ledger.inputs_hash(transcript, episode_map, angle):
+    source = transcript or (r.read("seed") if is_seed(r) else "")
+    if led.get("inputs") and source and led["inputs"] != ledger.inputs_hash(source, episode_map, angle):
         print("  warning: the transcript, map or angle has changed since the ledger was made. If its rows no "
               "longer fit the angle, edit ledger.json or run ledger --force.")
     if r.path("dossier").exists() and not r.force and not plan_only:

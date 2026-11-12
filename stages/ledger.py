@@ -24,7 +24,8 @@ import re
 import time
 
 from . import llm
-from .common import Run, StageError, load_prompt, parse_json, row_id
+from .common import (Run, StageError, is_seed, load_prompt, parse_json, prompt_name, row_id, seed_inputs,
+                     source_text)
 
 TYPES = ("deep-dive", "missing", "covered")
 STATUSES = ("filled", "partial", "open")
@@ -273,7 +274,7 @@ def render_md(led: dict, name: str) -> str:
     for r in rows:
         out += [f"### {r['id']}: {cell(r['idea'])}", "",
                 f"- Rank {r['rank']}, {r['type']}; needs tier {r['tier_needed']} or better.",
-                f"- Episode has: {cell(r['episode_has'])}",
+                f"- {has_label(led)}: {cell(r['episode_has'])}",
                 f"- {'Claims to verify' if r['type'] == 'covered' else 'Research question'}: "
                 f"{cell(r['research_question'])}"]
         if r["status"]:
@@ -288,13 +289,18 @@ def render_md(led: dict, name: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def describe(rows: list[dict], research: bool = False, coverage: bool = False) -> str:
+def has_label(led: dict | None) -> str:
+    """What episode_has means in this ledger: what the episode says, or (seed runs) what the scout found."""
+    return "Scout has" if led and led.get("source") == "seed" else "Episode has"
+
+
+def describe(rows: list[dict], research: bool = False, coverage: bool = False, led: dict | None = None) -> str:
     """Rows as plain text for a prompt. `research` adds the 04b columns; `coverage` the 07b ones."""
     parts = []
     for r in rows:
         lines = [f"### {r['id']} (rank {r['rank']}, {r['type']}, needs tier {r['tier_needed']} or better)",
                  f"Idea: {r['idea']}",
-                 f"Episode has: {r['episode_has'] or 'Nothing.'}",
+                 f"{has_label(led)}: {r['episode_has'] or 'Nothing.'}",
                  f"{'Claims to verify' if r['type'] == 'covered' else 'Research question'}: {r['research_question']}"]
         if research and r["status"]:
             lines.append(f"Research status: {r['status']}; best tier found: {r['best_tier'] or 'none'}; "
@@ -332,12 +338,13 @@ def run(r: Run, cfg: dict):
               "  (Use --force to write a new ledger from scratch; edits in ledger.json would be lost.)\n"
               f"  Next: {next_research(r, led)}")
         return r.path("ledger")
-    transcript, episode_map, angle = r.read("transcript"), r.read("map"), r.read("angle")
+    source, episode_map, angle = source_text(r), r.read("map"), r.read("angle")
     r.check_writable("ledger")
     rc = cfg["research"]
-    prompt = load_prompt("ledger", transcript=transcript, map=episode_map, angle=angle,
+    prompt = load_prompt(prompt_name(r, "ledger"), transcript=source, map=episode_map, angle=angle,
                          min_rows=rc["min_rows"], max_rows=rc["max_rows"],
-                         budgets=budgets_text(cfg), source_tiers=load_prompt("source_tiers"))
+                         target_minutes=cfg["chapter"]["target_minutes"], **seed_inputs(r, cfg),
+                         budgets=budgets_text(cfg), source_tiers=load_prompt(prompt_name(r, "source_tiers")))
     res = llm.call(r, cfg, "ledger", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA)
     data = parse_json(r, res.text, "ledger")
     rows = sorted(data.get("rows") or [], key=lambda x: x.get("rank", 99) if _int(x.get("rank")) else 99)
@@ -346,7 +353,8 @@ def run(r: Run, cfg: dict):
     for i, row in enumerate(rows, 1):  # ids follow rank; ranks become 1..N without gaps or ties
         row["rank"] = i
         row["id"] = row_id(i)
-    led = {"run": r.name, "inputs": inputs_hash(transcript, episode_map, angle),
+    led = {"run": r.name, "source": "seed" if is_seed(r) else "episode",
+           "inputs": inputs_hash(source, episode_map, angle),
            "rows": rows, "parked": data.get("parked") or [], "connections": []}
     try:
         warnings = validate(led, cfg)
@@ -365,6 +373,9 @@ def run(r: Run, cfg: dict):
         print(f"  the old research answered the old ledger: moved 04_research/ to {old.name}/")
     save(r, led)
     print(f"  {len(rows)} active rows, {len(led['parked'])} parked:\n{summary(led)}")
+    r.decide("ledger", "Approved the ledger without review:\n\n" + "\n".join(
+        f"- {x['id']} ({x['type']}, tier {x['tier_needed']}): {x['idea']}" for x in active(led))
+        + ("\n\nParked: " + "; ".join(_parked_line(p) for p in led["parked"]) if led["parked"] else ""))
     print(f"\n  Next: {next_research(r, led)}\n  (Optional: edit ledger.json first; "
           f"`python cli.py ledger {r.name}` re-checks it and re-renders ledger.md.)")
     return r.path("ledger")

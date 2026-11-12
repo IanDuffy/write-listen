@@ -8,7 +8,7 @@ headings so the revise stage can apply them segment by segment.
 """
 
 from . import llm
-from .common import Run, load_prompt
+from .common import Run, load_prompt, prompt_name
 
 
 def run(r: Run, cfg: dict):
@@ -18,8 +18,8 @@ def run(r: Run, cfg: dict):
     coverage = r.read("coverage")
     r.check_writable("edit_notes")
     prompt = load_prompt(
-        "edit", draft=draft, brief=brief, dossier=dossier, coverage=coverage,
-        style_guide=load_prompt("style_guide"), source_tiers=load_prompt("source_tiers"),
+        prompt_name(r, "edit"), draft=draft, brief=brief, dossier=dossier, coverage=coverage,
+        style_guide=load_prompt("style_guide"), source_tiers=load_prompt(prompt_name(r, "source_tiers")),
     )
     res = llm.call(r, cfg, "edit", messages=[{"role": "user", "content": prompt}])
     return r.write("edit_notes", res.text)

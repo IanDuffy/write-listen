@@ -8,7 +8,7 @@ the order of magnitude before spending, and where the money goes.
 from __future__ import annotations
 
 from . import ledger, llm, research
-from .common import Run, StageError
+from .common import Run, StageError, is_seed
 
 
 def _tokens(r: Run, key: str, default_words: int) -> int:
@@ -29,7 +29,8 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
     def tok(key: str, words: int) -> int:
         return _tokens(r, key, words) if r is not None else int(words * 1.4)
 
-    transcript = tok("transcript", 9000)
+    seed = r is not None and is_seed(r)
+    transcript = tok("seed", 200) if seed else tok("transcript", 9000)
     episode_map = tok("map", 3000)
     dossier = tok("dossier", 12000)
     brief = tok("brief", 2500)
@@ -56,7 +57,8 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
     style = 600
     judge = est("ledger_update", dossier + led_tokens + 1500)
     rows_out = [
-        ("map", est("map", transcript + 800), done("map")),
+        ("scout", research.agent_estimate(cfg, cfg["scout"]["searches"], cfg["scout"]["fetches"], "scout"),
+         done("map")) if seed else ("map", est("map", transcript + 800), done("map")),
         ("angles", est("angles", episode_map + 600), done("angles")),
         ("choose", est("choose", episode_map + tok("angles", 3000) + 600), done("angle")),
         ("ledger", est("ledger", transcript + episode_map + 2500), done("ledger")),
@@ -84,6 +86,8 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
         ("narrate chapter", per_chapter, done("chapter_mp3")),
         ("narrate baseline", per_chapter, done("baseline_mp3")),
     ]
+    if seed:  # a seed run has no baseline to compare against and no pilot stop
+        rows = [x for x in rows if not x[0].startswith(("baseline", "narrate baseline", "narrate pilot"))]
     return rows
 
 

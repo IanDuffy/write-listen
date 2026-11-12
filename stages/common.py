@@ -39,6 +39,9 @@ PATHS = {
     "source_dir": "00_source",
     "transcript_pdf": "00_source/transcript.pdf",
     "transcript": "00_source/transcript.txt",
+    "seed": "00_source/seed.md",  # a seed run (Phase 1): the listener's topic, in place of a transcript
+    "scout_sources": "01_scout.sources.json",
+    "decisions": "decisions.md",  # every decision an unattended run made on its own, for Ian afterwards
     "map": "01_map.md",
     "angles": "02_angles.md",
     "angle": "03_angle.md",
@@ -73,6 +76,8 @@ class Run:
     root: Path
     force: bool = False
     yes: bool = False  # pre-approve the cost guard
+    unattended: bool = False  # nobody to ask: guards decide against max_usd, decisions go to decisions.md
+    max_usd: float | None = None  # the run's spending cap (unattended runs)
 
     @classmethod
     def open(cls, name: str, *, force: bool = False, yes: bool = False, create: bool = False,
@@ -140,6 +145,63 @@ class Run:
             return []
         with open(p, encoding="utf-8") as f:
             return [json.loads(line) for line in f if line.strip()]
+
+    def spent(self) -> float:
+        return sum(rec.get("cost_usd", 0) or 0 for rec in self.read_log())
+
+    def decide(self, stage: str, text: str) -> None:
+        """Record a decision the run made on its own (unattended runs only), for Ian to review."""
+        if not self.unattended:
+            return
+        p = self.path("decisions")
+        new = not p.exists()
+        with _LOG_LOCK, open(p, "a", encoding="utf-8") as f:
+            if new:
+                f.write(f"# Decisions: {self.name}\n\nEvery choice this unattended run made on its own, "
+                        "in order. For Ian; the listener never sees it.\n")
+            f.write(f"\n## {stage} ({time.strftime('%Y-%m-%d %H:%M')})\n\n{text.strip()}\n")
+
+
+# --- seed runs ------------------------------------------------------------------
+#
+# A seed run starts from 00_source/seed.md (the listener's topic and why) instead of a
+# transcript. Its stages load prompts/<name>_seed.md where one exists, and config.yaml's
+# seed_runs section resizes it to a 20-minute lesson.
+
+def is_seed(r: "Run") -> bool:
+    return r.path("seed").exists()
+
+
+def prompt_name(r: "Run", name: str) -> str:
+    """'ledger' -> 'ledger_seed' for a seed run, when prompts/ledger_seed.md exists."""
+    return f"{name}_seed" if is_seed(r) and (PROMPTS_DIR / f"{name}_seed.md").exists() else name
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merge(base[k], v) if isinstance(v, dict) and isinstance(base.get(k), dict) else v
+    return out
+
+
+def run_config(r: "Run", cfg: dict) -> dict:
+    """The config for this run: seed runs take config.yaml's seed_runs overrides."""
+    return _merge(cfg, cfg.get("seed_runs") or {}) if is_seed(r) else cfg
+
+
+def source_text(r: "Run") -> str:
+    """What the run starts from: the transcript, or the seed."""
+    return r.read("seed") if is_seed(r) else r.read("transcript")
+
+
+def listener_profile(cfg: dict) -> str:
+    p = ROOT / cfg.get("listener_dir", "listener") / "profile.md"
+    return p.read_text(encoding="utf-8").strip() if p.exists() else "(no profile yet: this is a first meeting)"
+
+
+def seed_inputs(r: "Run", cfg: dict) -> dict:
+    """Extra prompt values for a seed run's prompts: the seed, and the listener's profile."""
+    return {"seed": r.read("seed"), "profile": listener_profile(cfg)} if is_seed(r) else {}
 
 
 # --- prompts ------------------------------------------------------------------

@@ -137,7 +137,11 @@ def estimate_tokens(text: str) -> int:
 
 
 def confirm(run: Run, tag: str, msg: str) -> None:
-    """Stop and ask. --yes (run.yes) pre-approves; anything but y/yes stops the stage."""
+    """Stop and ask. --yes (run.yes) pre-approves; anything but y/yes stops the stage.
+    An unattended run has nobody to ask: it stops (callers that can carry on in a smaller way,
+    like the follow-up round, check before they get here)."""
+    if run.unattended:
+        raise StageError(f"Stopped by the {tag}: {msg} An unattended run does not go past it.")
     if run.yes:
         print(f"[{tag}] {msg} Proceeding (--yes).")
         return
@@ -151,6 +155,16 @@ def confirm(run: Run, tag: str, msg: str) -> None:
 
 def guard(run: Run, cfg: dict, what: str, estimate_usd: float) -> None:
     """Stop and ask before any call or stage expected to cost more than the limit."""
+    if run.unattended and run.max_usd is not None:
+        # Nobody to ask: the run's own cap decides (it was set when the run was started).
+        spent = run.spent()
+        if spent + estimate_usd > run.max_usd:
+            raise StageError(f"{what} is estimated at up to ${estimate_usd:.2f}; with ${spent:.2f} spent, that "
+                             f"would pass this run's ${run.max_usd:.2f} cap (unattended.max_run_usd). Stopped.")
+        if estimate_usd > cfg["cost_guard_usd"]:
+            run.decide("cost", f"Went ahead with {what}, estimated at up to ${estimate_usd:.2f} (over the "
+                               f"${cfg['cost_guard_usd']:.2f} guard; ${spent:.2f} spent of the ${run.max_usd:.2f} cap).")
+        return
     limit = cfg["cost_guard_usd"]
     if estimate_usd <= limit:
         return
@@ -364,6 +378,9 @@ def call(
     for attempt in range(max_continuations + 1):
         if before_request:
             before_request()
+        if run.max_usd is not None and run.spent() >= run.max_usd:
+            raise StageError(f"{label or stage}: this run has spent ${run.spent():.2f}, its ${run.max_usd:.2f} cap. "
+                             "Stopped before the next request.")
         t0 = time.monotonic()
         message, request_id = _send_with_retries(run, stream_fn, kwargs, label or stage, stage, model,
                                                  bool(tools), all_content, total, extra)

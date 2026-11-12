@@ -32,6 +32,15 @@ Stages, in order. The pipeline runs hands-off: model stages (choose, the 04b jud
     compare <run>                -> compare/A.mp3, B.mp3, key.txt
     report <run>                 -> report.md
 
+Seed runs (Phase 1, docs/phase1-onboarding.md): a 20-minute lesson from a listener's topic, no transcript.
+
+    new [run] --seed "..." [--why "..."] [--notes "..."] [--seed-file FILE] --unattended [--max-usd N]
+                                 seed -> finished chapter with no checkpoints (decisions.md records
+                                 every choice); the run name is made from the seed if not given.
+                                 The same command again continues a stopped run.
+    new [run] --seed "..."       just write 00_source/seed.md; then run the stages one by one:
+    scout <run>                  seed -> 01_map.md (10 searches), then angles, choose, ... as above
+
 Utilities:
 
     status <run>                 which outputs exist, the next step, and the cost so far
@@ -49,7 +58,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from stages.common import ROOT, PATHS, Run, StageError, load_config
+from stages.common import ROOT, PATHS, Run, StageError, is_seed, load_config, run_config
 
 STAGES_IN_ORDER = [
     ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "choose"),
@@ -66,9 +75,13 @@ STAGES_IN_ORDER = [
 def status(r: Run, cfg: dict) -> None:
     from stages.report import cost_table
 
-    print(f"Run: {r.root}")
+    print(f"Run: {r.root}" + ("  (seed run)" if is_seed(r) else ""))
     next_step = None
-    for key, step in STAGES_IN_ORDER:
+    steps = STAGES_IN_ORDER
+    if is_seed(r):
+        steps = [("seed", "new --seed")] + [("map", "scout") if k == "map" else (k, v) for k, v in steps[1:]
+                                           if k not in ("baseline_script", "baseline_mp3", "compare_dir")]
+    for key, step in steps:
         if key is None:
             continue
         p = r.path(key)
@@ -101,6 +114,39 @@ def status(r: Run, cfg: dict) -> None:
         print(f"  next: {next_step}")
 
 
+def new_run(args, cfg: dict) -> int:
+    """`new`: create (or continue) a seed run; with --unattended, run it to the end."""
+    from stages import new, seed
+
+    name = args.run
+    if not name:
+        if not (args.seed or args.seed_file):
+            raise StageError("new needs --seed \"...\" (or --seed-file), or the name of a run to continue.")
+        topic = args.seed or open(args.seed_file, encoding="utf-8").read()
+        name = seed.run_name(topic)
+    r = Run.open(name, force=args.force, yes=args.yes, create=True)
+    if r.path("seed").exists():
+        if args.seed or args.seed_file:
+            given = seed.seed_text(args.seed, args.why, args.notes) if args.seed else None
+            if given is not None and given != r.read("seed") and not args.force:
+                raise StageError(f"{r.name} already has a different seed. Continue it without --seed, or "
+                                 "start a new run.")
+        print(f"  continuing {r.name}")
+    else:
+        if r.path("transcript").exists():
+            raise StageError(f"{r.name} starts from a transcript; a seed run needs its own name.")
+        seed.write(r, args.seed or "", args.why, args.notes, args.seed_file)
+    cfg = run_config(r, cfg)
+    if not args.unattended:
+        print(f"  Next: python cli.py scout {r.name}, then the stages one by one; or the whole run:\n"
+              f"  python cli.py new {r.name} --unattended")
+        return 0
+    r.unattended = True
+    r.max_usd = args.max_usd if args.max_usd is not None else cfg["unattended"]["max_run_usd"]
+    new.run(r, cfg)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage")
@@ -113,7 +159,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--baseline", action="store_true", help="narrate: the baseline script")
     ap.add_argument("--voices", help="voicetest: comma-separated voice IDs")
     ap.add_argument("--search", help="voices: filter by name")
-    ap.add_argument("--seed", type=int, help="report: seed for the claim sample")
+    ap.add_argument("--seed", help="new: the topic, in the listener's words; report: the claim sample's seed")
+    ap.add_argument("--why", default="", help="new: what the listener said about why it matters to them")
+    ap.add_argument("--notes", default="", help="new: anything to include or avoid")
+    ap.add_argument("--seed-file", help="new: a seed.md written elsewhere (the guide, later)")
+    ap.add_argument("--unattended", action="store_true",
+                    help="new: run every stage with no checkpoints, under the run's spending cap")
+    ap.add_argument("--max-usd", type=float, help="new --unattended: this run's spending cap")
     ap.add_argument("--plan-only", action="store_true",
                     help="research: show each row's budget and the estimate, spend nothing")
     ap.add_argument("--rows", help="research: ledger rows to research (or redo), e.g. L01 or L01,L03")
@@ -132,8 +184,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if st == "estimate":
             from stages import estimate
-            estimate.run(Run.open(args.run) if args.run else None, cfg)
+            er = Run.open(args.run) if args.run else None
+            estimate.run(er, run_config(er, cfg) if er else cfg)
             return 0
+        if st == "new":
+            return new_run(args, cfg)
         if st == "voices":
             from stages.voicetest import list_voices
             list_voices(cfg, args.search)
@@ -147,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.run:
             ap.error(f"{st} needs a run name, e.g. python cli.py {st} beauty-scarry")
         r = Run.open(args.run, force=args.force, yes=args.yes, create=(st == "init"))
+        cfg = run_config(r, cfg)  # a seed run is sized as a 20-minute lesson
 
         if st == "init":
             r.path("source_dir").mkdir(exist_ok=True)
@@ -167,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
         elif st == "ledger-update":
             from stages import ledger_update
             ledger_update.run(r, cfg)
-        elif st in ("map", "angles", "choose", "ledger", "brief", "assemble", "coverage", "edit", "revise",
+        elif st in ("map", "scout", "angles", "choose", "ledger", "brief", "assemble", "coverage", "edit", "revise",
                     "baseline", "compare"):
             import importlib
             importlib.import_module(f"stages.{st}").run(r, cfg)
@@ -179,7 +235,11 @@ def main(argv: list[str] | None = None) -> int:
             narrate.run(r, cfg, pilot=args.pilot, baseline=args.baseline, segments=args.segments)
         elif st == "report":
             from stages import report
-            report.run(r, cfg, seed=args.seed)
+            try:
+                sample_seed = int(args.seed) if args.seed is not None else None
+            except ValueError:
+                ap.error("report --seed takes a whole number (the claim sample's seed)")
+            report.run(r, cfg, seed=sample_seed)
         else:
             ap.error(f"unknown stage {st!r}")
     except StageError as e:

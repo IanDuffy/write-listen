@@ -26,6 +26,8 @@ stages:
   # 17,838 (over its old 16000) before finishing, so stages that write a long document get
   # 64000 (Opus 5.5 allows 128000). Billing is per token used; the guard uses expected_*.
   map:      {max_tokens: 64000, effort: high, expected_output_tokens: 40000}
+  scout:    {max_tokens: 64000, effort: high, expected_output_tokens: 16000, max_continuations: 6}
+  scout_writeup: {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
   angles:   {max_tokens: 32000, effort: high, expected_output_tokens: 18000}
   choose:   {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
   ledger:   {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
@@ -73,6 +75,27 @@ research:
     plato.stanford.edu: 2
     iep.utm.edu: 2
     wikipedia.org: 4
+
+# Seed runs (docs/phase1-onboarding.md): a 20-minute lesson made from a listener's seed, with no
+# transcript. These values replace the ones above for any run with 00_source/seed.md.
+seed_runs:
+  chapter: {target_words: 3000, target_minutes: 20, min_segments: 4, max_segments: 4, segment_words: [700, 800]}
+  research: {min_rows: 3, max_rows: 4}
+
+# The scout maps the territory around a seed and finds candidate sources: the role the
+# episode map plays for a transcript. One agent, these budgets (its web tools' max_uses).
+scout:
+  searches: 10
+  fetches: 5
+
+# `new --unattended`: nobody is asked anything. Each guard approves a stage if the run's
+# spend plus the stage's estimate stays under this cap, and stops the run (with a report)
+# if not; every request also checks the cap. Starting such a run is the approval.
+unattended:
+  max_run_usd: 20.00
+
+# Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
+listener_dir: listener
 
 # The single-prompt baseline: one agent, the build doc's 30-search cap.
 baseline:

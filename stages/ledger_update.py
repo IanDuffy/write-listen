@@ -29,7 +29,7 @@ import json
 from collections import defaultdict
 
 from . import ledger, llm, research
-from .common import (Run, StageError, dossier_entries, entry_id, entry_numbers, entry_tags,
+from .common import (Run, StageError, dossier_entries, entry_id, entry_numbers, entry_tags, prompt_name, seed_inputs,
                      load_prompt, parse_json)
 
 SCHEMA = {
@@ -61,8 +61,9 @@ SCHEMA = {
 
 def judge(r: Run, cfg: dict, led: dict, dossier: str, round_no: int) -> dict:
     fb = cfg["research"]["budgets"]["followup"]
-    prompt = load_prompt("ledger_update", ledger=ledger.describe(ledger.active(led)), dossier=dossier,
-                         source_tiers=load_prompt("source_tiers"),
+    prompt = load_prompt(prompt_name(r, "ledger_update"), ledger=ledger.describe(ledger.active(led), led=led),
+                         dossier=dossier,
+                         source_tiers=load_prompt(prompt_name(r, "source_tiers")),
                          followup_searches=fb["searches"], followup_fetches=fb["fetches"])
     res = llm.call(r, cfg, "ledger_update", messages=[{"role": "user", "content": prompt}],
                    label=f"ledger update round {round_no}", json_schema=SCHEMA, preapproved=True)
@@ -144,6 +145,24 @@ def _followup_job(r: Run, row: dict) -> tuple[dict, dict]:
                  "start": start}
 
 
+def _fit_unattended(r: Run, cfg: dict, need: list[dict]) -> list[dict]:
+    """With nobody to ask, run the follow-ups that fit the search cap and the run's spending
+    cap, highest rank first, and record any left out, rather than stopping the run."""
+    s = cfg["research"]["budgets"]["followup"]["searches"]
+    room = cfg["research"]["max_searches"] - research.searches_used(r)
+    keep = sorted(need, key=lambda x: x["rank"])[:max(0, room // s)]
+    if r.max_usd is not None:
+        while keep and r.spent() + research.estimate(cfg, [(x, True) for x in keep]) > r.max_usd:
+            keep.pop()
+    dropped = [x["id"] for x in need if x not in keep]
+    if dropped:
+        r.decide("follow-ups", f"Ran follow-ups for {', '.join(x['id'] for x in keep) or 'no rows'}; left out "
+                 f"{', '.join(dropped)}, which would have passed the {cfg['research']['max_searches']}-search cap "
+                 f"or the run's ${r.max_usd:.2f} cap. Those rows stay {', '.join(sorted({x['status'] for x in need if x['id'] in dropped}))}.")
+        print(f"  unattended: no room for follow-ups on {', '.join(dropped)} (search or spending cap)")
+    return keep
+
+
 def _record(led: dict, rounds: list[str], ran_now: list[str]) -> str:
     lines = ["# Ledger update", "", "Stage 04b. The full ledger is in ledger.md.", ""]
     lines += rounds
@@ -198,6 +217,8 @@ def run(r: Run, cfg: dict):
 
     need = [row for row in ledger.active(led) if row["status"] in ("partial", "open")
             and not research.row_paths(r, row["id"], followup=True)[0].exists()]
+    if need and r.unattended:
+        need = _fit_unattended(r, cfg, need)
     if need:
         jobs = [_followup_job(r, row) for row in need]
         s = cfg["research"]["budgets"]["followup"]["searches"]
@@ -220,6 +241,9 @@ def run(r: Run, cfg: dict):
     ledger.save(r, led)
     r.path("ledger_update").write_text(_record(led, rounds, [row["id"] for row in need]), encoding="utf-8")
     still = [row["id"] for row in ledger.active(led) if row["status"] in ("partial", "open")]
+    r.decide("ledger update", "Row status after the follow-up round: " + ", ".join(
+        f"{row['id']} {row['status']}" for row in ledger.active(led))
+        + (f". Going ahead with {', '.join(still)} not filled; the brief plans around them." if still else "."))
     if still:
         print(f"  Still open or partial, flagged in ledger.md for Ian: {', '.join(still)}")
     if led["connections"]:

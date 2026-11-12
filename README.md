@@ -98,6 +98,47 @@ Each milestone stops for Ian.
 `python cli.py status <run>` shows what exists, what's next, and spend so far.
 `python cli.py estimate [run]` forecasts the cost of the rest of a run.
 
+## Seed runs: a lesson from a listener's topic (Phase 1)
+
+Phase 1 ([`docs/phase1-onboarding.md`](docs/phase1-onboarding.md)) ends in a
+voice conversation that starts a chapter. Its first milestone, built here, is
+the pipeline half: a seed in, a finished 20-minute lesson out, with nobody
+approving anything.
+
+```bash
+python cli.py new --seed "I can't stop thinking about why Roman concrete lasted" \
+                  --why "I pour concrete for a living" --unattended
+```
+
+- **Seed.** `00_source/seed.md` holds the topic in the listener's words, why it
+  matters to them, and anything to include or avoid. `--seed-file` takes one
+  written elsewhere (the guide's conversation, later). The run is named from
+  the seed (`roman-concrete-lasted-20261112`) unless you give a name.
+- **Scout** (stage 1, Opus with 10 searches and 5 fetches) maps the territory
+  around the seed and finds candidate sources. It writes `01_map.md`, so the
+  stages that read the episode map read the scout's map instead.
+- **Angle.** `angles` proposes 3-4 angles; `choose` picks one using the seed
+  and the listener's profile (`listener/profile.md`, if it exists) and says why.
+- **The rest is the chapter pipeline,** sized as a lesson by `seed_runs` in
+  `config.yaml`: about 3,000 words, 4 segments, 3-4 ledger rows. A seed run's
+  stages load `prompts/<name>_seed.md` where one exists (12 of them; same
+  inputs and output contracts, with no episode and an opening that ties back
+  to what the listener said). Episode runs are unchanged.
+- **Unattended.** Nobody is asked anything. Before spending, the upper-end
+  forecast for the rest of the run is checked against the run's cap
+  (`unattended.max_run_usd`, $20, or `--max-usd`). Each stage's cost guard then
+  approves against that cap, and every request checks it, so the run stops and
+  reports rather than pass it. The follow-up round runs only what fits the
+  40-search cap and the money cap. Every decision a person used to make goes to
+  `decisions.md` (the angle and why, the ledger, follow-ups left out, the brief,
+  going past the $5 guard, a stop), for Ian; the listener never sees it.
+- **Continue.** A stage whose output exists is skipped, so after a stop the
+  same command (`python cli.py new <run> --unattended`) continues from there.
+  Without `--unattended`, `new` only writes the seed, and the stages run one by
+  one as before, starting with `python cli.py scout <run>`.
+
+`listener/` (the profile, later the guide's memory) is gitignored.
+
 ## Ledger-driven research
 
 Research is aimed by the chosen angle, not by general reading. The spec is

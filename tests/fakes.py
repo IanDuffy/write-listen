@@ -114,6 +114,22 @@ def segment_prose(n):
     return "\n\n".join(paras)
 
 
+SCOUT_MAP = ("## Seed in brief\nWhy Roman concrete lasted, from someone who pours concrete.\n\n"
+             "## Threads\n- Self-healing lime clasts [RICH]\n- The harbor at Caesarea [RICH]\n\n"
+             "## Candidate sources\n- Symposium, https://www.gutenberg.org/ebooks/1600, tier 1")
+
+
+def _fetched():
+    return NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
+        type="web_fetch_result", url="https://www.gutenberg.org/ebooks/1600",
+        content=NS(type="document", title="Symposium", source=NS(type="text", media_type="text/plain", data=PAGE_TEXT))))
+
+
+def _searched():
+    return NS(type="web_search_tool_result", tool_use_id="s1",
+              content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600", title="Symposium")])
+
+
 class Responder:
     """Return a plausible response for each stage, keyed off the prompt text."""
 
@@ -122,7 +138,9 @@ class Responder:
         self.calls: list[dict] = []
         self.row_calls: dict[str, int] = {}
         self.judge_calls = 0
-        self.pause_at: dict[str, tuple[int, int]] = {}  # row -> (searches, fetches) used when it pauses
+        self.pause_at: dict[str, tuple[int, int]] = {}
+        self.scout_calls = 0
+        self.scout_pause = False  # row -> (searches, fetches) used when it pauses
         self.judge_rounds: list[dict] = [  # one verdict set per judge call; the last repeats
             {"L01": "filled", "L02": "partial", "L03": "filled"},
             {"L01": "filled", "L02": "filled", "L03": "filled"},
@@ -140,7 +158,16 @@ class Responder:
                                     "## Notes for the writer\n- More Weil, please.")
         if "candidate angles" in t:
             return self.msg(kwargs, "### Angle 1: The ladder\n- **Thesis:** beauty teaches.")
-        if "Before any research, we decide what the chapter must land" in t:
+        if "You were scouting the territory" in t:  # the scout's write-up, after a pause at its budget
+            return self.msg(kwargs, "<map>\n" + SCOUT_MAP + "\n</map>")
+        if "Before anyone chooses an angle, scout the territory" in t:
+            self.scout_calls += 1
+            if self.scout_pause and self.scout_calls == 1:
+                return self.msg(kwargs, None, stop="pause_turn", content=[_searched(), _fetched()],
+                                u=usage(searches=3, fetches=1))
+            return self.msg(kwargs, None, content=[_searched(), _fetched(), text_block(
+                "Scouting done.\n<map>\n" + SCOUT_MAP + "\n</map>")], u=usage(searches=4, fetches=1))
+        if "Before any research, we decide what the" in t:
             return self.msg(kwargs, json.dumps(LEDGER))
         m = re.search(r"(?:Your idea is row|This idea is row) (L\d+)", t)
         if m and "your search and fetch budget is now spent" in t:
