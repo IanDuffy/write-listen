@@ -36,6 +36,15 @@ def run_name(topic: str, runs_dir: Path | None = None) -> str:
     return candidate
 
 
+def find_run(text: str, runs_dir: Path | None = None) -> str | None:
+    """The newest unfinished run started from exactly this seed, so the same `new --seed ...`
+    command continues a stopped run instead of paying for a second one."""
+    root = runs_dir or RUNS_DIR
+    found = [p for p in root.glob("*/00_source/seed.md")
+             if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()]
+    return max(found, key=lambda p: p.stat().st_mtime).parent.parent.name if found else None
+
+
 def write(r: Run, topic: str = "", why: str = "", notes: str = "", seed_file: str | None = None) -> Path:
     if r.path("transcript").exists():
         raise StageError(f"{r.name} already starts from a transcript; a seed run needs its own run folder.")

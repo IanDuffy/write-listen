@@ -123,7 +123,7 @@ def apply(led: dict, data: dict, dossier: str, cfg: dict, seen_urls: set[str] | 
             if row["type"] == "covered":
                 if not any(tags[n]["kind"] == "claim" and tags[n]["verdict"] in ("confirmed", "corrected")
                            for n in refs):
-                    problems.append("no episode claim is confirmed or corrected")
+                    problems.append("none of its claims is confirmed or corrected")
             elif not any(tags[n]["kind"] == "material" for n in refs):
                 problems.append("no tellable material entry")
             if problems:

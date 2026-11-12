@@ -350,12 +350,16 @@ def run(r: Run, cfg: dict):
     rows = sorted(data.get("rows") or [], key=lambda x: x.get("rank", 99) if _int(x.get("rank")) else 99)
     if not rows:
         raise StageError("ledger: the model returned no rows.")
+    extra = []
+    if is_seed(r) and len(rows) > cfg["research"]["max_rows"]:  # a lesson lands 3-4 ideas: park the rest
+        rows, extra = rows[:cfg["research"]["max_rows"]], rows[cfg["research"]["max_rows"]:]
+        print(f"  parked {len(extra)} row(s) past the lesson's {cfg['research']['max_rows']}")
     for i, row in enumerate(rows, 1):  # ids follow rank; ranks become 1..N without gaps or ties
         row["rank"] = i
         row["id"] = row_id(i)
     led = {"run": r.name, "source": "seed" if is_seed(r) else "episode",
            "inputs": inputs_hash(source, episode_map, angle),
-           "rows": rows, "parked": data.get("parked") or [], "connections": []}
+           "rows": rows, "parked": [x["idea"] for x in extra] + (data.get("parked") or []), "connections": []}
     try:
         warnings = validate(led, cfg)
     except StageError as e:  # keep the paid output: fix it by hand and save it as ledger.json

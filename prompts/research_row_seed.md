@@ -37,7 +37,7 @@ It needs sources of tier {{tier_needed}} or better:
 
 {{source_tiers}}
 
-What the scout's map already has, so you do not bring it back again (but do fetch and cite its sources if you use them):
+Leads from the scout. The writer never sees the scout's map: it sees only what the research agents bring back. So start from these leads, fetch the sources the idea needs, and return as your own sourced entries the basic facts and the scene the idea rests on; then go deeper:
 
 <scout_has>
 {{episode_has}}

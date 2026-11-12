@@ -167,3 +167,52 @@ def test_episode_runs_are_unchanged_by_seed_settings(run, cfg):
     assert c["chapter"]["target_words"] == 3000 and c["research"]["max_rows"] == 4
     assert c["research"]["budgets"] == cfg["research"]["budgets"]  # merged, not replaced
     assert common.prompt_name(s, "ledger") == "ledger_seed" and common.prompt_name(s, "coverage") == "coverage"
+
+
+def test_same_nameless_command_continues_a_stopped_run(env, monkeypatch):
+    runs, resp, _ = env
+    monkeypatch.setattr(new, "remaining_forecast", lambda r, cfg: 0.0)
+    assert cli.main(["new", "--seed", TOPIC, "--unattended", "--max-usd", "2"]) == 1
+    assert cli.main(["new", "--seed", TOPIC, "--unattended", "--max-usd", "50"]) == 0
+    assert len(list(runs.iterdir())) == 1 and resp.scout_calls == 1
+
+
+def test_seed_run_records_the_script_and_uses_seed_corrections(env, monkeypatch):
+    runs, resp, _ = env
+    assert cli.main(["new", "lesson", "--seed", TOPIC, "--unattended"]) == 0
+    r = Run.open("lesson", runs_dir=runs)
+    d = r.read("decisions")
+    assert "## script" in d and "Approved the revised script without review" in d and "L03 missing" in d
+    brief_text = r.read("brief")
+    assert "## Corrections" in brief_text  # the fake verify agent corrects one claim
+    assert "episode" not in brief_text.split("## Corrections")[1].split("\n- ")[0].lower()
+
+
+def test_seed_ledger_parks_rows_past_the_lesson_size(env, cfg):
+    runs, resp, _ = env
+    cfg["seed_runs"]["research"]["max_rows"] = 2
+    assert cli.main(["new", "lesson", "--seed", TOPIC]) == 0
+    for st in ("scout", "angles", "choose", "ledger"):
+        assert cli.main([st, "lesson"]) == 0
+    led = ledger.load(Run.open("lesson", runs_dir=runs), None)
+    assert len(led["rows"]) == 2 and "Beauty prompts a desire to replicate." in led["parked"]
+
+
+def test_failed_scout_write_up_does_not_buy_the_search_again(env, monkeypatch):
+    runs, resp, _ = env
+    resp.scout_pause = True
+    real = resp.__call__
+
+    def bad_writeup(kwargs):
+        if "You were scouting the territory" in all_text(kwargs):
+            return resp.msg(kwargs, "no map here")
+        return real(kwargs)
+
+    assert cli.main(["new", "lesson", "--seed", TOPIC]) == 0
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(bad_writeup))
+    assert cli.main(["scout", "lesson"]) == 1
+    r = Run.open("lesson", runs_dir=runs)
+    assert (r.root / "01_scout.pending.json").exists() and not r.path("map").exists()
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(resp))
+    assert cli.main(["scout", "lesson"]) == 0
+    assert resp.scout_calls == 1 and r.path("map").exists() and not (r.root / "01_scout.pending.json").exists()

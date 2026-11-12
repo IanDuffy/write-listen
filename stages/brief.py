@@ -126,7 +126,7 @@ def run(r: Run, cfg: dict):
     res = llm.call(r, cfg, "brief", messages=[{"role": "user", "content": prompt}])
     text = res.text.strip()
     if fixed:
-        text += "\n\n" + load_prompt("brief_corrections", corrections="\n".join(f"- {c}" for c in fixed)).strip()
+        text += "\n\n" + load_prompt(prompt_name(r, "brief_corrections"), corrections="\n".join(f"- {c}" for c in fixed)).strip()
     out = r.write("brief", text)
     try:
         segs = parse_segments(text)
@@ -140,6 +140,7 @@ def run(r: Run, cfg: dict):
                  + "".join(f"\n- Warning: {w}" for w in warnings))
     except StageError as e:
         print(f"  Warning: {e} Fix the headings by hand before drafting.")
+        r.decide("brief", f"The brief's segment headings did not parse: {e}")
     print(f"\n  Next: python cli.py draft {r.name}. (Optional: edit 05_brief.md first; keep the\n"
           "  '## Segment N: Title' headings and the 'Target words:', 'Ledger:' and 'Dossier:' lines.)")
     return out

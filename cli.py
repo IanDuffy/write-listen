@@ -122,8 +122,9 @@ def new_run(args, cfg: dict) -> int:
     if not name:
         if not (args.seed or args.seed_file):
             raise StageError("new needs --seed \"...\" (or --seed-file), or the name of a run to continue.")
-        topic = args.seed or open(args.seed_file, encoding="utf-8").read()
-        name = seed.run_name(topic)
+        text = (seed.seed_text(args.seed, args.why, args.notes) if args.seed
+                else open(args.seed_file, encoding="utf-8").read().strip() + "\n")
+        name = seed.find_run(text) or seed.run_name(args.seed or text)
     r = Run.open(name, force=args.force, yes=args.yes, create=True)
     if r.path("seed").exists():
         if args.seed or args.seed_file:

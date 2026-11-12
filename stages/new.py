@@ -77,8 +77,8 @@ def run(r: Run, cfg: dict) -> None:
             stage(r, cfg)
         except StageError as e:
             r.decide("stopped", f"Stopped at {label}: {e}")
-            raise StageError(f"stopped at {label}: {e}\n  Run the same command again to continue from {label}; "
-                             f"decisions so far are in {r.path('decisions').relative_to(r.root.parent.parent)}.")
+            raise StageError(f"stopped at {label}: {e}\n  To continue from {label}: python cli.py new {r.name} "
+                             f"--unattended (raise --max-usd if the cap stopped it). Decisions so far: {r.path('decisions')}")
     words = word_count(r.read("script_final"))
     minutes = (time.monotonic() - t0) / 60
     summary = (f"Finished in {minutes:.0f} min: {words:,} words, {r.path('chapter_mp3').relative_to(r.root)}, "

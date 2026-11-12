@@ -133,7 +133,9 @@ python cli.py new --seed "I can't stop thinking about why Roman concrete lasted"
   `decisions.md` (the angle and why, the ledger, follow-ups left out, the brief,
   going past the $5 guard, a stop), for Ian; the listener never sees it.
 - **Continue.** A stage whose output exists is skipped, so after a stop the
-  same command (`python cli.py new <run> --unattended`) continues from there.
+  same command continues from there: `new --seed "..."` finds the unfinished run
+  with that exact seed, and `python cli.py new <run> --unattended` names it. A
+  scout or research write-up that failed is retried from its saved material.
   Without `--unattended`, `new` only writes the seed, and the stages run one by
   one as before, starting with `python cli.py scout <run>`.
 
