@@ -78,7 +78,7 @@ class Pipeline:
                                          start_new_session=True)
         self.run = run
 
-    def start_seed(self, topic: str, why: str = "", notes: str = "") -> str:
+    def start_seed(self, topic: str, why: str = "", notes: str = "", said: str = "") -> str:
         """Start (or continue) the unattended run for this seed; returns the run's name. Used by the
         text box (POST /api/chapters) and by the guide's start_chapter tool."""
         topic = topic.strip()
@@ -87,12 +87,12 @@ class Pipeline:
         with self.lock:
             if self.busy():
                 raise HTTPException(409, "A chapter is already being made.")
-            text = seed_stage.seed_text(topic, why, notes)
+            text = seed_stage.seed_text(topic, why, notes, said)
             name = seed_stage.find_run(text, self.runs_dir) or seed_stage.run_name(topic, self.runs_dir)
             r = Run.open(name, create=True, runs_dir=self.runs_dir)
             if not r.path("seed").exists():
                 try:
-                    seed_stage.write(r, topic, why, notes)
+                    seed_stage.write(r, topic, why, notes, said=said)
                 except StageError as e:
                     raise HTTPException(400, str(e)) from None
             self.start(["new", name, "--unattended"], name)
@@ -150,6 +150,7 @@ class ChapterRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session: str | None = None  # the id /api/chat/start returned
 
 
 def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, remember_on_start: bool = True) -> FastAPI:
@@ -188,9 +189,12 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         chat["session"] = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
         return chat["session"]
 
-    def talk(text: str | None, fresh: bool) -> dict:
+    def talk(text: str | None, fresh: bool, session_id: str | None = None) -> dict:
         with chat["lock"]:  # one turn at a time
-            session = new_session() if fresh or chat["session"] is None else chat["session"]
+            if not fresh and (chat["session"] is None or (session_id and session_id != chat["session"].id)):
+                # The server restarted, or another conversation took over: don't answer out of context.
+                raise HTTPException(409, "That conversation has ended.")
+            session = new_session() if fresh else chat["session"]
             try:
                 reply = session.say(text)
             except StageError as e:
@@ -215,7 +219,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     def chat_turn(req: ChatRequest) -> dict:
         if not req.message.strip():
             raise HTTPException(400, "Say something first.")
-        return talk(req.message, fresh=False)
+        return talk(req.message, fresh=False, session_id=req.session)
 
     @app.post("/api/chapters/{run}/retry")
     def retry(run: str) -> dict:

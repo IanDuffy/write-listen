@@ -112,42 +112,64 @@ class Session:
         content = text.strip() if text and text.strip() else load_prompt("guide_opened").strip()
         self.messages.append({"role": "user", "content": content})
         self.record("listener" if text and text.strip() else "page", text=content)
+        said: list[str] = []  # everything the guide says this turn, before and after its tool calls
         for _ in range(self.cfg["guide"]["max_tool_rounds"] + 1):
             res = llm.call(self.log_run, self.cfg, "guide", role="guide", system=self.system,
                            messages=self.messages, tools=TOOLS, label="guide", preapproved=True,
+                           allow_empty=bool(said) or len(self.messages) > 1 and self._after_tools(),
                            log_extra={"session": self.id})
-            self.messages.append({"role": "assistant", "content": res.content})
-            uses = [b for b in res.content if getattr(b, "type", None) == "tool_use"]
+            content = llm.echo_after_fallback(res.content)  # what the API accepts back after a fallback
+            self.messages.append({"role": "assistant", "content": content})
+            text = "".join(getattr(b, "text", "") for b in content if getattr(b, "type", None) == "text").strip()
+            if text:
+                said.append(text)
+            uses = [b for b in content if getattr(b, "type", None) == "tool_use"]
             if res.message.stop_reason != "tool_use" or not uses:
-                self.record("guide", text=res.text)
-                return res.text
-            if res.text:
-                self.record("guide", text=res.text)
+                reply = " ".join(said)
+                if not reply:
+                    raise StageError("guide: the model returned no text.")
+                self.record("guide", text=reply)
+                return reply
             results = []
-            for b in uses:
-                out = self.tool(b.name, dict(b.input or {}))
+            for b in uses:  # every tool_use gets its tool_result, or the next request is a 400
+                try:
+                    out = self.tool(b.name, dict(b.input or {}))
+                except Exception as e:
+                    out = {"error": f"{type(e).__name__}: {e}"}
                 self.record("tool", name=b.name, input=b.input, result=out)
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, ensure_ascii=False)})
             self.messages.append({"role": "user", "content": results})
+        self.record("guide", text=" ".join(said))
+        if said:
+            return " ".join(said)
         raise StageError("guide: too many tool calls in one turn.")
+
+    def _after_tools(self) -> bool:
+        last = self.messages[-1]["content"]
+        return isinstance(last, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in last)
 
     # --- the three tools -------------------------------------------------------------
 
     def tool(self, name: str, args: dict) -> dict:
         if name == "start_chapter":
-            return self.start_chapter(args.get("topic", ""), args.get("why", ""), args.get("notes", ""))
+            return self.start_chapter(args.get("topic") or "", args.get("why") or "", args.get("notes") or "",
+                                      args.get("listener_said") or "")
         if name == "add_note":
-            return self.add_note(args.get("note", ""))
+            return self.add_note(args.get("note") or "")
         if name == "get_status":
             return plain_status(self.status_fn() or {"state": "idle"})
         return {"error": f"no tool named {name}"}
 
-    def start_chapter(self, topic: str, why: str, notes: str) -> dict:
+    def start_chapter(self, topic: str, why: str, notes: str, listener_said: str = "") -> dict:
         if not topic.strip():
             return {"started": False, "reason": "The topic was empty."}
+        now = self.status_fn() or {}
+        if self.run and now.get("run") == self.run and now.get("state") == "problem":
+            return {"started": False, "reason": "This conversation's chapter stopped. Don't start another: the "
+                                                "page's Try again button continues it (if it shows one)."}
         try:
-            self.run = self.start_fn(topic, why, notes)
+            self.run = self.start_fn(topic, why, notes, listener_said)
         except Exception as e:  # busy, a bad seed: the guide says so plainly
             return {"started": False, "reason": str(getattr(e, "detail", None) or e)}
         from . import memory

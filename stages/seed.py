@@ -16,9 +16,11 @@ from pathlib import Path
 from .common import RUNS_DIR, Run, StageError, load_prompt
 
 
-def seed_text(topic: str, why: str = "", notes: str = "") -> str:
-    return load_prompt("seed_file", topic=topic.strip(), why=why.strip() or "(not said)",
-                       notes=notes.strip() or "(nothing)").strip() + "\n"
+def seed_text(topic: str, why: str = "", notes: str = "", said: str = "") -> str:
+    """seed.md. `said` is what the listener said, word for word (from the guide); typed on the
+    command line, the topic itself is the listener's words."""
+    return load_prompt("seed_file", topic=topic.strip(), said=said.strip() or "(the topic above is in their words)",
+                       why=why.strip() or "(not said)", notes=notes.strip() or "(nothing)").strip() + "\n"
 
 
 def run_name(topic: str, runs_dir: Path | None = None) -> str:
@@ -45,7 +47,8 @@ def find_run(text: str, runs_dir: Path | None = None) -> str | None:
     return max(found, key=lambda p: p.stat().st_mtime).parent.parent.name if found else None
 
 
-def write(r: Run, topic: str = "", why: str = "", notes: str = "", seed_file: str | None = None) -> Path:
+def write(r: Run, topic: str = "", why: str = "", notes: str = "", seed_file: str | None = None,
+          said: str = "") -> Path:
     if r.path("transcript").exists():
         raise StageError(f"{r.name} already starts from a transcript; a seed run needs its own run folder.")
     if seed_file:
@@ -54,7 +57,7 @@ def write(r: Run, topic: str = "", why: str = "", notes: str = "", seed_file: st
             raise StageError(f"Seed file not found: {p}")
         text = p.read_text(encoding="utf-8").strip() + "\n"
     elif topic.strip():
-        text = seed_text(topic, why, notes)
+        text = seed_text(topic, why, notes, said)
     else:
         raise StageError("A seed run needs a topic: --seed \"...\" (and optionally --why \"...\"), or --seed-file.")
     out = r.write("seed", text)

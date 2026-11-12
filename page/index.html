@@ -44,7 +44,10 @@
   #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
            border-radius: 999px; padding: 6px 16px; cursor: pointer; }
   body.problem #retry { display: inline-block; }
-  body.problem.final #retry { display: none; }  /* a spending or research limit: retrying cannot help */
+  body.problem.final #retry { display: none; }
+  #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+          cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
   form { display: flex; gap: 8px; }
   #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
@@ -76,6 +79,7 @@
   </button>
   <div id="line">Tap to begin</div>
   <button id="retry">Try again</button>
+  <button id="last"></button>
   <audio id="audio" preload="none"></audio>
 </main>
 <footer>
@@ -94,6 +98,8 @@ ring.style.strokeDasharray = CIRC;
 ring.style.strokeDashoffset = CIRC;
 let status = { state: "idle" }, lastState = "idle", lastLabel = null;
 let talking = false, thinking = false;  // a conversation has started; a reply is on its way
+let sessionId = null;                   // the conversation the server knows this page by
+let fresh = false;                      // the ready chapter was made (or played) during this visit
 
 function note(text, kind = "stage") {
   const p = document.createElement("p");
@@ -116,11 +122,15 @@ function render() {
     const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
     if (!$("audio").src.endsWith(src)) $("audio").src = src;
   }
-  document.body.className = s.state + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
-    + (thinking ? " thinking" : "") + (talking ? " talking" : "");
+  // A chapter from an earlier visit doesn't take over the circle: tap to begin, and play it from the link.
+  const past = s.state === "ready" && !fresh && $("audio").paused;
+  const shown = past ? "idle" : s.state;
+  document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
+    + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "");
+  $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
-  if (s.state === "idle") {
+  if (shown === "idle") {
     $("line").textContent = talking ? "" : "Tap to begin";
   } else if (busy) {
     const done = s.stages_total ? s.stages_done / s.stages_total : 0;
@@ -138,6 +148,7 @@ function onStatus(s) {
   status = s;
   if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
   if (s.state === "ready" && lastState === "making") {
+    fresh = true;
     note("Ready: " + (s.title || "your chapter"));
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification("Your chapter is ready", { body: s.title || "" });
@@ -159,7 +170,9 @@ async function post(url, body) {
   } catch (e) { throw new Error("The server isn't running."); }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(typeof err.detail === "string" ? err.detail : "Something went wrong.");
+    const e = new Error(typeof err.detail === "string" ? err.detail : "Something went wrong.");
+    e.conflict = res.status === 409;
+    throw e;
   }
   return res.json();
 }
@@ -176,7 +189,19 @@ async function converse(message) {
   openTranscript();
   render();
   try {
-    const res = message ? await post("/api/chat", { message }) : await post("/api/chat/start");
+    let res;
+    try {
+      res = message ? await post("/api/chat", { message, session: sessionId }) : await post("/api/chat/start");
+    } catch (err) {
+      if (!message || !err.conflict) throw err;
+      // The server no longer knows this conversation (it restarted): start a new one, don't answer out of context.
+      note("The guide lost the thread, so it's starting again.", "stage");
+      res = await post("/api/chat/start");
+      sessionId = res.session;
+      note(res.reply, "guide");
+      return false;
+    }
+    sessionId = res.session;
     note(res.reply, "guide");
     return true;
   } catch (err) {
@@ -206,9 +231,10 @@ $("retry").addEventListener("click", async () => {
 $("orb").addEventListener("click", () => {
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
-  if (status.state === "ready") return a.play();
-  if (status.state === "idle" && !talking && !thinking) converse(null);  // tap to begin
+  if (status.state === "ready" && fresh) return a.play();
+  if (!talking && !thinking) converse(null);  // tap to begin, whatever an earlier visit left behind
 });
+$("last").addEventListener("click", () => { fresh = true; $("audio").play(); });
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
 

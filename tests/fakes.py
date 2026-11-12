@@ -259,6 +259,8 @@ class Responder:
                                 else f"I couldn't start it: {result['reason']}")
             if "added" in result:
                 return self.msg(kwargs, "Noted, I'll fold that in.")
+            if "error" in result:
+                return self.msg(kwargs, "I couldn't check just now.")
             return self.msg(kwargs, f"It's {result.get('stage', result['state'])} now.")
         text = last.lower()
 
@@ -269,6 +271,7 @@ class Responder:
             return self.msg(kwargs, "Hello, I'm Wren. I've been reading about bridges that sing in the wind.")
         if text.startswith("yes"):
             return tool("start_chapter", {"topic": "Why Roman concrete lasted",
+                                          "listener_said": "I pour concrete for a living",
                                           "why": "I pour concrete for a living", "notes": ""})
         if "how" in text and "going" in text:
             return tool("get_status", {})

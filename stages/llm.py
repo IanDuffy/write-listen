@@ -303,6 +303,7 @@ def call(
     resume_if=None,
     json_schema: dict | None = None,
     log_extra: dict | None = None,
+    allow_empty: bool = False,
 ) -> Result:
     """Send one request (plus any pause_turn continuations) and log it.
 
@@ -458,7 +459,7 @@ def call(
         partial.write_text(text, encoding="utf-8")
         raise StageError(f"{stage}: hit max_tokens ({max_tokens}); partial output saved to "
                          f"{partial.name}. Raise stages.{stage}.max_tokens in config.yaml.")
-    if not text.strip():
+    if not text.strip() and not allow_empty:  # allow_empty: e.g. the guide, after a tool result
         raise StageError(f"{stage}: the model returned no text (stop_reason={message.stop_reason}).")
 
     print(summary)

@@ -132,7 +132,12 @@ def chat(cfg: dict) -> int:
             break
         if not text:
             break
-        print(f"\nguide> {session.say(text)}\n")
+        try:
+            print(f"\nguide> {session.say(text)}\n")
+        except StageError as e:
+            print(f"\n  ({e})\n")
+            if "limit" in str(e):
+                break
     if pipe.run:
         print(f"  A chapter is being made: python cli.py status {pipe.run}")
     from stages import memory

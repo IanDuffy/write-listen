@@ -24,8 +24,8 @@ def world(tmp_path, cfg, monkeypatch):
     monkeypatch.setattr(llm, "_client", FakeAnthropic(resp))
     started, status = [], {"value": {"state": "idle"}}
 
-    def start(topic, why, notes):
-        started.append((topic, why, notes))
+    def start(topic, why, notes, said=""):
+        started.append((topic, why, notes, said))
         r = Run.open("lesson", create=True, runs_dir=runs)
         r.path("source_dir").mkdir(exist_ok=True)
         r.path("seed").write_text("# Seed\n\n## Topic, in the listener's words\n\n" + topic + "\n")
@@ -64,8 +64,10 @@ def test_yes_starts_the_chapter_and_the_guide_says_so(world):
     s.say(None)
     s.say("I pour concrete for a living")
     reply = s.say("yes, make it")
-    assert started == [("Why Roman concrete lasted", "I pour concrete for a living", "")]
-    assert reply == "It's under way. About 25 minutes; I'll let you know."
+    assert started == [("Why Roman concrete lasted", "I pour concrete for a living", "",
+                         "I pour concrete for a living")]
+    # What the guide said alongside the tool call reaches the listener too.
+    assert reply == "Let me do that. It's under way. About 25 minutes; I'll let you know."
     last = guide_calls(resp)[-1]["messages"]
     assert last[-1]["content"][0]["type"] == "tool_result"
     assert json.loads(last[-1]["content"][0]["content"])["started"] is True
@@ -77,11 +79,11 @@ def test_yes_starts_the_chapter_and_the_guide_says_so(world):
 def test_a_refused_start_is_reported_to_the_guide(world, cfg):
     session, resp, _, status, runs, _ = world
 
-    def busy(topic, why, notes):
+    def busy(topic, why, notes, said=""):
         raise server.HTTPException(409, "A chapter is already being made.")
 
     s = guide.Session(cfg, busy, lambda: status["value"], runs)
-    assert s.say("yes") == "I couldn't start it: A chapter is already being made."
+    assert s.say("yes") == "Let me do that. I couldn't start it: A chapter is already being made."
 
 
 def test_status_and_notes_reach_the_run(world, cfg):
@@ -90,7 +92,7 @@ def test_status_and_notes_reach_the_run(world, cfg):
     assert s.say("also mention the harbor at Caesarea")  # nothing started yet
     assert "start_chapter's notes" in json.loads(s.messages[-2]["content"][0]["content"])["reason"]
     s.say("yes")
-    assert s.say("how's it going?") == "It's Researching now."
+    assert s.say("how's it going?") == "Let me do that. It's Researching now."
     s.say("also mention the harbor at Caesarea")
     r = Run.open("lesson", runs_dir=runs)
     notes = r.path("notes").read_text()
@@ -113,9 +115,8 @@ def test_returning_listener_keeps_the_guides_identity(world):
 def test_limits(world, cfg, monkeypatch):
     session, resp, _, _, _, _ = world
     s = session()
-    cfg["guide"]["max_tool_rounds"] = 0
-    with pytest.raises(StageError, match="too many tool calls"):
-        s.say("how's it going?")
+    cfg["guide"]["max_tool_rounds"] = 0  # out of rounds: it says what it had said, not an error
+    assert s.say("how's it going?") == "Let me do that."
     cfg["guide"]["max_session_usd"] = 0.0
     with pytest.raises(StageError, match="limit"):
         s.say("hello")
@@ -137,12 +138,13 @@ def client(world, cfg, monkeypatch):
 
 def test_chat_endpoints_start_a_real_seed_run(client):
     c, started, runs = client
-    assert c.post("/api/chat/start").json()["reply"].startswith("Hello, I'm Wren")
-    assert "Caesarea" in c.post("/api/chat", json={"message": "I pour concrete"}).json()["reply"]
-    assert c.post("/api/chat", json={"message": "yes please"}).json()["reply"].startswith("It's under way")
+    sid = c.post("/api/chat/start").json()["session"]
+    assert "Caesarea" in c.post("/api/chat", json={"message": "I pour concrete", "session": sid}).json()["reply"]
+    assert "It's under way" in c.post("/api/chat", json={"message": "yes please", "session": sid}).json()["reply"]
     (args,) = started
     seed = (runs / args[1] / "00_source" / "seed.md").read_text()
-    assert "Why Roman concrete lasted" in seed and "I pour concrete for a living" in seed
+    assert "## Topic\n\nWhy Roman concrete lasted" in seed
+    assert "## What the listener said, in their own words\n\nI pour concrete for a living" in seed
     assert c.post("/api/chat", json={"message": "  "}).status_code == 400
 
 
@@ -162,3 +164,44 @@ def test_plain_status():
     assert guide.plain_status({"state": "making", "label": "Writing", "minutes_left": 7, "title": "T"}) == \
         {"state": "being made", "stage": "Writing", "minutes_left": 7, "title": "T"}
     assert guide.plain_status({"state": "problem", "message": "It stopped."})["problem"] == "It stopped."
+
+
+def test_an_empty_reply_after_a_tool_still_ends_the_turn(world, monkeypatch):
+    session, resp, started, _, _, _ = world
+    real = resp.guide
+
+    def quiet_after_tool(kwargs):
+        if isinstance(kwargs["messages"][-1]["content"], list):  # after the tool result: nothing more to say
+            return resp.msg(kwargs, None, content=[])
+        return real(kwargs)
+
+    monkeypatch.setattr(resp, "guide", quiet_after_tool)
+    s = session()
+    assert s.say("yes") == "Let me do that." and started  # no 503 after the chapter started
+
+
+def test_a_tool_that_raises_keeps_the_conversation_usable(world, monkeypatch):
+    session, resp, _, _, _, _ = world
+    s = session()
+    monkeypatch.setattr(s, "get_status_raises", True, raising=False)
+    monkeypatch.setattr(s, "status_fn", lambda: (_ for _ in ()).throw(RuntimeError("disk")))
+    reply = s.say("how's it going?")
+    last = s.messages[-2]["content"][0]
+    assert last["type"] == "tool_result" and "RuntimeError: disk" in last["content"] and reply
+
+
+def test_a_stopped_chapter_is_not_started_again(world):
+    session, _, started, status, _, _ = world
+    s = session()
+    s.say("yes")
+    status["value"] = {"run": "lesson", "state": "problem", "message": "It stopped.", "retryable": True}
+    out = s.start_chapter("Why Roman concrete lasted", "", "", "")
+    assert out["started"] is False and "Try again" in out["reason"] and len(started) == 1
+
+
+def test_chat_after_a_restart_or_takeover_is_refused(client):
+    c, _, _ = client
+    assert c.post("/api/chat", json={"message": "hi"}).status_code == 409  # no conversation (a restart)
+    sid = c.post("/api/chat/start").json()["session"]
+    assert c.post("/api/chat", json={"message": "hi", "session": sid}).status_code == 200
+    assert c.post("/api/chat", json={"message": "hi", "session": "someone-else"}).status_code == 409

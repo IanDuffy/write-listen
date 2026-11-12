@@ -5,11 +5,12 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "topic": {"type": "string", "description": "What the chapter is about, in the listener's own words where possible, with the turn you promised them."},
+        "topic": {"type": "string", "description": "What the chapter is about, with the turn you promised them, in your words."},
+        "listener_said": {"type": "string", "description": "What the listener actually said that led here, quoted word for word: a line or two. Never paraphrase or invent; the chapter's opening ties back to these words."},
         "why": {"type": "string", "description": "What the listener said about why it matters to them. Their words, not your guess. Empty if they said nothing about why."},
         "notes": {"type": "string", "description": "Anything the listener asked you to include or avoid. Empty if nothing."}
       },
-      "required": ["topic", "why", "notes"],
+      "required": ["topic", "listener_said", "why", "notes"],
       "additionalProperties": false
     }
   },
