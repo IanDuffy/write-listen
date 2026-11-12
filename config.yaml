@@ -6,6 +6,9 @@ models:
   researcher: claude-opus-5-5 # one research agent per ledger row (the add-on asks for Opus 5.5;
                               # claude-sonnet-5-5 would halve these agents' token cost)
   cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
+  guide: claude-sonnet-5-5    # the voice guide's conversation (Phase 1): fast replies matter more than depth,
+                              # and it is the fastest Claude that ElevenLabs Agents offers natively
+                              # (docs/elevenlabs-agents-check.md), so the text chat tunes the same model
 
 # On a safety-classifier decline, the API re-runs the same request on a fallback
 # model inside the same call ("default" lets the API pick by refusal category).
@@ -21,6 +24,7 @@ cost_guard_usd: 5.00
 # expected_* feed the cost guard's estimate only.
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
+  guide:    {max_tokens: 4000, effort: low, expected_output_tokens: 400}
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   # beauty-scarry, 2026-11-11: map hit 32000 (thinking + ~6,400 words of map) and angles used
   # 17,838 (over its old 16000) before finishing, so stages that write a long document get

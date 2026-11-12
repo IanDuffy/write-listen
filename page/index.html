@@ -41,6 +41,7 @@
   #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
            border-radius: 999px; padding: 6px 16px; cursor: pointer; }
   body.problem #retry { display: inline-block; }
+  body.problem.final #retry { display: none; }  /* a spending or research limit: retrying cannot help */
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
   form { display: flex; gap: 8px; }
   #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
@@ -96,13 +97,18 @@ function note(text) {
 
 function minutesLeft(s) {
   if (s.minutes_left == null) return null;
-  const since = s.updated ? (Date.now() - Date.parse(s.updated)) / 60000 : 0;
+  const t = Date.parse(s.updated || "");
+  const since = Number.isNaN(t) ? 0 : (Date.now() - t) / 60000;
   return Math.max(1, Math.round(s.minutes_left - since));
 }
 
 function render() {
   const s = status;
-  document.body.className = s.state + ($("audio").paused ? "" : " playing");
+  if (s.state === "ready") {
+    const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
+    if (!$("audio").src.endsWith(src)) $("audio").src = src;
+  }
+  document.body.className = s.state + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "");
   const busy = s.state === "making";
   $("say").disabled = $("send").disabled = busy;
   if (s.state === "idle") {
@@ -114,8 +120,6 @@ function render() {
     $("line").textContent = (s.label || "Working") + (m ? ` · about ${m} min` : "");
   } else if (s.state === "ready") {
     $("line").textContent = s.title || "Your chapter is ready";
-    const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
-    if (!$("audio").src.endsWith(src)) $("audio").src = src;
   } else if (s.state === "problem") {
     $("line").textContent = s.message || "Something went wrong.";
   }
@@ -139,11 +143,14 @@ new EventSource("/api/events").onmessage = (e) => onStatus(JSON.parse(e.data));
 setInterval(render, 30000);  // keep "about N min" counting down between stages
 
 async function post(url, body) {
-  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                                 body: body ? JSON.stringify(body) : undefined });
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                             body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { throw new Error("The server isn't running."); }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Something went wrong.");
+    throw new Error(typeof err.detail === "string" ? err.detail : "Something went wrong.");
   }
   return res.json();
 }
@@ -153,12 +160,12 @@ $("form").addEventListener("submit", async (e) => {
   const seed = $("say").value.trim();
   if (!seed) return;
   if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
-  note("You: " + seed);
-  $("say").value = "";
   try {
     await post("/api/chapters", { seed });
+    note("You: " + seed);
+    $("say").value = "";
     onStatus({ state: "making", label: "Starting", stages_done: 0, stages_total: 1 });
-  } catch (err) { note(err.message); }
+  } catch (err) { $("line").textContent = err.message; note(err.message); }
 });
 
 $("retry").addEventListener("click", async () => {
@@ -167,9 +174,9 @@ $("retry").addEventListener("click", async () => {
 });
 
 $("orb").addEventListener("click", () => {
-  if (status.state !== "ready") return;
   const a = $("audio");
-  a.paused ? a.play() : a.pause();
+  if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
+  if (status.state === "ready") a.play();
 });
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);

@@ -53,7 +53,8 @@ STEPS = [
 # --- status.json: what the page shows ---------------------------------------------------
 
 def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    from datetime import datetime
+    return datetime.now().astimezone().isoformat(timespec="seconds")  # '+00:00', which every browser parses
 
 
 def chapter_title(r: Run) -> str | None:
@@ -72,12 +73,21 @@ def minutes_left(r: Run, cfg: dict) -> int:
     return round(sum(table.get(step, 1) for step, key, _, _ in STEPS if not r.path(key).exists()))
 
 
-def plain_problem(step_label: str, error: str) -> str:
-    """One plain sentence for the page; the full error stays in 'detail' and decisions.md."""
+MONEY_CAP = ("max_run_usd", "research.max_usd", " cap. Stopped")  # the guards' and llm.call's cap messages
+SEARCH_CAP = ("search cap",)
+
+
+def plain_problem(step_label: str, error: str) -> tuple[str, bool]:
+    """(one plain sentence for the page, whether Try again can help). The full error stays in
+    'detail' and decisions.md. A cap stop needs the cap raised first, so retrying cannot help."""
     where = step_label.lower()
-    if "cap" in error:
-        return f"The chapter stopped while {where}: it reached its spending limit."
-    return f"Something went wrong while {where}."
+    if any(m in error for m in MONEY_CAP):
+        return f"The chapter stopped while {where}: continuing would pass its spending limit.", False
+    if any(m in error for m in SEARCH_CAP):
+        return f"The chapter stopped while {where}: continuing would pass its research limit.", False
+    if isinstance(error, str) and error == "interrupted":
+        return f"The chapter was interrupted while {where}.", True
+    return f"Something went wrong while {where}.", True
 
 
 def write_status(r: Run, cfg: dict, state: str, **fields) -> dict:
@@ -89,6 +99,7 @@ def write_status(r: Run, cfg: dict, state: str, **fields) -> dict:
         "stages_done": done, "stages_total": len(STEPS), "minutes_left": minutes_left(r, cfg),
         "title": chapter_title(r), "audio": None, "message": None, "detail": None,
         "started": old.get("started") or _now(), "updated": _now(), "history": old.get("history", []),
+        "pid": os.getpid(), "retryable": True,  # the server checks the pid to tell a dead run from a slow one
         **fields,
     }
     tmp = r.path("status").with_suffix(".json.tmp")
@@ -125,8 +136,9 @@ def run(r: Run, cfg: dict) -> None:
         msg = (f"The rest of this run could cost up to ${ahead:.2f} (upper end; ${spent:.2f} spent), past its "
                f"${r.max_usd:.2f} cap. Not started. Raise --max-usd or unattended.max_run_usd to go ahead.")
         r.decide("stopped", msg)
-        write_status(r, cfg, "problem", message="This chapter could cost more than its spending limit, so it "
-                                                 "did not start.", detail=msg)
+        write_status(r, cfg, "problem", retryable=False, detail=msg,
+                     message=("This chapter could cost more than its spending limit, so it did not start."
+                              if spent == 0 else "Continuing this chapter could pass its spending limit."))
         raise StageError(msg)
     r.decide("start" if spent == 0 else "continue",
              f"Running {', '.join(todo)} with no checkpoints; upper-end forecast ${ahead:.2f}, "
@@ -139,9 +151,11 @@ def run(r: Run, cfg: dict) -> None:
         t_stage = time.monotonic()
         try:
             stage(r, cfg)
-        except Exception as e:  # anything at all: the page must not keep saying "making"
-            r.decide("stopped", f"Stopped at {label}: {e}")
-            write_status(r, cfg, "problem", stage=label, label=plain, message=plain_problem(plain, str(e)),
+        except BaseException as e:  # anything at all, Ctrl-C included: the page must not keep saying "making"
+            err = "interrupted" if isinstance(e, KeyboardInterrupt) else str(e)
+            message, retryable = plain_problem(plain, err)
+            r.decide("stopped", f"Stopped at {label}: {type(e).__name__}: {e}")
+            write_status(r, cfg, "problem", stage=label, label=plain, message=message, retryable=retryable,
                          detail=f"{type(e).__name__}: {e}")
             if not isinstance(e, StageError):
                 raise

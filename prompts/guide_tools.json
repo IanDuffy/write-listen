@@ -1,0 +1,33 @@
+[
+  {
+    "name": "start_chapter",
+    "description": "Start making the chapter you have told the listener you will make. Call it once they have said yes or not objected. It starts the research and writing, which takes about twenty minutes, and returns whether it started and about how long it will take.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "topic": {"type": "string", "description": "What the chapter is about, in the listener's own words where possible, with the turn you promised them."},
+        "why": {"type": "string", "description": "What the listener said about why it matters to them. Their words, not your guess. Empty if they said nothing about why."},
+        "notes": {"type": "string", "description": "Anything the listener asked you to include or avoid. Empty if nothing."}
+      },
+      "required": ["topic", "why", "notes"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "add_note",
+    "description": "Pass on something the listener said, after the chapter was started, that bears on it: a detail to include, a person, something to leave out. Stages not yet run will take it into account.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "note": {"type": "string", "description": "What they said, in their words where possible."}
+      },
+      "required": ["note"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_status",
+    "description": "How the chapter being made is going: the stage in plain words, about how many minutes are left, and its title once there is one. Call it whenever the listener asks; never guess.",
+    "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+  }
+]

@@ -13,8 +13,9 @@ exposed to the network. One listener, one run at a time.
     POST /api/chapters/{run}/retry  continue a run that stopped
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
 
-A run is `python cli.py new <run> --seed ... --unattended` in its own process, so
-the server stays responsive and a run survives a server restart. Its console
+A run is `python cli.py new <run> --unattended` in its own process and session, so
+the server stays responsive, and stopping or restarting the server does not stop
+the run. Its console
 output goes to runs/<run>/run.log. If the process ends without the pipeline
 writing a final status (a crash), the server reports a problem itself.
 """
@@ -23,12 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -39,8 +41,25 @@ PAGE = ROOT / "page" / "index.html"
 HOST, PORT = "127.0.0.1", 8765
 
 
+def alive(pid) -> bool:
+    """Whether a process with this id is running (status.json records the pipeline's pid)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # it exists, under another user
+        return True
+    return True
+
+
 class Pipeline:
-    """The one run the page follows, and the process making it."""
+    """The run the page follows, and the process making it if this server started it.
+
+    A run is its own process in its own session, so stopping the server (Ctrl-C) does not
+    stop the run. Whether a run is still going is read from the pid in its status.json, so
+    it holds for runs started from the terminal and across server restarts."""
 
     def __init__(self, runs_dir: Path | None = None):
         self.runs_dir = runs_dir or RUNS_DIR
@@ -51,34 +70,51 @@ class Pipeline:
     def start(self, args: list[str], run: str) -> None:
         with open(self.runs_dir / run / "run.log", "a", encoding="utf-8") as log:  # the child keeps its own copy
             self.proc = subprocess.Popen([sys.executable, str(ROOT / "cli.py"), *args], cwd=ROOT,
-                                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+                                         stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                         start_new_session=True)
         self.run = run
 
-    def busy(self) -> bool:
+    def _own_child_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def status(self) -> dict:
-        if not self.run:
-            latest = self._latest()
-            if not latest:
-                return {"state": "idle"}
-            self.run = latest
-        p = self.runs_dir / self.run / "status.json"
+    def _read(self, run: str | None) -> dict | None:
+        if not run:
+            return None
+        p = self.runs_dir / run / "status.json"
         try:
-            status = json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
         except json.JSONDecodeError:  # written atomically, so only a hand edit gets here
-            status = None
+            return None
+
+    def busy(self) -> bool:
+        """A run is going: this server's child, or any run whose status says making with a live pid."""
+        if self._own_child_running():
+            return True
+        latest = self._read(self._latest())
+        return bool(latest and latest.get("state") == "making" and alive(latest.get("pid")))
+
+    def status(self) -> dict:
+        if not self._own_child_running():
+            self.run = self._latest() or self.run  # follow the newest run, wherever it was started
+        if not self.run:
+            return {"state": "idle"}
+        status = self._read(self.run)
         if status is None:
             status = {"run": self.run, "state": "making", "label": "Starting", "stages_done": 0,
                       "stages_total": 1, "minutes_left": None}
-        if status.get("state") == "making" and not self.busy() and self.proc is not None:
-            # The process ended but never wrote ready or problem: it crashed.
+            if not self._own_child_running():  # no status and nothing running: it never got going
+                status = {**status, "state": "problem", "message": "The chapter stopped before it started.",
+                          "retryable": True, "detail": f"see runs/{self.run}/run.log"}
+        elif status.get("state") == "making" and not self._own_child_running() and not alive(status.get("pid")):
+            # The process ended without writing ready or problem (killed, or a crash).
             status = {**status, "state": "problem", "message": "The chapter stopped unexpectedly.",
-                      "detail": f"exit code {self.proc.returncode}; see runs/{self.run}/run.log"}
+                      "retryable": True, "detail": f"see runs/{self.run}/run.log"}
         return status
 
     def _latest(self) -> str | None:
         found = sorted(self.runs_dir.glob("*/status.json"), key=lambda p: p.stat().st_mtime)
+        found += sorted(self.runs_dir.glob("*/run.log"), key=lambda p: p.stat().st_mtime)  # started, no status yet
+        found.sort(key=lambda p: p.stat().st_mtime)
         return found[-1].parent.name if found else None
 
 
@@ -135,10 +171,10 @@ def create_app(pipeline: Pipeline | None = None) -> FastAPI:
         return pipe.status()
 
     @app.get("/api/events")
-    async def events() -> StreamingResponse:
+    async def events(request: Request) -> StreamingResponse:
         async def stream():
             last = None
-            while True:
+            while not await request.is_disconnected():
                 now = json.dumps(pipe.status(), ensure_ascii=False)
                 if now != last:
                     yield f"data: {now}\n\n"
@@ -169,4 +205,5 @@ if __name__ == "__main__":
     import uvicorn
 
     print(f"  open http://{HOST}:{PORT}")
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    # An open page holds an event stream; don't wait for it to close on Ctrl-C.
+    uvicorn.run(app, host=HOST, port=PORT, log_level="warning", timeout_graceful_shutdown=2)

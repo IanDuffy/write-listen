@@ -359,7 +359,7 @@ def call(
         kwargs["output_config"] = output_config
     extra = dict(log_extra or {})
 
-    fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher") else None
+    fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher", "guide") else None
     if fallbacks:
         kwargs["fallbacks"] = fallbacks
         kwargs["betas"] = [cfg["refusal_fallbacks_beta"]]
@@ -446,6 +446,9 @@ def call(
     if paused:
         print(summary + " (paused at its tool budget)")
         return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
+    if message.stop_reason == "tool_use":  # the caller runs its own tools and calls again
+        print(summary)
+        return Result(text=text.strip(), message=message, usage=total, content=all_content)
     if message.stop_reason == "refusal":
         details = getattr(message, "stop_details", None)
         raise StageError(f"{stage}: the model declined ({getattr(details, 'category', None)}). "

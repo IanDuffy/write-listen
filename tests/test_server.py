@@ -68,6 +68,28 @@ def test_the_same_seed_continues_its_run(client):
     assert started[-1] == ["new", name, "--unattended"]
 
 
+def test_a_dead_pid_after_a_restart_shows_as_a_problem_and_a_live_one_as_busy(client, tmp_path):
+    import os
+    c, pipe, started, runs = client
+    write_status(runs, "lesson", state="making", label="Researching", pid=2**22 + 12345)  # no such process
+    s = c.get("/api/status").json()
+    assert s["state"] == "problem" and s["retryable"] is True  # a fresh server: proc is None
+    assert c.post("/api/chapters/lesson/retry").status_code == 400  # no seed in this fake run
+    write_status(runs, "cli-run", state="making", label="Writing", pid=os.getpid())  # alive: started elsewhere
+    assert c.get("/api/status").json()["run"] == "cli-run"  # the server follows the newest run
+    assert c.get("/api/status").json()["state"] == "making"
+    assert c.post("/api/chapters", json={"seed": "Something new"}).status_code == 409
+
+
+def test_runs_start_in_their_own_session(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(server.subprocess, "Popen", lambda cmd, **kw: seen.update(kw) or FakeProc())
+    pipe = server.Pipeline(runs_dir=tmp_path)
+    (tmp_path / "r").mkdir()
+    pipe.start(["new", "r", "--unattended"], "r")
+    assert seen["start_new_session"] is True and (tmp_path / "r" / "run.log").exists()
+
+
 def test_a_crash_shows_as_a_problem(client):
     c, pipe, _, runs = client
     name = c.post("/api/chapters", json={"seed": "Concrete"}).json()["run"]
@@ -115,5 +137,8 @@ def test_status_helpers(run, cfg):
     s = new.write_status(run, cfg, "making", stage="angles", label="Choosing an angle")
     assert s["title"] == "Concrete that heals" and s["stages_done"] == 2 and s["started"]
     assert not list(run.root.glob("*.tmp"))  # written atomically
-    assert new.plain_problem("Researching", "this run's $20.00 cap") == \
-        "The chapter stopped while researching: it reached its spending limit."
+    assert new.plain_problem("Researching", "would pass this run's $20.00 cap (unattended.max_run_usd). Stopped.") == \
+        ("The chapter stopped while researching: continuing would pass its spending limit.", False)
+    assert new.plain_problem("Researching", "Stopped by the search cap: ...")[1] is False
+    assert new.plain_problem("Writing", "API error 500") == ("Something went wrong while writing.", True)
+    assert "+00:00" in s["updated"] or "-" in s["updated"][19:]  # an offset with a colon: Safari parses it

@@ -39,7 +39,8 @@ PATHS = {
     "source_dir": "00_source",
     "transcript_pdf": "00_source/transcript.pdf",
     "transcript": "00_source/transcript.txt",
-    "seed": "00_source/seed.md",  # a seed run (Phase 1): the listener's topic, in place of a transcript
+    "seed": "00_source/seed.md",
+    "notes": "00_source/notes.md",  # what the listener added in conversation after the run started (add_note)  # a seed run (Phase 1): the listener's topic, in place of a transcript
     "scout_sources": "01_scout.sources.json",
     "decisions": "decisions.md",
     "status": "status.json",  # an unattended run's progress, for the page (Phase 1 milestone 2)  # every decision an unattended run made on its own, for Ian afterwards
@@ -202,7 +203,12 @@ def listener_profile(cfg: dict) -> str:
 
 def seed_inputs(r: "Run", cfg: dict) -> dict:
     """Extra prompt values for a seed run's prompts: the seed, and the listener's profile."""
-    return {"seed": r.read("seed"), "profile": listener_profile(cfg)} if is_seed(r) else {}
+    if not is_seed(r):
+        return {}
+    seed = r.read("seed")
+    if r.path("notes").exists():  # notes the guide added while the run was going (add_note)
+        seed = seed.rstrip() + "\n\n" + r.path("notes").read_text(encoding="utf-8").strip() + "\n"
+    return {"seed": seed, "profile": listener_profile(cfg)}
 
 
 # --- prompts ------------------------------------------------------------------

@@ -108,7 +108,8 @@ def test_a_run_stopped_by_its_cap_continues_where_it_stopped(env, monkeypatch):
     assert "Stopped at research" in r.read("decisions")
     st = json.loads(r.path("status").read_text())
     assert st["state"] == "problem" and st["stage"] == "research"
-    assert st["message"] == "The chapter stopped while researching: it reached its spending limit."
+    assert st["message"] == "The chapter stopped while researching: continuing would pass its spending limit."
+    assert st["retryable"] is False and st["pid"]
     scouts = resp.scout_calls
     assert cli.main(["new", "lesson", "--unattended", "--max-usd", "50"]) == 0
     assert resp.scout_calls == scouts and r.path("chapter_mp3").exists()  # nothing paid for twice
@@ -226,3 +227,17 @@ def test_failed_scout_write_up_does_not_buy_the_search_again(env, monkeypatch):
     monkeypatch.setattr(llm, "_client", FakeAnthropic(resp))
     assert cli.main(["scout", "lesson"]) == 0
     assert resp.scout_calls == 1 and r.path("map").exists() and not (r.root / "01_scout.pending.json").exists()
+
+
+def test_ctrl_c_mid_stage_still_writes_a_problem_status(env, monkeypatch):
+    runs, resp, _ = env
+    from stages import scout
+
+    def interrupted(r, cfg):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(new, "STEPS", [("scout", "map", interrupted, "Looking into it")] + new.STEPS[1:])
+    assert cli.main(["new", "lesson", "--seed", TOPIC, "--unattended"]) == 130
+    st = json.loads(Run.open("lesson", runs_dir=runs).path("status").read_text())
+    assert st["state"] == "problem" and st["retryable"] is True
+    assert st["message"] == "The chapter was interrupted while looking into it."
