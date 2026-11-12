@@ -1,9 +1,9 @@
 """Stage 0: transcript PDF (or text) -> 00_source/transcript.txt
 
-Extracts text and strips what a web page printed to PDF carries along: page
-headers and footers, URLs, site chrome and related-article lists. Every line
-removed is written to 00_source/removed_lines.txt so Ian can check nothing
-real was cut.
+Extracts text, repairs ligature glyphs, and strips what a web page printed to
+PDF carries along: page headers and footers, URLs, site chrome and
+related-article lists. Every line removed, and every glyph repair, is written
+to 00_source/removed_lines.txt so Ian can check nothing real was cut.
 """
 
 from __future__ import annotations
@@ -25,7 +25,30 @@ CHROME_LINES = {
     "listen and subscribe", "listen and subscribe here", "advertisement", "play",
     "photo illustration", "illustration", "the atlantic", "close", "menu", "search", "popular",
     "latest", "newsletters", "sponsor content", "skip to content", "transcript",
+    "discuss", "view discussion", "view comments", "comments", "follow", "sign in subscribe",
 }
+
+# Site chrome that carries a count, a promo or a credit, so it never matches a fixed line.
+# Each pattern matches the whole shape of the line, so a wrapped line of dialogue that
+# mentions Spotify, a subscription or the Atlantic Ocean is never mistaken for chrome.
+_PLATFORM = r"(Apple Podcasts|Spotify|YouTube|Overcast|Pocket Casts|Amazon Music|iHeartRadio)"
+CHROME_PATTERNS = [
+    re.compile(r"^(share|discuss|comments?|save)\s+\d+$", re.I),                 # "SHARE 66"
+    # "Subscribe here:  Apple Podcasts | Spotify | YouTube": capitalized verb, two or more platforms.
+    re.compile(rf"^(Listen|Subscribe|Follow)\b[^.!?]{{0,40}}:\s*{_PLATFORM}(\s*\|\s*{_PLATFORM})+\s*\|?$"),
+    # "Give an Atlantic subscription, plus a free tote.*": the offer, or a footnote asterisk, ends it.
+    re.compile(r"\b(give|gift)\b.{0,60}\bsubscription\b.{0,40}(\bplus a free\b[^.!?]*[.!?]?\*?|\*)$", re.I),
+    # Photo credit: the brackets hold only the credit, e.g. "(The Atlantic)" or "(Getty / AP)".
+    re.compile(r"^[^:()]{1,80}\((The Atlantic|Getty Images|Getty|AP|Reuters|Alamy|Shutterstock)"
+               r"(\s*/\s*[A-Z][\w .]{0,30})*\)$"),
+]
+# Buttons printed after the dateline: "NOVEMBER 8, 2026 DISCUSS SAVE" keeps only the date.
+UI_SUFFIX = re.compile(r"(\s+(DISCUSS|SAVE|SHARE|LISTEN|COMMENTS?))+$")
+
+# Ligature characters that have Unicode code points: write them out as letters.
+LIGATURES = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
+             "ﬅ": "st", "ﬆ": "st"}
+PUA = re.compile(r"[-]")
 
 # A heading that starts a trailing block of related links. Everything from the
 # first such heading in the final 15% of the document (at least its last 60
@@ -44,6 +67,24 @@ URL = re.compile(r"(https?://|www\.)\S+", re.I)
 SPEAKER = re.compile(r"^[A-Z][A-Za-z.'\- ]{1,40}:\s")
 
 
+def is_chrome(line: str) -> bool:
+    """A UI label (capitalized; a wrapped 'listen.' is dialogue), share count, promo or photo credit.
+
+    No speaker-turn exemption: chrome like 'Subscribe here: Apple Podcasts' looks like 'Name: ...'.
+    The patterns are narrow enough not to match a line of dialogue.
+    """
+    # Only a trailing colon is stripped: a UI label never ends in a period, but a wrapped
+    # sentence can ("...a staff writer at" / "The Atlantic.").
+    if line[:1].isupper() and line.lower().rstrip(":") in CHROME_LINES:
+        return True
+    # A platform list on a line of its own, or wrapped ("Apple Podcasts | Spotify |"): only
+    # platform names, joined by at least one pipe.
+    parts = [p.strip() for p in line.split("|")]
+    if "|" in line and any(parts) and all(re.fullmatch(_PLATFORM, p) for p in parts if p):
+        return True
+    return len(line) < 100 and any(p.search(line) for p in CHROME_PATTERNS)
+
+
 def is_tail_heading(line: str, prev: str) -> bool:
     return bool(
         line and len(line) < 60 and line[0].isupper() and TAIL_MARKERS.match(line)
@@ -51,6 +92,73 @@ def is_tail_heading(line: str, prev: str) -> bool:
         and not re.search(r"[.,;:!?]$", line)
         and (not prev or re.search(r"[.!?\"'”’)]$", prev))
     )
+
+
+# Words a lone 'Th' glyph is trusted to start when there is too little evidence to judge.
+COMMON_TH = {"the", "that", "this", "these", "those", "there", "their", "they", "them", "then",
+             "than", "thank", "thanks", "think", "thing", "things", "though", "through", "thus"}
+
+
+def repair_glyphs(text: str) -> tuple[str, list[str]]:
+    """Return (text, notes). Writes out ligature characters and restores 'Th' ligatures.
+
+    Web fonts (The Atlantic's among them) draw the capital 'Th' ligature from a
+    private-use code point, because Unicode has none, so extraction yields an
+    invisible character and 'These' reads 'ese'. A code point counts as 'Th' when
+    most of its uses start a word, and most of those form a word ('th' + the
+    letters after) that also appears spelled out in the text; then each use followed
+    by a lowercase letter becomes 'Th' (inside a word it is listed for checking).
+    With fewer than 3 word-initial uses there is too little to judge the code point,
+    so each word-initial use is restored only if it forms a common (COMMON_TH) or
+    spelled-out word, and each is listed for checking. Every other use, and every
+    use of an unrecognized code point (icon fonts, 'ft' or 'fl' ligatures), is
+    dropped and listed. Nothing is changed silently.
+    """
+    notes: list[str] = []
+    n_lig = sum(text.count(k) for k in LIGATURES)
+    for k, v in LIGATURES.items():
+        text = text.replace(k, v)
+    if n_lig:
+        notes.append(f"[glyph] {n_lig} ligature characters (ff, fi, ffi...) written out as letters")
+
+    vocab = {w for w in re.findall(r"(?<![-])\b[^\W\d_]+", text) if w[0].islower()}
+    letter = re.compile(r"[^\W\d_]")
+
+    def ctx(pos: int) -> str:
+        return "..." + PUA.sub("<?>", text[max(0, pos - 25):pos + 25]).replace("\n", " ") + "..."
+
+    for ch in sorted(set(PUA.findall(text))):
+        code = f"U+{ord(ch):04X}"
+        uses = list(re.finditer(re.escape(ch) + r"([^\W\d_]*)", text))
+        lower = [m for m in uses if m.group(1)[:1].islower()]
+        initial = [m for m in lower if m.start() == 0 or not letter.match(text[m.start() - 1])]
+        known = [m for m in initial if f"th{m.group(1).lower()}" in vocab]
+        few = len(initial) < 3
+        if few:
+            # Too little to judge the code point: restore each word-initial use on its own when
+            # it forms a common or spelled-out word, and list every one for checking.
+            restore = {m.start() for m in initial
+                       if f"th{m.group(1).lower()}" in COMMON_TH or f"th{m.group(1).lower()}" in vocab}
+        else:
+            is_th = len(initial) >= 0.5 * len(uses) and len(known) >= 0.6 * len(initial)
+            restore = {m.start() for m in lower} if is_th else set()
+        dropped = [m for m in uses if m.start() not in restore]
+        if restore:
+            notes.append(f"[glyph] {code} restored as 'Th' ({len(restore)} times; {len(known)} of "
+                         f"{len(initial)} word-initial uses form words spelled out elsewhere)")
+            notes.extend(f"[glyph] {code} restored as 'Th' on little evidence, check: {ctx(m.start())}"
+                         for m in initial if few and m.start() in restore)
+            notes.extend(f"[glyph] {code} restored as 'Th' inside a word, check: {ctx(m.start())}"
+                         for m in lower if m not in initial and m.start() in restore)
+            label = f"[glyph] {code} dropped, check:"
+        else:
+            notes.append(f"[glyph] {code} unrecognized, dropped ({len(uses)} times):")
+            label = f"[glyph] {code} dropped:"
+        notes.extend(f"{label} {ctx(m.start())}" for m in dropped[:10])
+        if len(dropped) > 10:
+            notes.append(f"[glyph] {code} dropped {len(dropped) - 10} more times")
+        text = re.sub(re.escape(ch), lambda m: "Th" if m.start() in restore else "", text)
+    return text, notes
 
 
 def extract_pdf_text(pdf: Path) -> list[str]:
@@ -99,8 +207,8 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
                 removed.extend(f"[trailing related block] {ln}" for ln in lines[i:] if ln)
                 lines = lines[:i]
                 break
-            if ln and ln not in repeated and ln.lower().rstrip(".:") not in CHROME_LINES \
-                    and not URL.search(ln):
+            # Same chrome test as the kept loop below: a wrapped "follow." is dialogue in both.
+            if ln and ln not in repeated and not is_chrome(ln) and not URL.search(ln):
                 prev = ln
 
     kept: list[str] = []
@@ -117,12 +225,15 @@ def clean(pages: list[str]) -> tuple[str, list[str]]:
             reason = "page counter"
         elif URL.fullmatch(line) or (URL.search(line) and len(URL.sub("", line).strip()) < 15):
             reason = "url"
-        elif line[:1].isupper() and line.lower().rstrip(".:") in CHROME_LINES:
-            reason = "site chrome"  # UI labels are capitalized; a wrapped "listen." is dialogue
+        elif is_chrome(line):
+            reason = "site chrome"
         if reason:
             removed.append(f"[{reason}] {line}")
-        else:
-            kept.append(URL.sub("", line).rstrip() if URL.search(line) else line)
+            continue
+        if line.isupper() and UI_SUFFIX.search(line):
+            removed.append(f"[site chrome] {UI_SUFFIX.search(line).group(0).strip()} (from: {line})")
+            line = UI_SUFFIX.sub("", line)
+        kept.append(URL.sub("", line).rstrip() if URL.search(line) else line)
 
     return reflow(kept), removed
 
@@ -199,12 +310,16 @@ def run(r: Run, cfg: dict, source: str | None = None) -> Path:
             "--source path/to/transcript.pdf"
         )
 
+    repaired, glyph_notes = repair_glyphs("\f".join(pages))
+    pages = repaired.split("\f")
     text, removed = clean(pages)
     out.write_text(text, encoding="utf-8")
-    (src_dir / "removed_lines.txt").write_text("\n".join(removed) + "\n", encoding="utf-8")
+    (src_dir / "removed_lines.txt").write_text("\n".join(glyph_notes + removed) + "\n", encoding="utf-8")
     words = len(text.split())
     print(f"  {len(pages)} pages -> {words:,} words, {len(removed)} lines removed "
           f"(see 00_source/removed_lines.txt)")
+    for note in glyph_notes:
+        print(f"  {note}")
     r.log({"stage": "ingest", "provider": "none", "pages": len(pages), "words": words,
            "removed_lines": len(removed), "cost_usd": 0})
     return out
