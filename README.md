@@ -113,7 +113,7 @@ Research is aimed by the chosen angle, not by general reading. The spec is
    `ledger.json` is the source of truth; `ledger.md` is a table rendered from
    it by every stage that touches it. Ian edits the JSON. Row ids follow rank,
    so `ledger --force` (a new ledger) moves any old `04_research/` aside.
-2. **One agent per row (04, Opus 5.5 with web search and fetch).** Budgets
+2. **One agent per row (04, Sonnet 5.5 with web search and fetch; `models.researcher`).** Budgets
    by rank and type: ranks 1-3 get 8 searches and 4 fetches, lower ranks 4 and
    2, covered rows a verify-only agent with 2 and 1. All research agents
    together, follow-ups included, stay under 40 searches: the stage asks before
@@ -133,17 +133,17 @@ Research is aimed by the chosen angle, not by general reading. The spec is
    entries `D01`, `D02`, ... into `04_dossier.md`, in rank order, keeping each
    entry's row, kind and tier. Exact duplicates across agents become one entry
    tagged with both rows. No model rewrites an entry.
-4. **Ledger update (04b, Opus).** For each row: `filled` (answered at the tier
+4. **Ledger update (04b, Sonnet 5.5, batched).** For each row: `filled` (answered at the tier
    needed, with tellable material), `partial` or `open`, the dossier entries
    that serve it, and the best tier found. Code checks every `filled` against
-   the dossier itself. Each open or partial row gets one follow-up agent (4
+   the dossier itself. Each open or partial row ranked 1-3 (`research.followup_max_rank`) gets one follow-up agent (4
    searches, 2 fetches) with its gap stated; the dossier is rebuilt and the
    rows are judged again. Whatever is still open is flagged in `ledger.md` for
    Ian, under the cross-row connections the agents found.
 5. **Brief (05)** states the through-line first and assigns every row to a
    segment (`Ledger: L01`), with the entries it should use (`Dossier: D03,
    D07`). Facts the verify agents corrected are listed by code at the end.
-6. **Coverage (07b, Opus, fresh context)** checks the assembled draft against
+6. **Coverage (07b, Sonnet 5.5, batched, fresh context)** checks the assembled draft against
    the ledger: each row `covered`, `thin`, `missing` or `repeated`, the
    segments it is in, and a note for Ian. It also reports drift (ideas that
    map to no row), whether the through-line is audible, and quotes not backed

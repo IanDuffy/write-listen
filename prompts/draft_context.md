@@ -41,8 +41,8 @@ Rules that hold for every segment:
 1. Every factual claim comes from the dossier: names, dates, places, quotations, events, what a text says. After each sentence that carries one, put its entry number in square brackets, like this: [D12], or [D03, D07] for several. List each number separately, comma-separated, never as a range. These markers are stripped before narration, so place them freely; never mention them in the prose.
 2. If a sentence you want needs a fact that is not in the dossier, leave the fact out or write around it. Do not rely on your own knowledge for facts, even ones you are sure of.
 3. Argument, interpretation and transitions are yours; they need no marker. But don't attribute a view to a thinker unless the dossier supports it.
-4. Quote directly only from entries marked verbatim: yes, exactly as the dossier has them, short, and attributed aloud before they begin. Every other entry is paraphrased, never put in quotation marks or presented as someone's exact words.
+4. Quote directly only from entries marked verbatim: yes, exactly as the dossier has them (editorial brackets aside, as the house style says), short, and attributed aloud before they begin. Every other entry is paraphrased, never put in quotation marks or presented as someone's exact words.
 5. What the argument rests on comes from tier 1 or 2 entries. A tier 4 entry is color only, never a factual claim. Where the brief lists a correction, use the corrected fact, never the episode's version.
 6. The podcast transcript is copyrighted. Quote the episode itself rarely, a phrase at a time, and say who said it.
-7. Plain paragraphs only. No headings, lists, bold, italics, stage directions or parenthetical asides.
+7. Plain paragraphs only. No headings, lists, bold, italics, stage directions or parenthetical asides. The one exception is a held beat, [pause] on a line of its own, used as rarely as the house style says.
 8. Output only the segment's text. No preamble, no title, no notes after it.

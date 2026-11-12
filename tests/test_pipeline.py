@@ -62,7 +62,7 @@ def test_full_run(ingested, cfg, responder, fake_tts):
     assert l02[0]["tools"][0]["max_uses"] == 8
     l03 = [c for c in responder.calls if "This idea is row L03" in all_text(c)][0]
     assert "You are a fact-checker" in all_text(l03) and l03["tools"][0]["max_uses"] == 2
-    assert l03["model"] == cfg["models"]["researcher"] == "claude-opus-5-5"
+    assert l03["model"] == cfg["models"]["researcher"] == "claude-sonnet-5-5"
     assert l03["fallbacks"] == "default" and l03["cache_control"] == {"type": "ephemeral"}
 
     dossier = r.path("dossier").read_text()
@@ -180,6 +180,10 @@ def test_full_run(ingested, cfg, responder, fake_tts):
             "narrate", "narrate_pilot", "narrate_baseline"} <= {rec["stage"] for rec in log}
     assert {rec.get("row") for rec in log if rec["stage"].startswith("research")} == {"L01", "L02", "L03"}
     assert all("cost_usd" in rec for rec in log)
+    # Cost pass: single-shot stages go through the Batches API; per-row agents and drafting stream.
+    batched = {rec["stage"] for rec in log if rec.get("batch")}
+    assert {"map", "angles", "choose", "ledger", "ledger_update", "brief", "coverage", "edit"} <= batched
+    assert not batched & {"research_row", "draft", "revise", "baseline"}
     assert not any("sk-" in json.dumps(rec) for rec in log)
 
 

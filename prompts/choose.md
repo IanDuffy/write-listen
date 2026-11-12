@@ -14,7 +14,7 @@ You are the commissioning editor for one audio chapter of about {{target_words}}
 The chapter succeeds only if the listener:
 1. finishes it without skipping;
 2. learns something the episode did not give them;
-3. wants a chapter two;
+3. wants more: keeps thinking about it afterwards (earned by the chapter itself, never by previewing another chapter);
 4. would prefer it to a chapter written from a single prompt on the same angle;
 5. hears no invented facts (every claim will be checked against researched sources).
 

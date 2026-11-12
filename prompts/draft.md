@@ -26,4 +26,4 @@ Length: about {{target_words}} words. Stay within 10% of that.
 {{first_or_later}}
 {{last}}
 
-Before you finish, check: every factual sentence has its [Dn] marker; every direct quote comes from an entry marked verbatim: yes; no sentence repeats something an earlier segment already said; the segment ends on the hand-off the brief describes.
+Before you finish, check: every factual sentence has its [Dn] marker; every direct quote comes from an entry marked verbatim: yes; no sentence repeats something an earlier segment already said; the segment ends on the hand-off the brief describes (the last segment ends on the closing line, never on another chapter).

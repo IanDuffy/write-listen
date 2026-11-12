@@ -11,7 +11,8 @@
    source's domain allows, and not at all if it cites only URLs no agent
    retrieved. Otherwise the row becomes partial, and the reason is added to its
    gap. dossier_refs always include the row's own entries.
-3. Follow-up round. Each open or partial row gets one more agent, with its gap
+3. Follow-up round. Each open or partial row ranked within research.followup_max_rank
+   (null: every row) gets one more agent, with its gap
    stated (research.budgets.followup: 4 searches, 2 fetches), at most once per
    row. The dossier is rebuilt with the new entries and step 1 runs again.
 4. Rows still open or partial are flagged in ledger.md for Ian.
@@ -144,11 +145,15 @@ def _followup_job(r: Run, row: dict) -> tuple[dict, dict]:
                  "start": start}
 
 
-def _record(led: dict, rounds: list[str], ran_now: list[str]) -> str:
+def _record(led: dict, rounds: list[str], ran_now: list[str], skipped: list[str] = (),
+            max_rank: int | None = None) -> str:
     lines = ["# Ledger update", "", "Stage 04b. The full ledger is in ledger.md.", ""]
     lines += rounds
     done = [r["id"] + ("" if r["id"] in ran_now else " (an earlier run)") for r in ledger.active(led) if r["followup"]]
-    lines += ["", "Follow-ups: " + (", ".join(done) if done else "none needed"), ""]
+    capped = (f"none for {', '.join(skipped)} (ranked below {max_rank}, research.followup_max_rank)"
+              if skipped else "")
+    shown = "; ".join(x for x in (", ".join(done), capped) if x) or "none needed"
+    lines += ["", "Follow-ups: " + shown, ""]
     still = [r for r in ledger.active(led) if r["status"] in ("partial", "open")]
     lines += ["Still open (for Ian): " + ("; ".join(f"{r['id']} {r['status']}: {r['gap']}" for r in still)
                                          if still else "none")]
@@ -187,8 +192,7 @@ def run(r: Run, cfg: dict):
                          "would be lost. Put them in 04_research/Lnn.md and run research --force, or run "
                          "ledger-update --force to go ahead.")
     seen = research.gather(r, led)["seen"]["urls"]
-    judge_est = 2 * llm.estimate_call(cfg, cfg["models"]["writer"], llm.estimate_tokens(dossier) + 3000,
-                                      cfg["stages"]["ledger_update"]["expected_output_tokens"])
+    judge_est = 2 * llm.estimate_stage(cfg, "ledger_update", llm.estimate_tokens(dossier) + 3000)
     llm.guard(r, cfg, "ledger update (two judge calls)", judge_est)
 
     apply(led, judge(r, cfg, led, dossier, 1), dossier, cfg, seen)
@@ -196,8 +200,17 @@ def run(r: Run, cfg: dict):
     rounds = [_statuses(led, 1)]
     print("  " + rounds[0])
 
+    # research.followup_max_rank: only rows ranked this high get a follow-up (null: every row).
+    # On beauty-scarry, 4 of 5 follow-ups still ended partial, for $3.74 of $17.74.
+    max_rank = cfg["research"].get("followup_max_rank")
     need = [row for row in ledger.active(led) if row["status"] in ("partial", "open")
-            and not research.row_paths(r, row["id"], followup=True)[0].exists()]
+            and not research.row_paths(r, row["id"], followup=True)[0].exists()
+            and (max_rank is None or row["rank"] <= max_rank)]
+    skipped = [row["id"] for row in ledger.active(led) if row["status"] in ("partial", "open")
+               and not research.row_paths(r, row["id"], followup=True)[0].exists()
+               and max_rank is not None and row["rank"] > max_rank]
+    if skipped:
+        print(f"  No follow-up for {', '.join(skipped)}: ranked below {max_rank} (research.followup_max_rank)")
     if need:
         jobs = [_followup_job(r, row) for row in need]
         s = cfg["research"]["budgets"]["followup"]["searches"]
@@ -218,7 +231,7 @@ def run(r: Run, cfg: dict):
     for row in led["rows"]:
         row["followup"] = research.row_paths(r, row["id"], followup=True)[0].exists()
     ledger.save(r, led)
-    r.path("ledger_update").write_text(_record(led, rounds, [row["id"] for row in need]), encoding="utf-8")
+    r.path("ledger_update").write_text(_record(led, rounds, [row["id"] for row in need], skipped, max_rank), encoding="utf-8")
     still = [row["id"] for row in ledger.active(led) if row["status"] in ("partial", "open")]
     if still:
         print(f"  Still open or partial, flagged in ledger.md for Ian: {', '.join(still)}")

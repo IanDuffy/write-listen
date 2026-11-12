@@ -3,8 +3,8 @@
 
 models:
   writer: claude-opus-5-5     # map, angles, ledger, ledger update, brief, draft, coverage, edit, revise, baseline
-  researcher: claude-opus-5-5 # one research agent per ledger row (the add-on asks for Opus 5.5;
-                              # claude-sonnet-5-5 would halve these agents' token cost)
+  researcher: claude-sonnet-5-5 # one research agent per ledger row. beauty-scarry ran them on Opus 5.5
+                                # ($8.74 of $17.74); Sonnet 5.5 is half the rate (cost pass, 2026-11-11)
   cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
 
 # On a safety-classifier decline, the API re-runs the same request on a fallback
@@ -19,24 +19,30 @@ cost_guard_usd: 5.00
 # Per-stage request settings. max_tokens covers thinking plus text; every call
 # streams, so large values are safe. Effort: low | medium | high | xhigh | max.
 # expected_* feed the cost guard's estimate only.
+# model: overrides the role's model for that stage.
+# batch: true sends the stage through the Message Batches API at half price. Only
+# for single requests without tools; slower (usually minutes, up to the timeout in
+# `batch:` below, then it streams instead) and without refusal fallbacks (a refused
+# batch request is re-sent streamed, with them). draft and revise make one call per
+# segment in sequence, so batching them would multiply the wait; they stream.
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   # beauty-scarry, 2026-11-11: map hit 32000 (thinking + ~6,400 words of map) and angles used
   # 17,838 (over its old 16000) before finishing, so stages that write a long document get
   # 64000 (Opus 5.5 allows 128000). Billing is per token used; the guard uses expected_*.
-  map:      {max_tokens: 64000, effort: high, expected_output_tokens: 40000}
-  angles:   {max_tokens: 32000, effort: high, expected_output_tokens: 18000}
-  choose:   {max_tokens: 32000, effort: high, expected_output_tokens: 8000}
-  ledger:   {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
+  map:      {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 40000}
+  angles:   {max_tokens: 32000, effort: high, batch: true, expected_output_tokens: 18000}
+  choose:   {max_tokens: 32000, effort: high, batch: true, expected_output_tokens: 8000}
+  ledger:   {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 8000}
   research_row:      {max_tokens: 64000, effort: high, expected_output_tokens: 16000, max_continuations: 6}
   research_followup: {max_tokens: 64000, effort: high, expected_output_tokens: 12000, max_continuations: 6}
   research_writeup:  {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
-  ledger_update:     {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
-  brief:    {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
+  ledger_update:     {max_tokens: 64000, effort: high, model: claude-sonnet-5-5, batch: true, expected_output_tokens: 8000}
+  brief:    {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 8000}
   draft:    {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
-  coverage: {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
-  edit:     {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
+  coverage: {max_tokens: 64000, effort: high, model: claude-sonnet-5-5, batch: true, expected_output_tokens: 8000}
+  edit:     {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 12000}
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
 
@@ -60,6 +66,8 @@ research:
     rest:     {searches: 4, fetches: 2}   # deep-dive or missing, rank 4 and below
     covered:  {searches: 2, fetches: 1}   # verify-only agent
     followup: {searches: 4, fetches: 2}   # the one follow-up round in stage 04b
+  followup_max_rank: 3        # only rows ranked 1-3 get a follow-up (null: all). beauty-scarry: 4 of 5
+                              # follow-ups still ended partial, $3.74 for little
   max_searches: 40            # all research agents together, follow-ups included; asks before going past
   parallel_agents: 4          # agents running at once
   max_usd: 25.00              # hard stop on research spend (agents and write-ups) in one invocation
@@ -105,6 +113,11 @@ pricing:
   cache_write_5m_multiplier: 1.25
   cache_write_1h_multiplier: 2.0
   web_search_per_1000: 10.00
+  batch_multiplier: 0.5       # Message Batches API: half of every token rate
+
+batch:
+  poll_seconds: 20
+  timeout_minutes: 90         # then cancel and send the request streamed
 
 narration:
   provider: elevenlabs
@@ -130,6 +143,8 @@ narration:
   max_chars_per_request: 4500 # chunk target; kept well under the model limit
   chunk_pause_ms: 450         # between chunks inside a segment
   segment_pause_ms: 1600      # at segment breaks
+  beat_pause_ms: 1100         # a held beat, where the script says [pause] (eleven_v4 has no break tag,
+                              # and its bracket tags can be read aloud, so the silence is inserted here)
   mp3_bitrate: 128k
   # Reported API rates: about $0.08-0.10 per 1,000 characters for eleven_v4.
   # The higher figure is used so the cost guard errs high. Confirm on elevenlabs.io.

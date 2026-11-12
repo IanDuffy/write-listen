@@ -72,10 +72,10 @@ The one claim the chapter argues, in one or two sentences, and what the listener
 A curious non-specialist. They may have heard the episode. They expect the primary texts to be over their head; the chapter should prove otherwise by reading those texts with them, slowly. Add anything specific to this angle: what they probably already think, and what will surprise them.
 
 ## Opening hook
-The first thirty seconds, described concretely: the scene, image or question that opens the chapter, and the dossier entries it uses.
+The first minute, described concretely: the scene, image or question that opens the chapter, with the dossier entries it uses, and how the listener then learns what they are listening to (the conversation this grows from, who was talking and who they are, and the question the chapter will chase). If the dossier has a "### Episode:" section, its entry has the show, the host and the guest: list it on Segment 1's Dossier line. If it has none, take them from the angle. Shape it to this material, not to a formula.
 
 ## Closing line
-The last sentence or two, written out, and what it should leave the listener with.
+The last sentence or two, written out, and what it should leave the listener with: an image or open question that keeps working after the audio stops. The chapter stands alone, so it never previews a further chapter.
 
 ## Style guide for the ear
 What this chapter adds to the house style guide: its recurring images, the names that need introducing and how, and any tone notes. Don't copy out the house rules: the writer sees the house guide alongside this brief. Where your section disagrees with the house guide, yours wins, so only write a rule that differs if you mean to override it.
@@ -90,7 +90,7 @@ Three or four sentences on how the segments build: where the turn comes, and whe
 - Dossier: D03, D07, D12 (the entries the segment must use; each number listed separately on this one line, no ranges)
 - Beats: the moves of the segment in order, as short sentences.
 - Opens with: how it picks up from the previous segment (for segment 1, the hook).
-- Hands off to: the question or image that pulls the listener into the next segment.
+- Hands off to: the question or image that pulls the listener into the next segment (for the last segment, the closing line; the chapter never points to another chapter).
 
 ## Segment 2: a short title
 ...and so on, through the last segment.

@@ -43,5 +43,5 @@ Rules:
 1. Apply every note for the segment you are given, and every global note that touches it. Where a note conflicts with the brief, follow the note.
 2. Change nothing else. If the notes say nothing about a passage, keep it word for word.
 3. Every factual sentence keeps or gains a [Dn] marker pointing to the dossier entry that supports it, written [D12] or [D03, D07], never as a range. A factual claim you cannot tie to an entry is cut. Direct quotes come only from entries marked verbatim: yes.
-4. Plain paragraphs only: no headings, lists or asides. Do not include the <!-- segNN --> marker.
+4. Plain paragraphs only: no headings, lists or asides. Do not include the <!-- segNN --> marker. Keep each [pause] line where it is unless a note adds, moves or cuts one; write no other bracketed directions.
 5. Output only the revised segment's text, with no preamble and no notes.

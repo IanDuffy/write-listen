@@ -308,7 +308,7 @@ def agent_estimate(cfg: dict, searches: int, fetches: int, stage: str = "researc
     and the tool loop re-reads it every iteration (mostly from cache): x1.5, priced uncached."""
     page = cfg["research"]["max_fetch_tokens"]
     input_tokens = int((30_000 + searches * 8_000 + fetches * page) * 1.5)
-    return llm.estimate_call(cfg, cfg["models"]["researcher"], input_tokens,
+    return llm.estimate_call(cfg, llm.stage_model(cfg, stage, "researcher"), input_tokens,
                              cfg["stages"][stage]["expected_output_tokens"], searches)
 
 
@@ -364,6 +364,9 @@ def _norm_text(s: str) -> str:
     """Lowercase words for matching quotes against pages: punctuation, underscores (emphasis),
     footnote numbers glued to a word ('beautiful12') and superscripts are dropped."""
     s = s.lower().translate(SUPERSCRIPTS).replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    # Editorial brackets: '[T]he' and 'want[ed]' match 'The' and 'wanted'; '[sic]' is dropped. The
+    # house style tells the writer to quote around them, so both sides of a check normalize alike.
+    s = re.sub(r"\[([^\W\d_]+)\]", lambda m: "" if m.group(1) == "sic" else m.group(1), s)
     s = re.sub(r"(?<!\w)'|'(?!\w)", " ", s)  # a quote mark, not an apostrophe inside a word
     s = re.sub(r"(?<=[^\W\d])\d+\b", "", s)  # a footnote number glued to a word ('love2', '_love_2')
     return " ".join(re.sub(r"[^\w']+|_", " ", s).split())
@@ -518,6 +521,19 @@ def check_entries(cfg: dict, entries: list[dict], seen: dict, transcript: str) -
     return out
 
 
+def episode_intro(r: Run) -> str:
+    """The episode's identity from 01_map.md: its title line and the first paragraph of
+    '## Episode in brief' (show, host, guest and who they are). Empty if there is no map."""
+    p = r.path("map")
+    if not p.exists():
+        return ""
+    text = p.read_text(encoding="utf-8")
+    title = re.search(r"^#\s+(?:Episode Map:\s*)?(.+)$", text, re.M)
+    brief = re.search(r"^##\s+Episode in brief\s*\n+(.+?)(?:\n\s*\n|\Z)", text, re.M | re.S)
+    parts = [f"The episode: {title.group(1).strip()}." if title else "", brief.group(1).strip() if brief else ""]
+    return " ".join(" ".join(p.split()) for p in parts if p)
+
+
 def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
     """Merge every active row's findings into the dossier text. Code only: same files in, same dossier out."""
     g = gather(r, led)
@@ -536,6 +552,11 @@ def build_dossier(r: Run, cfg: dict, led: dict, transcript: str = "") -> str:
         mine = [e for e in entries if e["row"] == row["id"]]
         lines += [f"{'[' + entry_id(e['d']) + ']'} {format_tags(e['tags'])} {e['body']}\n" for e in mine] or \
                  ["(no entries)\n"]
+    if intro := episode_intro(r):
+        lines += ["### Episode: the conversation this chapter grows from", "",
+                  "Added by code from 01_map.md, so the opening can say what the listener is hearing: "
+                  "the show, who was talking and who they are.", "",
+                  f"[{entry_id(max(e['d'] for e in entries) + 1)}] (claim, tier episode) {intro} Source: episode\n"]
     if g["not_found"]:
         lines += ["## Not found", ""] + [f"From {rid}:\n{text}\n" for rid, text in g["not_found"]]
     cited = sorted({u.rstrip(".,;:") for e in entries for u in URL_IN_TEXT.findall(e["body"])})

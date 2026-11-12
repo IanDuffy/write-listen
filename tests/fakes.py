@@ -236,10 +236,55 @@ class _Stream:
         return self.message
 
 
+class FakeBatches:
+    """The Message Batches API: each batch holds one request and ends at once.
+    `outcome(params)` may return a result type other than "succeeded" (e.g. "errored")."""
+
+    def __init__(self, responder):
+        self.responder = responder
+        self.created: list[dict] = []
+        self.cancelled: list[str] = []
+        self.outcome = lambda params: "succeeded"
+        self.status_on_create = "ended"
+        self.retrieve_hook = None      # called with the batch id on each retrieve (may raise)
+        self.results_failures = 0      # results() raises a transport error this many times first
+        self._results: dict[str, NS] = {}
+
+    def create(self, *, requests):
+        assert len(requests) == 1
+        params = requests[0]["params"]
+        assert "fallbacks" not in params and "betas" not in params and "stream" not in params
+        bid = f"msgbatch_{len(self.created) + 1}"
+        self.created.append(params)
+        kind = self.outcome(params)
+        if kind == "succeeded":
+            result = NS(type="succeeded", message=self.responder(params))
+        else:
+            result = NS(type=kind, error=NS(error=NS(message="fake batch error")))
+        self._results[bid] = NS(custom_id=requests[0]["custom_id"], result=result)
+        return NS(id=bid, processing_status=self.status_on_create)
+
+    def retrieve(self, bid):
+        if self.retrieve_hook:
+            self.retrieve_hook(bid)
+        return NS(id=bid, processing_status="ended")
+
+    def results(self, bid):
+        if self.results_failures:
+            import httpx2
+            self.results_failures -= 1
+            raise httpx2.ReadError("connection dropped mid-body")
+        return iter([self._results[bid]])
+
+    def cancel(self, bid):
+        self.cancelled.append(bid)
+
+
 class FakeAnthropic:
     def __init__(self, responder):
         self.responder = responder
-        self.messages = NS(stream=lambda **kw: _Stream(responder(kw)))
+        self.batches = FakeBatches(responder)
+        self.messages = NS(stream=lambda **kw: _Stream(responder(kw)), batches=self.batches)
         self.beta = NS(messages=NS(stream=lambda **kw: _Stream(responder(kw))))
 
 

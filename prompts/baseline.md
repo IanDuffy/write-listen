@@ -39,4 +39,4 @@ Write in this house style:
 
 The episode transcript is copyrighted: quote it rarely, a phrase at a time. Don't state facts you have not checked.
 
-When you have finished researching, write the whole script inside <script> tags, as plain paragraphs and nothing else.
+When you have finished researching, write the whole script inside <script> tags, as plain paragraphs (with [pause] on a line of its own where the house style calls for a held beat) and nothing else.

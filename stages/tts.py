@@ -119,6 +119,25 @@ def split_sentences(paragraph: str) -> list[str]:
     return [s.strip() for s in marked.split("\n") if s.strip()]
 
 
+PAUSE = re.compile(r"\s*\[pause\]\s*", re.I)
+
+
+def split_beats(text: str) -> list[str]:
+    """Split spoken text at the script's [pause] marks. The pieces are synthesized
+    separately and joined with a held silence (narration.beat_pause_ms): eleven_v4
+    has no break tag, and its bracket tags are sometimes read aloud."""
+    return [p.strip() for p in PAUSE.split(text) if p.strip()]
+
+
+def speak_editorial_brackets(text: str) -> str:
+    """Make a verbatim quote's editorial brackets speakable: [T]he -> The, want[ed] ->
+    wanted, [...] -> an ellipsis, [sic] dropped. Any other bracket is left for the check."""
+    text = re.sub(r"\s*\[sic\]", "", text, flags=re.I)
+    text = re.sub(r"\[\s*(?:\.\s*){3}\]|\[…\]", "…", text)
+    return re.sub(r"(?<=\w)\[([A-Za-z]{1,12})\]|\[([A-Za-z]{1,12})\](?=\w)",
+                  lambda m: m.group(1) or m.group(2), text)
+
+
 def chunk_paragraphs(text: str, max_chars: int) -> list[str]:
     """Group paragraphs into chunks under max_chars, splitting only at paragraph
     breaks, or at sentence breaks for a paragraph that is too long on its own."""
@@ -252,13 +271,21 @@ def narrate_segments(r: Run, cfg: dict, segments: list[tuple[int, str]], out_mp3
         max_chars = live
 
     plan: list[tuple[int, str]] = []  # (segment, chunk text)
+    beats: set[int] = set()  # plan indexes that follow a [pause]
     for n, body in segments:
         clean = apply_pronunciations(spoken_text(body), ncfg.get("pronunciations") or {})
         if m := LEFTOVER_MARKER.search(clean):  # e.g. an unclosed '[D12': stop before paying to read it aloud
             raise StageError(f"Segment {n} still has a dossier marker after stripping, near "
                              f"{clean[max(0, m.start() - 40):m.start() + 20]!r}. Fix it in the script first.")
-        for c in chunk_paragraphs(clean, max_chars):
-            plan.append((n, c))
+        for j, piece in enumerate(split_beats(clean)):
+            piece = speak_editorial_brackets(piece)
+            if m := re.search(r"\[[^\]\n]{0,40}\]", piece):  # the voice would say it, or treat it as a tag
+                raise StageError(f"Segment {n} has a bracketed tag the narrator would read aloud: {m.group()!r}. "
+                                 "Only [pause] is understood; fix the script first.")
+            for k, c in enumerate(chunk_paragraphs(piece, max_chars)):
+                if j > 0 and k == 0:
+                    beats.add(len(plan))
+                plan.append((n, c))
     if not plan:
         raise StageError("No text to narrate.")
 
@@ -303,7 +330,12 @@ def narrate_segments(r: Run, cfg: dict, segments: list[tuple[int, str]], out_mp3
         prev_text = text
 
         if parts:
-            parts.append(ncfg["segment_pause_ms"] if plan[i - 1][0] != n else ncfg["chunk_pause_ms"])
+            if plan[i - 1][0] != n:
+                parts.append(ncfg["segment_pause_ms"])
+            elif i in beats:
+                parts.append(ncfg.get("beat_pause_ms", 1100))
+            else:
+                parts.append(ncfg["chunk_pause_ms"])
         parts.append(wav_path)
 
     join_to_mp3(parts, out_mp3, work, ncfg["mp3_bitrate"])

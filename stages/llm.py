@@ -6,7 +6,10 @@ with tokens and cost, and checked against the cost guard before it is sent.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -165,6 +168,24 @@ def estimate_call(cfg: dict, model: str, input_tokens: int, expected_output_toke
     )
 
 
+def stage_model(cfg: dict, stage: str, role: str = "writer") -> str:
+    """A stage's own `model:` in config.yaml wins over the role's model."""
+    return cfg["stages"].get(stage, {}).get("model") or cfg["models"][role]
+
+
+def batched(cfg: dict, stage: str, tools: list | None = None) -> bool:
+    """Stages marked `batch: true` go through the Message Batches API, unless they use tools."""
+    return bool(cfg["stages"].get(stage, {}).get("batch")) and not tools
+
+
+def estimate_stage(cfg: dict, stage: str, input_tokens: int, expected_output_tokens: int | None = None,
+                   role: str = "writer", searches: int = 0) -> float:
+    """estimate_call at the stage's model, at the batch rate if the stage is batched."""
+    out = expected_output_tokens or cfg["stages"][stage]["expected_output_tokens"]
+    est = estimate_call(cfg, stage_model(cfg, stage, role), input_tokens, out, searches)
+    return est * (cfg["pricing"]["batch_multiplier"] if batched(cfg, stage) else 1)
+
+
 # --- the call ---------------------------------------------------------------
 
 @dataclass
@@ -226,6 +247,122 @@ def _send_with_retries(run, stream_fn, kwargs, label, stage, model, show_tools, 
             raise StageError(f"{label}: Claude API error {status or '(connection)'}: "
                              f"{getattr(e, 'message', e)}. Earlier continuations cost ${total.cost_usd:.2f}.") from None
     raise AssertionError("unreachable")
+
+
+class _BatchFailed(Exception):
+    pass
+
+
+def _batch_retrieve(client, batch_id: str, poll: float, deadline: float):
+    """Retrieve a batch, riding out network drops and server errors (a laptop waking
+    from sleep mid-wait) until the deadline; the SDK's own retries cover only seconds."""
+    while True:
+        try:
+            return client.messages.batches.retrieve(batch_id)
+        except Exception as e:
+            if not _retryable(e) or time.monotonic() > deadline:
+                raise
+            time.sleep(poll)
+
+
+def _batch_results(client, batch_id: str, tries: int = 3) -> list:
+    """Read an ended batch's results. The body streams, so a dropped connection or a
+    truncated line can fail the read; re-reading costs nothing, so retry before giving up."""
+    import anthropic
+    import httpx2
+
+    for i in range(tries):
+        try:
+            return list(client.messages.batches.results(batch_id))
+        except (anthropic.AnthropicError, httpx2.TransportError, ValueError) as e:
+            if i == tries - 1:
+                raise _BatchFailed(f"results unreadable after {tries} tries: {e}") from None
+            time.sleep(5)
+    return []
+
+
+def _send_batch(run, cfg, client, kwargs, label, stage, model, extra):
+    """One request through the Message Batches API: half price, no streaming, no
+    refusal fallbacks. Returns (message, batch id), or (None, None) after logging
+    why, and the caller then sends the request the normal way. A refusal also comes
+    back as None, so the streamed retry gets the refusal fallbacks a batch can't use.
+    If the batch may still be running and can't be cancelled (the network is down),
+    it raises StageError instead, keeping the batch id so a re-run resumes it."""
+    import anthropic
+    import httpx2
+
+    bcfg = cfg.get("batch") or {}
+    timeout, poll = bcfg.get("timeout_minutes", 90) * 60, bcfg.get("poll_seconds", 20)
+    params = {k: v for k, v in kwargs.items() if k not in ("fallbacks", "betas")}
+    # The batch id is saved before the wait, so a run killed while waiting (a Bash
+    # timeout, Ctrl-C) resumes the same batch next time instead of paying for a second.
+    digest = hashlib.sha256(json.dumps(params, sort_keys=True, default=str).encode()).hexdigest()
+    marker = run.root / f"_batch_{re.sub(r'[^A-Za-z0-9.-]+', '_', label)}.json"
+    batch_id = None
+    deadline = time.monotonic() + timeout
+    try:
+        try:
+            saved = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else None
+        except ValueError:
+            saved = None  # a half-written marker: start afresh
+        if saved and saved.get("params_sha256") == digest:
+            batch_id = saved["batch_id"]  # known before the first call, so a failure can still cancel it
+            batch = _batch_retrieve(client, batch_id, poll, deadline)
+            print(f"  [{label}] resuming batch {batch_id} from an earlier, interrupted run", flush=True)
+        else:
+            if saved:  # the request changed since: the old batch's answer is no use
+                try:
+                    client.messages.batches.cancel(saved["batch_id"])
+                except Exception:
+                    pass
+            batch = client.messages.batches.create(requests=[{"custom_id": "r1", "params": params}])
+            batch_id = batch.id
+            marker.write_text(json.dumps({"batch_id": batch_id, "label": label, "params_sha256": digest}),
+                              encoding="utf-8")
+            print(f"  [{label}] sent as batch {batch_id} (half price; usually done in minutes)", flush=True)
+        while batch.processing_status != "ended":
+            if time.monotonic() > deadline:
+                raise _BatchFailed(f"not done after {timeout // 60} minutes")
+            time.sleep(poll)
+            batch = _batch_retrieve(client, batch_id, poll, deadline)
+        for res in _batch_results(client, batch_id):
+            kind = res.result.type
+            if kind != "succeeded":
+                err = getattr(getattr(getattr(res.result, "error", None), "error", None), "message", "")
+                raise _BatchFailed(f"{kind} {err}".strip())
+            message = res.result.message
+            if message.stop_reason == "refusal":
+                u = usage_and_cost(cfg, model, message)
+                run.log({"stage": stage, **extra, "label": label, "provider": "anthropic", "model": model,
+                         "batch": True, "request_id": batch_id, "stop_reason": "refusal",
+                         "output_tokens": u.output_tokens,
+                         "cost_usd": round(u.cost_usd * cfg["pricing"]["batch_multiplier"], 5)})
+                raise _BatchFailed("declined, and a batch can't use refusal fallbacks")
+            marker.unlink(missing_ok=True)
+            return message, batch_id
+        raise _BatchFailed("no result")
+    except (_BatchFailed, anthropic.AnthropicError, httpx2.TransportError) as e:
+        settled = isinstance(e, _BatchFailed) and "not done" not in str(e)  # the batch has ended
+        if batch_id and not settled:
+            if isinstance(e, anthropic.NotFoundError):
+                settled = True  # no such batch: nothing to pay for
+            else:
+                try:
+                    client.messages.batches.cancel(batch_id)  # don't pay twice
+                    settled = True
+                except Exception as ce:
+                    # A 4xx means the batch can't be cancelled (already ended or gone);
+                    # only a network or server error leaves its state unknown.
+                    settled = not _retryable(ce)
+        run.log({"stage": stage, **extra, "label": label, "provider": "anthropic", "model": model,
+                 "batch": True, "request_id": batch_id, "error": f"batch: {e}", "cost_usd": 0})
+        if batch_id and not settled:
+            # Streaming now could pay for the same request twice. Keep the marker: a re-run resumes it.
+            raise StageError(f"{label}: lost touch with batch {batch_id} ({e}), which may still be running. "
+                             "Re-run the stage to resume it.") from None
+        marker.unlink(missing_ok=True)
+        print(f"  [{label}] batch failed ({e}); sending it directly instead", flush=True)
+        return None, None
 
 
 def echo_after_fallback(content: list) -> list:
@@ -293,8 +430,11 @@ def call(
     """Send one request (plus any pause_turn continuations) and log it.
 
     `role` picks the model from config: "writer", "researcher" (the ledger
-    research agents) or "cheap". Stage settings (max_tokens, effort, max_continuations)
-    come from config unless overridden. `preapproved` skips the cost guard,
+    research agents) or "cheap"; a stage's own `model:` in config wins. Stage
+    settings (max_tokens, effort, max_continuations) come from config unless
+    overridden. A stage with `batch: true` and no tools goes through the Message
+    Batches API at half price (slower; falls back to streaming if the batch fails).
+    `preapproved` skips the cost guard,
     for stages that guard their whole budget up front (research runs agents in
     parallel threads, where a prompt for input would be lost). `before_request`
     is called before every request, continuations included, and may raise
@@ -308,17 +448,19 @@ def call(
     is then one JSON document. `log_extra` (e.g. {"row": "L01"}) goes into every
     log record of this call.
     """
-    model = cfg["models"][role]
+    model = stage_model(cfg, stage, role)
     st = cfg["stages"].get(stage, {})
     max_tokens = max_tokens or st.get("max_tokens", 16000)
     effort = effort or st.get("effort")
+    use_batch = batched(cfg, stage, tools)
+    rate = cfg["pricing"]["batch_multiplier"] if use_batch else 1
 
     prompt_tokens = estimate_tokens(str(system or "") + "".join(str(m["content"]) for m in messages))
     # Tool loops resend growing context, so a stage can declare a larger expected input.
     prompt_tokens = max(prompt_tokens, st.get("expected_input_tokens", 0))
-    est = estimate_call(cfg, model, prompt_tokens,
-                        expected_output_tokens or st.get("expected_output_tokens", max_tokens),
-                        expected_searches)
+    est = rate * estimate_call(cfg, model, prompt_tokens,
+                               expected_output_tokens or st.get("expected_output_tokens", max_tokens),
+                               expected_searches)
     if not preapproved:
         guard(run, cfg, f"{label or stage} ({model})", est)
 
@@ -365,11 +507,21 @@ def call(
         if before_request:
             before_request()
         t0 = time.monotonic()
-        message, request_id = _send_with_retries(run, stream_fn, kwargs, label or stage, stage, model,
-                                                 bool(tools), all_content, total, extra)
+        message = None
+        if use_batch:
+            message, request_id = _send_batch(run, cfg, client, kwargs, label or stage, stage, model, extra)
+        in_batch = message is not None
+        if not in_batch:
+            message, request_id = _send_with_retries(run, stream_fn, kwargs, label or stage, stage, model,
+                                                     bool(tools), all_content, total, extra)
         seconds = round(time.monotonic() - t0, 1)
 
         u = usage_and_cost(cfg, model, message)
+        if in_batch:
+            u.cost_usd *= cfg["pricing"]["batch_multiplier"]
+            extra_rec = {"batch": True}
+        else:
+            extra_rec = {}
         for f in ("input_tokens", "output_tokens", "cache_read", "cache_write_5m",
                   "cache_write_1h", "web_searches", "web_fetches", "cost_usd"):
             setattr(total, f, getattr(total, f) + getattr(u, f))
@@ -396,6 +548,7 @@ def call(
             "cost_usd": round(u.cost_usd, 5),
             "seconds": seconds,
             "continuation": attempt,
+            **extra_rec,
         })
 
         if message.stop_reason == "pause_turn":

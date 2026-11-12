@@ -23,13 +23,16 @@ success criteria, build doc § Goal).
 | 1. Skeleton | Done. `ping` and `smoketest` pass live (local Mac, keys in `.env`). |
 | 2. Voice test | Done. Ian picked Jane (`RILOU7YmBhvwJGDGjNmP`, ElevenLabs shared library, used straight from the library without adding it to the account); pronunciations approved. |
 | 3. Ingest, map, angles | Done for `beauty-scarry`; `choose` (the editor) picked Angle 1, the ladder. |
-| 4. Research, brief | Ledger done (7 rows); research onward running. |
+| 4. Research, brief | Done for `beauty-scarry` (7 rows; 4 still partial after follow-ups). |
 | 5. Pilot | Skipped: hands-off, so no pilot listening stop. |
 | 6. Draft rest, assemble, edit, revise | Built, with the 07b coverage check before edit. |
-| 7. Narrate, baseline, compare, report | Built. |
+| 7. Narrate, baseline, compare, report | Chapter narrated (42:51, $21.50 all in); Ian loved it. Baseline, compare and report not run yet (ElevenLabs characters). |
 
 The ledger add-on (branch `claude/script-research-focus-eqhyfe`) is merged
-(fast-forward). Offline tests pass (`.venv/bin/python -m pytest -q`): every
+(fast-forward). After the first chapter, a cost pass (below) and three style
+notes from Ian's listen: an opening that orients the listener, an ending that
+stands alone (no next-chapter plug), and a few held beats (`[pause]`). Neither
+has been tried on a live run yet. Offline tests pass (`.venv/bin/python -m pytest -q`): every
 stage end to end against fake Claude and ElevenLabs clients (`tests/fakes.py`)
 with real files and real ffmpeg.
 
@@ -129,10 +132,38 @@ real key), so locally it must be in `.env`.
   brief's own style section wins where they disagree (the brief is written for this chapter).
 - **Refusal fallbacks are on** (`refusal_fallbacks: default`, server-side
   fallback beta). The log records which model served each call.
-- **Cost.** `python cli.py estimate` forecasts about $28 upper end for a full
-  run: research about $8 for 7 rows, the follow-up round about $7 if every row
-  needed one, ElevenLabs about $8. That is against the doc's $12-17. Ian has
-  $250 in Claude credits.
+- **Cost.** `beauty-scarry` cost $17.74 of Claude ($8.74 of it research) and
+  $3.76 of ElevenLabs. The cost pass (2026-11-11, Ian: "similar result at a
+  lower cost") re-prices that run's tokens at $8.41 of Claude:
+  - the researcher on Sonnet 5.5 (`models.researcher`), half the rate;
+  - follow-ups only for rows ranked 1-3 (`research.followup_max_rank`): 4 of
+    the 5 follow-ups left their rows partial anyway;
+  - `batch: true` on single-shot stages (map, angles, choose, ledger,
+    ledger_update, brief, coverage, edit): the Message Batches API, half price,
+    slower, no refusal fallbacks (a refused or failed batch is re-sent
+    streamed); draft and revise stream, being one call per segment in sequence.
+    The batch id is saved to `runs/<run>/_batch_<label>.json` before the wait,
+    so a run killed while waiting (a Bash timeout) resumes that batch rather
+    than paying twice; network drops while waiting are ridden out, and if a
+    batch's state can't be confirmed the stage stops (re-run to resume)
+    rather than streaming a second copy. Quote checks treat editorial
+    brackets ([T]he, [sic]) as the plain words. A batched stage can take
+    minutes: run it detached;
+  - per-stage `model:`; ledger_update and coverage (judges backed by code
+    checks) on Sonnet 5.5. Drafting, editing and revising stay on Opus 5.5:
+    they are the chapter's voice.
+  Quality bar: the first chapter. Ian has $250 in Claude credits.
+- **Opening, ending, held beats** (Ian's listen, 2026-11-11). In the style
+  guide (so the baseline gets them too), the brief, draft, edit and revise
+  prompts. `eleven_v4` has no `<break>` tag and its bracket tags can be read
+  aloud, so `[pause]` on its own line splits narration there and inserts
+  `narration.beat_pause_ms` of silence. Editorial brackets in quotes ([T]he,
+  [...], [sic]) are made speakable; any other bracket in spoken text stops
+  narration before paying. The opening needs the show and the speakers, which
+  no research row covers, so `research.build_dossier` appends one code-built
+  `Source: episode` entry from the map's title and first paragraph, cited like
+  any other. The build doc's criterion "wants chapter two" is read as "wants
+  more" (`prompts/choose.md`): earned by the chapter, never by a plug.
 
 ## Rules (from Ian and the build doc)
 
@@ -161,7 +192,7 @@ real key), so locally it must be in `.env`.
 | dossier | `[D12] (L01, kind, tier N, ...) text. Source: URL` at line start inside `## Entries`; `Source: episode` for episode-only | `common.dossier_entries`, `entry_tags` |
 | ledger, ledger update, coverage | JSON per the `SCHEMA` in `ledger.py`, `ledger_update.py`, `coverage.py` | `common.parse_json` |
 | brief | `## Segment N: Title` with `Target words:`, `Ledger: L01, L03` and `Dossier: D03, D07` lines | `brief.parse_segments` |
-| script | `<!-- segNN -->` before each segment; `[Dn]` markers after sentences | `common.split_script_segments`, `spoken_text` |
+| script | `<!-- segNN -->` before each segment; `[Dn]` markers after sentences; `[pause]` for a held beat | `common.split_script_segments`, `spoken_text`, `tts.split_beats` |
 | edit notes | `## Global`, `## seg01` (or `## Segment 1`) sections | `revise.parse_notes` |
 | baseline | inside `<script>` tags | `baseline.run` |
 

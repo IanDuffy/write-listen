@@ -58,13 +58,16 @@ As a listener, look for:
 - Tone drift: lecturing, performed enthusiasm, hedging, or a shift in register between segments.
 - The ear: long sentences, lists, asides, or words a narrator would stumble on.
 - Whether it delivers the brief's through-line, thesis, hook and closing line.
+- The opening: within the first minute, does the listener know what they are listening to, who the voices are, and what question the chapter chases?
+- The ending: does it stand alone, closing on an image or open question? Cut any preview of another chapter, "where we go next" or sign-off.
+- Held beats: a [pause] belongs after a turn, a striking quote or a question left hanging. Add one where such a moment rushes past; cut any that crowd together, and any beyond about eight in the chapter. Tag these [PACING].
 - The coverage check: a ledger idea marked thin needs its concrete material ([ADD]); one marked missing needs a home or a reason to drop it; one marked repeated needs the repeats cut ([REPEAT]); drift that does not earn its place is cut.
 
 As a fact-checker, check every factual sentence:
 - Does it carry a [Dn] marker? A factual claim with no marker must be cut or sourced to a dossier entry.
 - Does the cited entry actually support the sentence as written, not a stronger or different claim?
 - Does the argument rest on tier 1 or 2 entries? A factual claim resting only on a tier 4 entry is cut or re-sourced; tier 4 is color only.
-- Is every direct quote from an entry marked verbatim: yes, exact as the dossier has it, and attributed to the right person and translator? A quote from any other entry becomes a paraphrase. Check the coverage check's list of unbacked quotes.
+- Is every direct quote from an entry marked verbatim: yes, exact as the dossier has it (editorial brackets aside, as the house style says), and attributed to the right person and translator? A quote from any other entry becomes a paraphrase. Check the coverage check's list of unbacked quotes.
 - Where the brief lists a correction, does the draft use the corrected fact?
 - Does the episode get quoted more than a phrase at a time? The transcript is copyrighted.
 

@@ -62,9 +62,8 @@ def run(r: Run, cfg: dict):
         brief=brief, dossier=dossier, draft=draft, global_notes=global_notes or "(none)",
     )
     st = cfg["stages"]["revise"]
-    est = sum(llm.estimate_call(cfg, cfg["models"]["writer"],
-                                llm.estimate_tokens(system) + i * 1100, st["expected_output_tokens"])
-              for i in range(len(segments)))
+    est = sum(llm.estimate_stage(cfg, "revise", llm.estimate_tokens(system) + i * 1100,
+                                 st["expected_output_tokens"]) for i in range(len(segments)))
     llm.guard(r, cfg, f"revise ({len(segments)} segments)", est)
 
     revised: list[tuple[int, str]] = []

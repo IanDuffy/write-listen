@@ -20,8 +20,7 @@ def _tokens(r: Run, key: str, default_words: int) -> int:
 
 def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
     """[(stage, estimated USD, already done)]"""
-    st, models, ch = cfg["stages"], cfg["models"], cfg["chapter"]
-    opus = models["writer"]
+    st, ch = cfg["stages"], cfg["chapter"]
 
     def done(key: str) -> bool:
         return r is not None and r.path(key).exists()
@@ -50,10 +49,11 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
         rows = [{"rank": i, "type": "covered" if i == n else "deep-dive"} for i in range(1, n + 1)]
     todo = [x for x in rows if r is None or "id" not in x or not research.row_paths(r, x["id"])[0].exists()]
 
-    def est(stage: str, input_tokens: int, model: str = opus, searches: int = 0) -> float:
-        return llm.estimate_call(cfg, model, input_tokens, st[stage]["expected_output_tokens"], searches)
+    def est(stage: str, input_tokens: int, searches: int = 0) -> float:
+        return llm.estimate_stage(cfg, stage, input_tokens, searches=searches)
 
     style = 600
+    fu_rank = cfg["research"].get("followup_max_rank")
     judge = est("ledger_update", dossier + led_tokens + 1500)
     rows_out = [
         ("map", est("map", transcript + 800), done("map")),
@@ -61,18 +61,19 @@ def forecast(r: Run | None, cfg: dict) -> list[tuple[str, float, bool]]:
         ("choose", est("choose", episode_map + tok("angles", 3000) + 600), done("angle")),
         ("ledger", est("ledger", transcript + episode_map + 2500), done("ledger")),
         ("research (upper end)", research.estimate(cfg, [(x, False) for x in todo]), done("dossier")),
-        # Upper end: every row needs a follow-up, so the judge runs twice.
+        # Upper end: every row allowed one needs a follow-up, so the judge runs twice.
         ("ledger update + follow-ups (upper end)",
-         2 * judge + research.estimate(cfg, [(x, True) for x in rows]), done("ledger_update")),
+         2 * judge + research.estimate(cfg, [(x, True) for x in rows if fu_rank is None or x["rank"] <= fu_rank]),
+         done("ledger_update")),
         ("brief", est("brief", dossier + led_tokens + style + 2500), done("brief")),
         # Each segment call re-reads the cached context at the cache-read rate.
         ("draft", n_seg * est("draft", 0) + llm.token_cost(
-            cfg, opus, cache_write_5m=dossier + brief + style,
+            cfg, llm.stage_model(cfg, "draft"), cache_write_5m=dossier + brief + style,
             cache_read=(n_seg - 1) * (dossier + brief + style) + n_seg * draft // 2), done("script_draft")),
         ("coverage", est("coverage", draft + brief + led_tokens + 3000), done("coverage")),
         ("edit", est("edit", draft + brief + dossier + style + 2000), done("edit_notes")),
         ("revise", n_seg * est("revise", 0) + llm.token_cost(
-            cfg, opus, cache_write_5m=dossier + brief + style + draft,
+            cfg, llm.stage_model(cfg, "revise"), cache_write_5m=dossier + brief + style + draft,
             cache_read=(n_seg - 1) * (dossier + brief + style + draft) + n_seg * draft // 2), done("script_final")),
         ("baseline", est("baseline", st["baseline"].get("expected_input_tokens", transcript),
                          searches=cfg["baseline"]["max_searches"]), done("baseline_script")),

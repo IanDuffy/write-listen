@@ -39,9 +39,8 @@ def run(r: Run, cfg: dict, segments: str | None = None):
     # Stage-level cost guard, ignoring cache savings so it errs high.
     todo = [n for n in wanted if r.force or not r.segment_path(n).exists()]
     st = cfg["stages"]["draft"]
-    est = sum(llm.estimate_call(cfg, cfg["models"]["writer"],
-                                llm.estimate_tokens(system) + (n - 1) * 1100,
-                                st["expected_output_tokens"]) for n in todo)
+    est = sum(llm.estimate_stage(cfg, "draft", llm.estimate_tokens(system) + (n - 1) * 1100,
+                                 st["expected_output_tokens"]) for n in todo)
     llm.guard(r, cfg, f"draft ({len(todo)} segments)", est)
     written = []
     for n in wanted:
@@ -77,10 +76,12 @@ def run(r: Run, cfg: dict, segments: str | None = None):
             "draft",
             n=n, total=len(segs), segment_brief=seg["text"], entries=entries_text,
             target_words=seg["target_words"] or f"{seg_words[0]}-{seg_words[1]}",
-            first_or_later=("This is the first segment: open with the hook from the brief."
+            first_or_later=("This is the first segment: open with the hook from the brief, and orient the "
+                            "listener within the first minute, as the brief's opening describes."
                             if n == 1 else
                             "Continue directly from where the previous segment ended. Do not recap it."),
-            last=("This is the last segment: end on the closing line from the brief."
+            last=("This is the last segment: end on the closing line from the brief. The chapter stands "
+                  "alone: no preview of another chapter, no 'where we go next', no sign-off."
                   if n == len(segs) else "Do not wrap up the chapter; more segments follow."),
         )})
 
