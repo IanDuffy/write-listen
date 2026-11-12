@@ -13,6 +13,9 @@ __pycache__/
 # Keep them local and private.
 runs/*
 !runs/.gitkeep
+
+# What the listener has said: personal, never committed.
+listener/
 compare/
 
 # Generated audio

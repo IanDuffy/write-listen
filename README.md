@@ -99,6 +99,93 @@ Each milestone stops for Ian.
 `python cli.py status <run>` shows what exists, what's next, and spend so far.
 `python cli.py estimate [run]` forecasts the cost of the rest of a run.
 
+## Seed runs: a lesson from a listener's topic (Phase 1)
+
+Phase 1 ([`docs/phase1-onboarding.md`](docs/phase1-onboarding.md)) ends in a
+voice conversation that starts a chapter. Its first milestone, built here, is
+the pipeline half: a seed in, a finished 20-minute lesson out, with nobody
+approving anything.
+
+```bash
+python cli.py new --seed "I can't stop thinking about why Roman concrete lasted" \
+                  --why "I pour concrete for a living" --unattended
+```
+
+- **Seed.** `00_source/seed.md` holds the topic in the listener's words, why it
+  matters to them, and anything to include or avoid. `--seed-file` takes one
+  written elsewhere (the guide's conversation, later). The run is named from
+  the seed (`roman-concrete-lasted-20261112`) unless you give a name.
+- **Scout** (stage 1, Opus with 10 searches and 5 fetches) maps the territory
+  around the seed and finds candidate sources. It writes `01_map.md`, so the
+  stages that read the episode map read the scout's map instead.
+- **Angle.** `angles` proposes 3-4 angles; `choose` picks one using the seed
+  and the listener's profile (`listener/profile.md`, if it exists) and says why.
+- **The rest is the chapter pipeline,** sized as a lesson by `seed_runs` in
+  `config.yaml`: about 3,000 words, 4 segments, 3-4 ledger rows. A seed run's
+  stages load `prompts/<name>_seed.md` where one exists (12 of them; same
+  inputs and output contracts, with no episode and an opening that ties back
+  to what the listener said). Episode runs are unchanged.
+- **Unattended.** Nobody is asked anything. Before spending, the upper-end
+  forecast for the rest of the run is checked against the run's cap
+  (`unattended.max_run_usd`, $20, or `--max-usd`). Each stage's cost guard then
+  approves against that cap, and every request checks it, so the run stops and
+  reports rather than pass it. The follow-up round runs only what fits the
+  40-search cap and the money cap. Every decision a person used to make goes to
+  `decisions.md` (the angle and why, the ledger, follow-ups left out, the brief,
+  going past the $5 guard, a stop), for Ian; the listener never sees it.
+- **Continue.** A stage whose output exists is skipped, so after a stop the
+  same command continues from there: `new --seed "..."` finds the unfinished run
+  with that exact seed, and `python cli.py new <run> --unattended` names it. A
+  scout or research write-up that failed is retried from its saved material.
+  Without `--unattended`, `new` only writes the seed, and the stages run one by
+  one as before, starting with `python cli.py scout <run>`.
+
+`listener/` (the profile, later the guide's memory) is gitignored.
+
+**The page (milestone 2).** `.venv/bin/python server.py`, then open
+<http://127.0.0.1:8765>. Type a topic and press Make it: the server starts
+`new <run> --unattended` in its own process (its console output goes to
+`runs/<run>/run.log`) and streams the run's `status.json` to the page. The
+circle grows a progress ring with the stage in plain words and the minutes
+left ("Researching · about 12 min"); when the chapter is ready it becomes a
+play control under the chapter's title, and the browser sends a notification.
+If a run stops, the page says so in one sentence and offers Try again, which
+continues the run. The server listens on 127.0.0.1 only, and runs one chapter
+at a time. The minutes come from `status_minutes` in `config.yaml`, first
+guesses; each `status.json` records every stage's real duration (`history`)
+to calibrate them.
+
+**The guide (milestone 3, typed).** Tap the circle and the guide speaks first;
+the text box talks to it. Its persona is `prompts/guide.md` (the doc's rules for
+finding a seed without an interview: share first, never two questions in a row,
+ordinary answers are doors, offer tastes, decide), its tools
+`prompts/guide_tools.json`: `start_chapter` starts the unattended run,
+`add_note` passes on something said afterwards (stages still to come read
+`00_source/notes.md` with the seed), `get_status` reads `status.json`. A first
+meeting gets five names drawn from `prompts/guide_names.md` to choose from. It
+runs on Claude Sonnet 5.5 (`models.guide`), the fastest Claude that ElevenLabs
+Agents offers natively (`docs/elevenlabs-agents-check.md`), so voice will use the
+same model. Each conversation is saved to `listener/sessions/<id>.jsonl`, its
+cost to `listener/sessions/log.jsonl`; one stops talking past
+`guide.max_session_usd` ($2). `python cli.py chat` is the same conversation in
+the terminal, the cheapest way to tune its tone.
+
+**Memory (milestone 5).** Plain files in `listener/` (gitignored), readable and
+hand-editable: `profile.md` (what the listener has said about themselves, under a
+page), `guide.md` (the guide's name, how it chose it, when they met),
+`sessions/<id>.jsonl` (each conversation), `seeds/<run>.md` (each chapter's seed,
+saved by `start_chapter`) and `history.md` (each finished chapter: title, angle,
+parked ideas). When a conversation ends (the page closes, a new one starts, or
+`cli.py chat` exits), Opus rewrites `profile.md` and `guide.md` from its
+transcript (`prompts/memory.md`): only what the listener said, merged rather than
+appended, and anything they asked to forget removed (a forgotten chapter also
+leaves `history.md` and `seeds/`). Passes run one at a time and in order: a new
+conversation waits for the last one's pass, and a conversation older than one
+already remembered is skipped, so an old pass can never bring back something
+forgotten. A server that stopped first catches up at its next start. The guide
+reads all of it at the start of the next conversation, so a returning listener
+is greeted as one.
+
 ## Ledger-driven research
 
 Research is aimed by the chosen angle, not by general reading. The spec is

@@ -140,7 +140,11 @@ def estimate_tokens(text: str) -> int:
 
 
 def confirm(run: Run, tag: str, msg: str) -> None:
-    """Stop and ask. --yes (run.yes) pre-approves; anything but y/yes stops the stage."""
+    """Stop and ask. --yes (run.yes) pre-approves; anything but y/yes stops the stage.
+    An unattended run has nobody to ask: it stops (callers that can carry on in a smaller way,
+    like the follow-up round, check before they get here)."""
+    if run.unattended:
+        raise StageError(f"Stopped by the {tag}: {msg} An unattended run does not go past it.")
     if run.yes:
         print(f"[{tag}] {msg} Proceeding (--yes).")
         return
@@ -154,6 +158,16 @@ def confirm(run: Run, tag: str, msg: str) -> None:
 
 def guard(run: Run, cfg: dict, what: str, estimate_usd: float) -> None:
     """Stop and ask before any call or stage expected to cost more than the limit."""
+    if run.unattended and run.max_usd is not None:
+        # Nobody to ask: the run's own cap decides (it was set when the run was started).
+        spent = run.spent()
+        if spent + estimate_usd > run.max_usd:
+            raise StageError(f"{what} is estimated at up to ${estimate_usd:.2f}; with ${spent:.2f} spent, that "
+                             f"would pass this run's ${run.max_usd:.2f} cap (unattended.max_run_usd). Stopped.")
+        if estimate_usd > cfg["cost_guard_usd"]:
+            run.decide("cost", f"Went ahead with {what}, estimated at up to ${estimate_usd:.2f} (over the "
+                               f"${cfg['cost_guard_usd']:.2f} guard; ${spent:.2f} spent of the ${run.max_usd:.2f} cap).")
+        return
     limit = cfg["cost_guard_usd"]
     if estimate_usd <= limit:
         return
@@ -426,6 +440,7 @@ def call(
     resume_if=None,
     json_schema: dict | None = None,
     log_extra: dict | None = None,
+    allow_empty: bool = False,
 ) -> Result:
     """Send one request (plus any pause_turn continuations) and log it.
 
@@ -487,7 +502,7 @@ def call(
         kwargs["output_config"] = output_config
     extra = dict(log_extra or {})
 
-    fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher") else None
+    fallbacks = cfg.get("refusal_fallbacks") if role in ("writer", "researcher", "guide") else None
     if fallbacks:
         kwargs["fallbacks"] = fallbacks
         kwargs["betas"] = [cfg["refusal_fallbacks_beta"]]
@@ -506,6 +521,9 @@ def call(
     for attempt in range(max_continuations + 1):
         if before_request:
             before_request()
+        if run.max_usd is not None and run.spent() >= run.max_usd:
+            raise StageError(f"{label or stage}: this run has spent ${run.spent():.2f}, its ${run.max_usd:.2f} cap. "
+                             "Stopped before the next request.")
         t0 = time.monotonic()
         message = None
         if use_batch:
@@ -582,15 +600,18 @@ def call(
     if paused:
         print(summary + " (paused at its tool budget)")
         return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
-    if message.stop_reason == "tool_use" and resume_if is not None and tools:
-        # Only server tools were offered, yet the turn ended on a tool call for the client to run
-        # (seen with Sonnet 5.5 on beauty-scarry-short, 2026-11-11). Nothing can answer it, so treat
-        # it like a loop paused at its budget: the caller writes up from what was gathered.
-        tail = [{k: getattr(b, k, None) for k in ("type", "name", "input")} for b in message.content[-3:]]
-        (run.root / f"_tool_use_{re.sub(r'[^A-Za-z0-9.-]+', '_', label or stage)}.json").write_text(
-            json.dumps(tail, default=str, indent=1), encoding="utf-8")
-        print(summary + " (ended on a tool call nothing here can run; writing up what it gathered)")
-        return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
+    if message.stop_reason == "tool_use":
+        if resume_if is not None and tools and all("input_schema" not in t for t in tools):
+            # Only server tools were offered, yet the turn ended on a tool call for the client to run
+            # (seen with Sonnet 5.5 on beauty-scarry-short, 2026-11-11). Nothing can answer it, so treat
+            # it like a loop paused at its budget: the caller writes up from what was gathered.
+            tail = [{k: getattr(b, k, None) for k in ("type", "name", "input")} for b in message.content[-3:]]
+            (run.root / f"_tool_use_{re.sub(r'[^A-Za-z0-9.-]+', '_', label or stage)}.json").write_text(
+                json.dumps(tail, default=str, indent=1), encoding="utf-8")
+            print(summary + " (ended on a tool call nothing here can run; writing up what it gathered)")
+            return Result(text=text.strip(), message=message, usage=total, content=all_content, paused=True)
+        print(summary)  # the caller runs its own (client) tools and calls again: the guide
+        return Result(text=text.strip(), message=message, usage=total, content=all_content)
     if message.stop_reason == "refusal":
         details = getattr(message, "stop_details", None)
         raise StageError(f"{stage}: the model declined ({getattr(details, 'category', None)}). "
@@ -600,7 +621,7 @@ def call(
         partial.write_text(text, encoding="utf-8")
         raise StageError(f"{stage}: hit max_tokens ({max_tokens}); partial output saved to "
                          f"{partial.name}. Raise stages.{stage}.max_tokens in config.yaml.")
-    if not text.strip():
+    if not text.strip() and not allow_empty:  # allow_empty: e.g. the guide, after a tool result
         raise StageError(f"{stage}: the model returned no text (stop_reason={message.stop_reason}).")
 
     print(summary)

@@ -6,6 +6,9 @@ models:
   researcher: claude-sonnet-5-5 # one research agent per ledger row. beauty-scarry ran them on Opus 5.5
                                 # ($8.74 of $17.74); Sonnet 5.5 is half the rate (cost pass, 2026-11-11)
   cheap: claude-haiku-5-5     # mechanical steps (currently: the ping test call)
+  guide: claude-sonnet-5-5    # the voice guide's conversation (Phase 1): fast replies matter more than depth,
+                              # and it is the fastest Claude that ElevenLabs Agents offers natively
+                              # (docs/elevenlabs-agents-check.md), so the text chat tunes the same model
 
 # On a safety-classifier decline, the API re-runs the same request on a fallback
 # model inside the same call ("default" lets the API pick by refusal category).
@@ -27,11 +30,15 @@ cost_guard_usd: 5.00
 # segment in sequence, so batching them would multiply the wait; they stream.
 stages:
   ping:     {max_tokens: 1024, effort: low, expected_output_tokens: 20}
+  guide:    {max_tokens: 4000, effort: low, expected_output_tokens: 400}
+  memory:   {max_tokens: 16000, effort: high, expected_output_tokens: 3000}  # after a conversation (Opus)
   smoketest: {max_tokens: 4000, effort: low, expected_output_tokens: 1000}
   # beauty-scarry, 2026-11-11: map hit 32000 (thinking + ~6,400 words of map) and angles used
   # 17,838 (over its old 16000) before finishing, so stages that write a long document get
   # 64000 (Opus 5.5 allows 128000). Billing is per token used; the guard uses expected_*.
   map:      {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 40000}
+  scout:    {max_tokens: 64000, effort: high, expected_output_tokens: 16000, max_continuations: 6}
+  scout_writeup: {max_tokens: 64000, effort: high, expected_output_tokens: 12000}
   angles:   {max_tokens: 32000, effort: high, batch: true, expected_output_tokens: 18000}
   choose:   {max_tokens: 32000, effort: high, batch: true, expected_output_tokens: 8000}
   ledger:   {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 8000}
@@ -82,6 +89,63 @@ research:
     plato.stanford.edu: 2
     iep.utm.edu: 2
     wikipedia.org: 4
+
+# Seed runs (docs/phase1-onboarding.md): a 20-minute lesson made from a listener's seed, with no
+# transcript. These values replace the ones above for any run with 00_source/seed.md.
+seed_runs:
+  chapter: {target_words: 3000, target_minutes: 20, min_segments: 4, max_segments: 4, segment_words: [700, 800]}
+  research: {min_rows: 3, max_rows: 4}
+  # A listener is waiting (the guide says about 20 minutes), so a seed run streams every stage:
+  # the Batches API would save about $1.50 a lesson but add minutes to each batched stage.
+  stages:
+    angles: {batch: false}
+    choose: {batch: false}
+    ledger: {batch: false}
+    ledger_update: {batch: false}
+    brief: {batch: false}
+    coverage: {batch: false}
+    edit: {batch: false}
+    factcheck: {batch: false}
+
+# The scout maps the territory around a seed and finds candidate sources: the role the
+# episode map plays for a transcript. One agent, these budgets (its web tools' max_uses).
+scout:
+  searches: 10
+  fetches: 5
+
+# `new --unattended`: nobody is asked anything. Each guard approves a stage if the run's
+# spend plus the stage's estimate stays under this cap, and stops the run (with a report)
+# if not; every request also checks the cap. Starting such a run is the approval.
+unattended:
+  max_run_usd: 20.00
+
+# Minutes each step of an unattended seed run takes, for the page's "about N min". First guesses
+# (about 25 in all); status.json records each step's real duration ("history") to calibrate them.
+status_minutes:
+  scout: 3
+  angles: 1
+  choose: 1
+  ledger: 1
+  research: 6
+  ledger-update: 3
+  brief: 1
+  draft: 3
+  assemble: 0
+  coverage: 1
+  edit: 1
+  factcheck: 2
+  revise: 2
+  narrate: 2
+  report: 0
+
+# The guide's conversation (Phase 1, milestone 3): prompts/guide.md, prompts/guide_tools.json.
+guide:
+  name_draw: 5            # names drawn from prompts/guide_names.md for a first meeting
+  max_tool_rounds: 4      # tool calls the guide may chain in one turn
+  max_session_usd: 2.00   # a conversation stops talking past this
+
+# Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
+listener_dir: listener
 
 # The single-prompt baseline: one agent, the build doc's 30-search cap.
 baseline:

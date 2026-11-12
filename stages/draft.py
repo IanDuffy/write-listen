@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from . import llm
 from .brief import parse_segments
-from .common import (Run, StageError, dossier_entries, entry_id, load_prompt, parse_range,
+from .common import (Run, StageError, dossier_entries, entry_id, load_prompt, parse_range, prompt_name,
                      word_count)
 
 
-def context_block(style_guide: str, brief: str, dossier: str) -> str:
-    return load_prompt("draft_context", style_guide=style_guide, brief=brief, dossier=dossier,
-                       source_tiers=load_prompt("source_tiers"))
+def context_block(r: Run, style_guide: str, brief: str, dossier: str) -> str:
+    return load_prompt(prompt_name(r, "draft_context"), style_guide=style_guide, brief=brief, dossier=dossier,
+                       source_tiers=load_prompt(prompt_name(r, "source_tiers")))
 
 
 def run(r: Run, cfg: dict, segments: str | None = None):
@@ -33,7 +33,7 @@ def run(r: Run, cfg: dict, segments: str | None = None):
     wanted = parse_range(segments, [s["n"] for s in segs])
     by_n = {s["n"]: s for s in segs}
 
-    system = context_block(style_guide, brief, dossier)
+    system = context_block(r, style_guide, brief, dossier)
     seg_words = cfg["chapter"]["segment_words"]
 
     # Stage-level cost guard, ignoring cache savings so it errs high.

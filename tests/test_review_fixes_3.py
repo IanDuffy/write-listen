@@ -290,7 +290,7 @@ def test_verify_prompt_uses_the_row_tier(ledgered, cfg):
     led = ledger.load(r, cfg)
     row = ledger.by_id(led)["L03"]
     row["tier_needed"] = 1
-    text = research.agent_prompt(cfg, row, led, "a", "m")
+    text = research.agent_prompt(r, cfg, row, led, "a", "m")
     assert "sources of tier 1 or better" in text and "tier 1 or 2 sources" not in text
 
 

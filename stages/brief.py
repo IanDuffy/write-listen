@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 
 from . import ledger, llm
-from .common import (Run, StageError, dossier_entries, entry_id, entry_numbers, entry_tags,
+from .common import (Run, StageError, dossier_entries, entry_id, entry_numbers, entry_tags, prompt_name, seed_inputs,
                      load_prompt, row_id)
 
 SEGMENT_HEADING = re.compile(r"^##\s+Segment\s+(\d+)\s*[:.\-–—]?\s*(.*)$", re.M | re.I)
@@ -115,27 +115,32 @@ def run(r: Run, cfg: dict):
     ch = cfg["chapter"]
     fixed = corrections(dossier)
     prompt = load_prompt(
-        "brief", angle=angle, dossier=dossier,
-        ledger=ledger.describe(ledger.active(led), research=True),
+        prompt_name(r, "brief"), angle=angle, dossier=dossier, **seed_inputs(r, cfg),
+        ledger=ledger.describe(ledger.active(led), research=True, led=led),
         connections=ledger.connections_text(led),
         corrections="\n".join(fixed) or "(none)",
-        style_guide=load_prompt("style_guide"), source_tiers=load_prompt("source_tiers"),
+        style_guide=load_prompt("style_guide"), source_tiers=load_prompt(prompt_name(r, "source_tiers")),
         target_words=ch["target_words"], target_minutes=ch["target_minutes"],
         min_segments=ch["min_segments"], max_segments=ch["max_segments"],
     )
     res = llm.call(r, cfg, "brief", messages=[{"role": "user", "content": prompt}])
     text = res.text.strip()
     if fixed:
-        text += "\n\n" + load_prompt("brief_corrections", corrections="\n".join(f"- {c}" for c in fixed)).strip()
+        text += "\n\n" + load_prompt(prompt_name(r, "brief_corrections"), corrections="\n".join(f"- {c}" for c in fixed)).strip()
     out = r.write("brief", text)
     try:
         segs = parse_segments(text)
         print(f"  {len(segs)} segments, {sum(s['target_words'] or 0 for s in segs):,} target words"
               + (f"; {len(fixed)} corrected fact(s) listed at the end" if fixed else "") + ".")
-        for w in check(text, dossier, led):
+        warnings = check(text, dossier, led)
+        for w in warnings:
             print(f"  Warning: {w}")
+        r.decide("brief", f"Approved the brief without review: {len(segs)} segments, "
+                 f"{sum(s['target_words'] or 0 for s in segs):,} target words."
+                 + "".join(f"\n- Warning: {w}" for w in warnings))
     except StageError as e:
         print(f"  Warning: {e} Fix the headings by hand before drafting.")
+        r.decide("brief", f"The brief's segment headings did not parse: {e}")
     print(f"\n  Next: python cli.py draft {r.name}. (Optional: edit 05_brief.md first; keep the\n"
           "  '## Segment N: Title' headings and the 'Target words:', 'Ledger:' and 'Dossier:' lines.)")
     return out

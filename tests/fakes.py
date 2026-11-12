@@ -114,6 +114,22 @@ def segment_prose(n):
     return "\n\n".join(paras)
 
 
+SCOUT_MAP = ("## Seed in brief\nWhy Roman concrete lasted, from someone who pours concrete.\n\n"
+             "## Threads\n- Self-healing lime clasts [RICH]\n- The harbor at Caesarea [RICH]\n\n"
+             "## Candidate sources\n- Symposium, https://www.gutenberg.org/ebooks/1600, tier 1")
+
+
+def _fetched():
+    return NS(type="web_fetch_tool_result", tool_use_id="f1", content=NS(
+        type="web_fetch_result", url="https://www.gutenberg.org/ebooks/1600",
+        content=NS(type="document", title="Symposium", source=NS(type="text", media_type="text/plain", data=PAGE_TEXT))))
+
+
+def _searched():
+    return NS(type="web_search_tool_result", tool_use_id="s1",
+              content=[NS(type="web_search_result", url="https://www.gutenberg.org/ebooks/1600", title="Symposium")])
+
+
 class Responder:
     """Return a plausible response for each stage, keyed off the prompt text."""
 
@@ -124,6 +140,8 @@ class Responder:
         self.judge_calls = 0
         self.pause_at: dict[str, tuple[int, int]] = {}  # row -> (searches, fetches) used when it pauses
         self.tool_use_stop: set[str] = set()  # rows whose first turn ends on a client tool_use (Sonnet 5.5)
+        self.scout_calls = 0
+        self.scout_pause = False
         self.judge_rounds: list[dict] = [  # one verdict set per judge call; the last repeats
             {"L01": "filled", "L02": "partial", "L03": "filled"},
             {"L01": "filled", "L02": "filled", "L03": "filled"},
@@ -132,6 +150,20 @@ class Responder:
     def __call__(self, kwargs):
         self.calls.append(kwargs)
         t = all_text(kwargs)
+        if "You keep the memory of a guide" in t:
+            self.memory_calls = getattr(self, "memory_calls", 0) + 1
+            transcript = t.split("<transcript>")[1].split("</transcript>")[0].lower()
+            forget = "forget" in transcript
+            if getattr(self, "memory_delay", 0):
+                import time as _t
+                _t.sleep(self.memory_delay)
+            profile = "# What the listener has said\n- Pours concrete for a living." + (
+                "" if forget else "\n- Has a daughter called Maya.")
+            gone = re.findall(r"\(([a-z0-9.-]+-\d{8}),", t) if "forget the concrete chapter" in transcript else []
+            return self.msg(kwargs, json.dumps({"profile": profile, "forget_chapters": gone,
+                                                "guide": "# Wren\n- Chose the name for the bird that sings in winter."}))
+        if "You are a guide. You make chapters" in t:
+            return self.guide(kwargs)
         if "single word: ready" in t:
             return self.msg(kwargs, "ready")
         if "Map the episode" in t:
@@ -141,7 +173,16 @@ class Responder:
                                     "## Notes for the writer\n- More Weil, please.")
         if "candidate angles" in t:
             return self.msg(kwargs, "### Angle 1: The ladder\n- **Thesis:** beauty teaches.")
-        if "Before any research, we decide what the chapter must land" in t:
+        if "You were scouting the territory" in t:  # the scout's write-up, after a pause at its budget
+            return self.msg(kwargs, "<map>\n" + SCOUT_MAP + "\n</map>")
+        if "Before anyone chooses an angle, scout the territory" in t:
+            self.scout_calls += 1
+            if self.scout_pause and self.scout_calls == 1:
+                return self.msg(kwargs, None, stop="pause_turn", content=[_searched(), _fetched()],
+                                u=usage(searches=3, fetches=1))
+            return self.msg(kwargs, None, content=[_searched(), _fetched(), text_block(
+                "Scouting done.\n<map>\n" + SCOUT_MAP + "\n</map>")], u=usage(searches=4, fetches=1))
+        if "Before any research, we decide what the" in t:
             return self.msg(kwargs, json.dumps(LEDGER))
         m = re.search(r"(?:Your idea is row|This idea is row) (L\d+)", t)
         if m and "your search and fetch budget is now spent" in t:
@@ -220,6 +261,39 @@ class Responder:
             return self.msg(kwargs, None, content=[text_block(
                 "Let me research.<script>\nA baseline paragraph about Diotima.\n\nAnother one.\n</script>")])
         raise AssertionError(f"fake API got an unexpected prompt: {t[:200]}")
+
+    def guide(self, kwargs):
+        """The guide: greets, starts the chapter on a yes, reports status, passes on notes."""
+        self.guide_calls = getattr(self, "guide_calls", 0) + 1
+        last = kwargs["messages"][-1]["content"]
+        if isinstance(last, list):  # tool results came back
+            result = json.loads(last[0]["content"])
+            if "started" in result:
+                return self.msg(kwargs, "It's under way. About 25 minutes; I'll let you know." if result["started"]
+                                else f"I couldn't start it: {result['reason']}")
+            if "added" in result:
+                return self.msg(kwargs, "Noted, I'll fold that in.")
+            if "error" in result:
+                return self.msg(kwargs, "I couldn't check just now.")
+            return self.msg(kwargs, f"It's {result.get('stage', result['state'])} now.")
+        text = last.lower()
+
+        def tool(name, args):
+            return self.msg(kwargs, None, stop="tool_use", content=[
+                text_block("Let me do that."), NS(type="tool_use", id=f"tu{self.guide_calls}", name=name, input=args)])
+        if "opened the page" in text:
+            return self.msg(kwargs, "Hello, I'm Wren. I've been reading about bridges that sing in the wind.")
+        if text.startswith("yes"):
+            return tool("start_chapter", {"topic": "Why Roman concrete lasted",
+                                          "listener_said": "I pour concrete for a living",
+                                          "why": "I pour concrete for a living", "notes": ""})
+        if "how" in text and "going" in text:
+            return tool("get_status", {})
+        if text.startswith("also"):
+            return tool("add_note", {"note": last[5:].strip()})
+        if "loop" in text:
+            return tool("get_status", {})
+        return self.msg(kwargs, "Concrete! There's a harbor in Caesarea that's still standing. Shall I make you a chapter on why?")
 
     @staticmethod
     def msg(kwargs, text, stop="end_turn", content=None, u=None):

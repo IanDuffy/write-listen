@@ -8,13 +8,13 @@ pipeline runs hands-off. A hand-written 03_angle.md is never overwritten without
 import re
 
 from . import llm
-from .common import Run, StageError, load_prompt
+from .common import Run, StageError, load_prompt, prompt_name, seed_inputs
 
 
 def run(r: Run, cfg: dict):
     episode_map, angles = r.read("map"), r.read("angles")
     r.check_writable("angle")
-    prompt = load_prompt("choose", map=episode_map, angles=angles,
+    prompt = load_prompt(prompt_name(r, "choose"), map=episode_map, angles=angles, **seed_inputs(r, cfg),
                          target_words=cfg["chapter"]["target_words"],
                          target_minutes=cfg["chapter"]["target_minutes"])
     res = llm.call(r, cfg, "choose", messages=[{"role": "user", "content": prompt}])
@@ -26,4 +26,7 @@ def run(r: Run, cfg: dict):
     out = r.write("angle", text + "\n")
     r.log({"stage": "choose", "provider": "none", "decision": title.group(1).strip(), "cost_usd": 0})
     print(f"  chose: {title.group(1).strip()}")
+    why = re.search(r"^## Why this one\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+    r.decide("angle", f"Chose \"{title.group(1).strip()}\" from 02_angles.md."
+             + (f"\n\n{why.group(1).strip()}" if why else ""))
     return out

@@ -9,7 +9,7 @@ editor had missed or written itself.
 """
 
 from . import llm
-from .common import Run, load_prompt
+from .common import Run, load_prompt, prompt_name
 from .revise import check_fact_notes, parse_notes
 
 
@@ -18,8 +18,8 @@ def run(r: Run, cfg: dict):
     notes = r.read("edit_notes")
     dossier = r.read("dossier")
     r.check_writable("factcheck")
-    prompt = load_prompt("factcheck", draft=draft, edit_notes=notes, dossier=dossier,
-                         source_tiers=load_prompt("source_tiers"))
+    prompt = load_prompt(prompt_name(r, "factcheck"), draft=draft, edit_notes=notes, dossier=dossier,
+                         source_tiers=load_prompt(prompt_name(r, "source_tiers")))
     res = llm.call(r, cfg, "factcheck", messages=[{"role": "user", "content": prompt}])
     out = r.write("factcheck", res.text)
     check_fact_notes(res.text, *parse_notes(res.text))  # stop here, not at revise, if a heading is unreadable

@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapters</title>
+<!--
+  The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
+  One element in the middle and a line of text under it; a text box as a fallback for typing; a
+  toggle for the transcript. No framework, system font, one accent color.
+  Milestones 2-3: idle, thinking (the guide is composing a reply), making the chapter, ready,
+  problem. Tapping the circle starts a conversation with the guide; the text box talks to it,
+  and the guide starts the chapter. Listening and speaking arrive with voice (milestone 4).
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; align-items: center; }
+  main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         gap: 22px; width: 100%; padding: 16px; }
+  #orb { width: 180px; height: 180px; border: 0; padding: 0; background: none; cursor: default; position: relative; }
+  #orb svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  #orb .core { fill: var(--accent); transition: opacity .6s, transform .6s; transform-origin: 90px 90px; }
+  #orb .track { fill: none; stroke: var(--line); stroke-width: 3; opacity: 0; }
+  #orb .ring { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; opacity: 0;
+               transform: rotate(-90deg); transform-origin: 90px 90px; transition: stroke-dashoffset .8s; }
+  #orb .icon { fill: var(--bg); opacity: 0; }
+  body.making #orb .track, body.making #orb .ring { opacity: 1; }
+  body.making #orb .core { transform: scale(.82); animation: breathe 3.2s ease-in-out infinite; }
+  body.ready #orb { cursor: pointer; }
+  body.ready #orb .icon.play, body.ready.playing #orb .icon.pause { opacity: 1; }
+  body.ready.playing #orb .icon.play { opacity: 0; }
+  body.problem #orb .core { opacity: .28; }
+  body.thinking #orb .core { animation: breathe 2.4s ease-in-out infinite; }
+  body.idle:not(.talking) #orb { cursor: pointer; }
+  @keyframes breathe { 50% { opacity: .75; } }
+  #line { min-height: 1.4em; text-align: center; color: var(--muted); max-width: 34em; }
+  body.ready #line { color: var(--fg); font-weight: 600; }
+  #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
+           border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+  body.problem #retry { display: inline-block; }
+  body.problem.final #retry { display: none; }
+  #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+          cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
+  footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
+  form { display: flex; gap: 8px; }
+  #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
+         border-radius: 999px; padding: 10px 16px; }
+  #say:focus { outline: none; border-color: var(--accent); }
+  #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: #fff;
+          cursor: pointer; }
+  #send:disabled, #say:disabled { opacity: .5; cursor: default; }
+  #toggle { margin-top: 10px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+            padding: 0; cursor: pointer; }
+  #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 42vh; overflow: auto; }
+  #transcript.open { display: block; }
+  #transcript p { margin: 6px 0; }
+  #transcript p.you { color: var(--fg); }
+  #transcript p.guide { color: var(--fg); border-left: 2px solid var(--accent); padding-left: 10px; }
+  #transcript p.stage { font-style: italic; }
+</style>
+</head>
+<body class="idle">
+<main>
+  <button id="orb" aria-label="Chapter">
+    <svg viewBox="0 0 180 180" aria-hidden="true">
+      <circle class="core" cx="90" cy="90" r="78"/>
+      <circle class="track" cx="90" cy="90" r="88"/>
+      <circle class="ring" cx="90" cy="90" r="88"/>
+      <path class="icon play" d="M76 62 L124 90 L76 118 Z"/>
+      <g class="icon pause"><rect x="72" y="64" width="12" height="52" rx="2"/><rect x="96" y="64" width="12" height="52" rx="2"/></g>
+    </svg>
+  </button>
+  <div id="line">Tap to begin</div>
+  <button id="retry">Try again</button>
+  <button id="last"></button>
+  <audio id="audio" preload="none"></audio>
+</main>
+<footer>
+  <form id="form" autocomplete="off">
+    <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
+    <button id="send">Send</button>
+  </form>
+  <button id="toggle" aria-expanded="false">Show transcript</button>
+  <div id="transcript" aria-live="polite"></div>
+</footer>
+<script>
+const $ = (id) => document.getElementById(id);
+const R = 88, CIRC = 2 * Math.PI * R;
+const ring = document.querySelector("#orb .ring");
+ring.style.strokeDasharray = CIRC;
+ring.style.strokeDashoffset = CIRC;
+let status = { state: "idle" }, lastState = "idle", lastLabel = null;
+let talking = false, thinking = false;  // a conversation has started; a reply is on its way
+let sessionId = null;                   // the conversation the server knows this page by
+let fresh = false;                      // the ready chapter was made (or played) during this visit
+
+function note(text, kind = "stage") {
+  const p = document.createElement("p");
+  p.className = kind;
+  p.textContent = text;
+  $("transcript").appendChild(p);
+  $("transcript").scrollTop = $("transcript").scrollHeight;
+}
+
+function minutesLeft(s) {
+  if (s.minutes_left == null) return null;
+  const t = Date.parse(s.updated || "");
+  const since = Number.isNaN(t) ? 0 : (Date.now() - t) / 60000;
+  return Math.max(1, Math.round(s.minutes_left - since));
+}
+
+function render() {
+  const s = status;
+  if (s.state === "ready") {
+    const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
+    if (!$("audio").src.endsWith(src)) $("audio").src = src;
+  }
+  // A chapter from an earlier visit doesn't take over the circle: tap to begin, and play it from the link.
+  const past = s.state === "ready" && !fresh && $("audio").paused;
+  const shown = past ? "idle" : s.state;
+  document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
+    + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "");
+  $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
+  $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
+  const busy = s.state === "making";
+  if (shown === "idle") {
+    $("line").textContent = talking ? "" : "Tap to begin";
+  } else if (busy) {
+    const done = s.stages_total ? s.stages_done / s.stages_total : 0;
+    ring.style.strokeDashoffset = CIRC * (1 - Math.min(1, done));
+    const m = minutesLeft(s);
+    $("line").textContent = (s.label || "Working") + (m ? ` · about ${m} min` : "");
+  } else if (s.state === "ready") {
+    $("line").textContent = s.title || "Your chapter is ready";
+  } else if (s.state === "problem") {
+    $("line").textContent = s.message || "Something went wrong.";
+  }
+}
+
+function onStatus(s) {
+  status = s;
+  if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
+  if (s.state === "ready" && lastState === "making") {
+    fresh = true;
+    note("Ready: " + (s.title || "your chapter"));
+    if ("Notification" in window && Notification.permission === "granted") {
+      new Notification("Your chapter is ready", { body: s.title || "" });
+    }
+  }
+  if (s.state === "problem" && lastState !== "problem") note(s.message || "Something went wrong.");
+  lastState = s.state; lastLabel = s.label;
+  render();
+}
+
+new EventSource("/api/events").onmessage = (e) => onStatus(JSON.parse(e.data));
+setInterval(render, 30000);  // keep "about N min" counting down between stages
+
+async function post(url, body) {
+  let res;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                             body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { throw new Error("The server isn't running."); }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const e = new Error(typeof err.detail === "string" ? err.detail : "Something went wrong.");
+    e.conflict = res.status === 409;
+    throw e;
+  }
+  return res.json();
+}
+
+function openTranscript() {  // typed, the transcript is the conversation
+  $("transcript").classList.add("open");
+  $("toggle").textContent = "Hide transcript";
+  $("toggle").setAttribute("aria-expanded", true);
+}
+
+async function converse(message) {
+  if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  talking = thinking = true;
+  openTranscript();
+  render();
+  try {
+    let res;
+    if (message && !sessionId) {  // typed before tapping: the guide speaks first, then hears this
+      const hello = await post("/api/chat/start");
+      sessionId = hello.session;
+      note(hello.reply, "guide");
+    }
+    try {
+      res = message ? await post("/api/chat", { message, session: sessionId }) : await post("/api/chat/start");
+    } catch (err) {
+      if (!message || !err.conflict) throw err;
+      // The server no longer knows this conversation (it restarted): start a new one, don't answer out of context.
+      note("The guide lost the thread, so it's starting again.", "stage");
+      res = await post("/api/chat/start");
+      sessionId = res.session;
+      note(res.reply, "guide");
+      return false;
+    }
+    sessionId = res.session;
+    note(res.reply, "guide");
+    return true;
+  } catch (err) {
+    note(err.message, "stage");
+    if (!message) talking = false;
+    return false;
+  } finally {
+    thinking = false;
+    render();
+  }
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("say").value.trim();
+  if (!text || thinking) return;
+  note("You: " + text, "you");
+  $("say").value = "";
+  if (!(await converse(text))) $("say").value = text;  // keep what they typed if it didn't go through
+});
+
+$("retry").addEventListener("click", async () => {
+  try { await post(`/api/chapters/${encodeURIComponent(status.run)}/retry`); }
+  catch (err) { note(err.message); }
+});
+
+$("orb").addEventListener("click", () => {
+  const a = $("audio");
+  if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
+  if (status.state === "ready" && fresh) return a.play();
+  if (!talking && !thinking) converse(null);  // tap to begin, whatever an earlier visit left behind
+});
+$("last").addEventListener("click", () => $("audio").play());  // the circle still begins a conversation
+$("audio").addEventListener("play", render);
+$("audio").addEventListener("pause", render);
+
+// The conversation ends when the page goes away: the server updates what the guide remembers.
+addEventListener("pagehide", () => {
+  if (talking && sessionId) {
+    navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: sessionId })],
+                                                    { type: "application/json" }));
+  }
+});
+
+$("toggle").addEventListener("click", () => {
+  const open = $("transcript").classList.toggle("open");
+  $("toggle").textContent = open ? "Hide transcript" : "Show transcript";
+  $("toggle").setAttribute("aria-expanded", open);
+});
+</script>
+</body>
+</html>

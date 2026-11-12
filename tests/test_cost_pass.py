@@ -199,10 +199,10 @@ def test_quote_check_tolerates_editorial_brackets():
 
 def test_run_config_overrides_settings_for_one_run(run, cfg):
     from stages.common import run_config
-    assert run_config(cfg, run.root) is cfg  # no run config: unchanged
+    assert run_config(run, cfg) is cfg  # no run config: unchanged
     (run.root / "config.yaml").write_text("chapter: {target_words: 3000, target_minutes: 20}\n"
                                           "research: {max_rows: 4}\n")
-    c = run_config(cfg, run.root)
+    c = run_config(run, cfg)
     assert c["chapter"]["target_words"] == 3000 and c["chapter"]["min_segments"] == cfg["chapter"]["min_segments"]
     assert c["research"]["max_rows"] == 4 and c["research"]["budgets"] == cfg["research"]["budgets"]
     assert cfg["chapter"]["target_words"] == 6000  # the shared config is untouched

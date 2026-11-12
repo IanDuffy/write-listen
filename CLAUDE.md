@@ -46,6 +46,111 @@ Check the script's character count against the ElevenLabs balance before
 narrating: the `starter` plan has 40,000 characters a month and one chapter is
 about 36,000, so the baseline narration needs a bigger plan or the next month.
 
+## Phase 1: real-time onboarding (merged from `claude/realtime-onboarding`, 2026-11-12)
+
+Spec: `docs/phase1-onboarding.md` (Ian, 2026-11-11). A listener talks with a
+voice guide for a few minutes and, about half an hour later, hears a chapter
+made from that conversation, with no human checkpoints. Milestones, in order;
+the first is the gate for the rest:
+
+| Milestone | State |
+| --- | --- |
+| 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
+| 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
+| 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
+| 4. Voice (ElevenLabs Agents) | Not started; the three checks are done (docs/elevenlabs-agents-check.md): client tools yes, per-session overrides yes (enable in Security; dynamic variables recommended), Claude Sonnet 5.5 offered as `claude-sonnet-5-5` with reasoning effort down to `none` (Ian confirmed 2026-11-12), Haiku 5.5 not. Next: build it locally with Ian's ElevenLabs account. |
+| 5. Memory (`listener/` files, profile update pass) | Built ahead of 4 (it needs no ElevenLabs account), tested offline with a fake model. |
+| 6. End to end with a second person | Not started |
+
+**Milestone 1 decisions.**
+- A run with `00_source/seed.md` is a seed run (`common.is_seed`). Its stages
+  load `prompts/<name>_seed.md` where one exists (`common.prompt_name`); the
+  episode prompts are untouched, so an episode run renders exactly as before.
+  Each variant's header names its original: keep the two in step. A test checks
+  that no variant mentions the episode and that the research entry format
+  (a parser contract) matches its original.
+- `seed_runs` in config.yaml resizes a seed run (`common.run_config`, applied by
+  the CLI to every stage): 3,000 words, 4 segments, 3-4 ledger rows.
+- The scout replaces the map stage and writes `01_map.md`. Covered ledger rows
+  mean "the scout's sources already settle it"; their verify agents check the
+  claims the lesson would take from those sources. The JSON field stays
+  `episode_has` (ledger.md labels it "Scout has").
+- `--unattended` (`Run.unattended`, `Run.max_usd`): `llm.guard` approves against
+  the run's cap instead of asking, `llm.call` checks the cap before every
+  request, `llm.confirm` stops rather than ask, and the follow-up round trims to
+  what fits (`ledger_update._fit_unattended`). `Run.decide` writes
+  `decisions.md`. Starting an unattended run is the approval for spending up to
+  its cap (default $20; a lesson's upper-end forecast is about $15).
+- `--seed` is a string now; `report --seed N` still takes the sample seed.
+
+**Milestone 3 decisions.**
+- `stages/guide.py` `Session`: one conversation; each turn calls `models.guide`
+  (Claude Sonnet 5.5, effort low) with `prompts/guide.md` and the tools in
+  `prompts/guide_tools.json`, runs any tool and calls again (`llm.call` returns
+  on `tool_use`). The same prompt and tools become the ElevenLabs agent's in
+  milestone 4. The guide speaks first: the first user turn is a page note
+  (`prompts/guide_opened.md`).
+- `start_chapter` calls `server.Pipeline.start_seed` (the text box's path too);
+  `add_note` appends to `00_source/notes.md`, which `common.seed_inputs` reads
+  with the seed (so angles, choose, ledger and brief see it if they have not run;
+  the guide is told when it is too late); `get_status` reads `status.json`.
+- Names: a first meeting draws `guide.name_draw` (5) from `prompts/guide_names.md`.
+  If `listener/guide.md` exists its text is the guide's identity (writing it is
+  milestone 5).
+- Transcripts: `listener/sessions/<id>.jsonl` as it happens; costs in
+  `listener/sessions/log.jsonl`; `guide.max_session_usd` ($2) per conversation.
+- The ideas doc the Phase 1 doc cites for the opening tone is not in the repo;
+  the prompt follows the Phase 1 doc's own words (arrival, curiosity, short).
+
+**Milestone 5 decisions** (built before 4 because voice needs Ian's ElevenLabs account).
+- `stages/memory.py`: `after_session` (Opus, `prompts/memory.md`, structured
+  output) rewrites `listener/profile.md` and `guide.md` from one transcript, once
+  per session (`sessions/<id>.done`), skipping sessions where the listener said
+  nothing. Triggers: a new conversation (the old one ended), `POST /api/chat/end`
+  (the page's `pagehide` beacon), server start (`run_pending`), `cli.py chat` exit.
+- `save_seed` copies each chapter's seed to `listener/seeds/<run>.md` when
+  `start_chapter` runs; `record_chapter` appends to `history.md` when an
+  unattended seed run finishes (code only).
+- "Forget that" is honoured in profile.md and guide.md, and a forgotten chapter
+  (`forget_chapters` in the pass's JSON) is removed from history.md and seeds/ by
+  code; the raw transcripts in `sessions/` keep what was said (they are the
+  record, like decisions.md).
+- Passes are serialized (`memory.LOCK`) and ordered: a conversation older than
+  the newest `.done` is marked skipped, not folded in. `server.new_session` runs
+  the previous session's pass synchronously and joins background passes first.
+  The module-level `server.app` does no catch-up at import; `python server.py` does.
+- `POST /api/chat` and `/api/chat/end` need the session id (409 if it is not the
+  current one); the page's beacon sends it. If the guide says nothing after a
+  tool, a line from `prompts/guide_quiet.md` is spoken instead of silence.
+
+**Merge with the cost pass and fact-check (2026-11-12, local).** The branch forked
+before them. One `common.run_config(r, cfg)`: a seed run takes `seed_runs`, then
+`runs/<run>/config.yaml` merges over that. Seed runs stream every stage
+(`seed_runs.stages.*.batch: false`): a listener is waiting, and batching would add
+minutes per stage. `new.py` runs 8b `factcheck` between edit and revise. The
+style-guide rules (opening, standalone ending, `[pause]`) are shared; the seed
+prompt variants got the same edits as their originals (claims about texts,
+editorial brackets, the editor's wording checked, fetch rules, judge names sites).
+`llm.call` on `tool_use`: a research loop with only server tools is written up
+(Sonnet 5.5's dynamic filtering); a call with client tools (the guide) returns.
+The episode entry in the dossier is for episode runs only. Checked live locally:
+`server.py` serves the page and the typed guide answers; `cli.py chat` works.
+
+**Milestone 2 decisions.**
+- `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
+  and on ready or problem: `state` (making, ready, problem), `stage`, `label`
+  (plain words), `stages_done`/`stages_total`, `minutes_left` (from
+  `status_minutes`, rough until calibrated from `history`), `title`, `audio`,
+  `message` (one plain sentence), `detail` (the error, for Ian).
+- `server.py` (FastAPI, one file, 127.0.0.1:8765): the page, `POST /api/chapters`
+  (seed -> `new <run> --unattended` as a subprocess), `GET /api/status`,
+  `GET /api/events` (server-sent events), retry, audio. One run at a time. A
+  process that dies while status.json still says making is shown as a problem.
+- `page/index.html`: one file, plain JavaScript, system font, one accent color.
+  Milestone 2 has the idle, making, ready and problem states; listening,
+  thinking and speaking come with voice (milestone 4). The transcript toggle
+  shows what was typed and the stages, until the conversation (milestone 3).
+
 ## Local setup
 
 ```bash
@@ -88,7 +193,7 @@ real key), so locally it must be in `.env`.
   `docs/ledger-research-addon.md`; it replaced the earlier planner, Sonnet
   topic agents and critic rounds). Stage 03b `ledger` writes 5-7 ranked rows
   to `ledger.json` (the source of truth; `ledger.md` is rendered from it).
-  Stage 04 runs one Opus 5.5 agent per row (`models.researcher`), budgeted by
+  Stage 04 runs one agent per row (`models.researcher`, Sonnet 5.5 since the cost pass), budgeted by
   rank and type, under a 40-search cap for all agents that asks before going
   past. Stage 04b `ledger-update` judges each row, code checks every
   "filled", and open or partial rows get one follow-up. Stage 07b `coverage`
@@ -216,11 +321,15 @@ real key), so locally it must be in `.env`.
   call; cost guard; retries dropped streams and overloads; resumes `pause_turn`.
 - `stages/tts.py`: the only ElevenLabs caller (`synthesize`), chunking,
   pronunciation table, on-disk chunk cache, ffmpeg join.
+- Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
+- `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestones 2-3.
+- `guide.py`: the guide's conversation (milestone 3); `memory.py`: the listener's memory (milestone 5).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.
 - `config.yaml`: models, per-stage settings, research budgets, prices, narration.
-- `docs/build-doc.md`: the spec; `docs/ledger-research-addon.md`: its research add-on.
+- `docs/build-doc.md`: the spec; `docs/ledger-research-addon.md`: its research add-on;
+  `docs/phase1-onboarding.md`: Phase 1, real-time onboarding.
 
 ## API facts that matter (checked against installed SDKs, anthropic 2.7, elevenlabs 2.77)
 
@@ -248,5 +357,6 @@ real key), so locally it must be in `.env`.
 
 A personal Claude Code cloud environment `write-listen` exists, with the
 ElevenLabs key saved as a network secret for `api.elevenlabs.io`. Anthropic
-keys can't be added there (Anthropic hosts bypass the proxy), which is why
-work moved to a local environment.
+keys can't be added there (Anthropic hosts bypass the proxy), and elevenlabs.io's
+docs site was not reachable from it, so Phase 1 development continues locally
+(Ian, 2026-11-12).

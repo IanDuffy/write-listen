@@ -121,6 +121,14 @@ def run(r: Run, cfg: dict):
 
     script = join_script_segments(revised)
     out = r.write("script_final", script)
+    if r.unattended:
+        from . import ledger
+        led = ledger.load(r, cfg, render=False) if r.path("ledger").exists() else {"rows": []}
+        weak = [f"{x['id']} {x['coverage']}" for x in ledger.active(led) if x.get("coverage") in ("thin", "missing")]
+        n_notes = sum(len(re.findall(r"^\s*\d+\.", b, re.M)) for b in [global_notes, *per_seg.values()])
+        r.decide("script", f"Approved the revised script without review: {word_count(script):,} words, after "
+                 f"{n_notes} edit notes. Coverage before the edit: "
+                 + (", ".join(weak) + " (see 07b_coverage.md)." if weak else "every ledger row covered."))
     print(f"  final script: {word_count(script):,} words")
     print(f"\n  Next: python cli.py narrate {r.name}. (Optional: read 09_script_final.md first.)")
     return out
