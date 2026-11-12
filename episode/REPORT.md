@@ -114,5 +114,8 @@ by a skeptic) confirmed 16 findings, all fixed with regression tests. In brief:
 - Images for references.
 - The interruption feature (it will call `nearest_sentence_boundary`).
 - Streaming.
-- The `elevenlabs` timing provider: its change is described in `INTEGRATION.md`; whether
-  `eleven_v4` returns timings needs one paid request to confirm.
+- The `elevenlabs` timing provider. A small live test since (about 500 characters, with Ian's
+  OK) confirmed that `eleven_v4` returns character timings with narration's exact settings and
+  stitching. They are on a 40 ms grid and within a median 0.10-0.15 s of Whisper's word starts.
+  The narration change and the provider are described in `INTEGRATION.md` §3; building them means
+  editing the narration stage, which this branch had to leave alone.

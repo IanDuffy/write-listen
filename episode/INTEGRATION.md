@@ -67,14 +67,25 @@ same body as the endpoint narration uses now, including `previous_request_ids`, 
 `alignment` and `normalized_alignment`, each `{characters, character_start_times_seconds,
 character_end_times_seconds}`.
 
-**Not confirmed:** whether `eleven_v4` (the narration model) returns `alignment`. The page lists
-no models, and checking would take a paid request, which this build ruled out. To confirm: one
-short request (about 20 characters) with `model_id: eleven_v4`, and look for a non-null `alignment`.
+**Confirmed live (2026-11-12, Ian's OK for a small test; about 500 characters):** `eleven_v4`
+returns both alignments, one entry per character of the text sent, with narration's exact settings
+(voice, `pcm_24000`, voice settings, seed). The `request-id` header comes back, and a request
+stitched with `previous_request_ids` works with timestamps, so narration's continuity is kept.
+Details that matter for the code:
+- In the Python SDK (2.77) the audio field is `audio_base_64` (the REST docs say `audio_base64`),
+  and `with_raw_response.convert_with_timestamps(...)` returns the response directly: it is not a
+  context manager, unlike the streaming `with_raw_response.convert` narration uses now.
+- Times come on a 40 ms grid. On two chapter-one lines, word starts were within a median
+  0.10-0.15 s of Whisper's (largest 0.36 s) and word ends within 0.06 s: close enough for the
+  highlight. ElevenLabs gives the pause after a punctuation mark to the word before it ("love."
+  ends 0.5 s later than Whisper hears it), so a sentence's end time includes its pause.
+- The characters are the text that was sent, i.e. the spoken form (after pronunciations), so
+  they map onto `episode.script`'s spoken words directly; the displayed words come from there.
 
 **The change**, in `stages/tts.py`, once confirmed:
 - `synthesize()` calls `convert_with_timestamps` through `with_raw_response` (to keep the
-  `request-id` header that stitching needs), decodes `audio_base64`, and returns the alignment
-  with the audio in `Synth`.
+  `request-id` header that stitching needs: `r = ...; r.data, r.headers`), decodes
+  `r.data.audio_base_64`, and returns `r.data.alignment` with the audio in `Synth`.
 - `narrate_segments()` writes each chunk's alignment next to its WAV
   (`chunks/<key>.alignment.json`), so the existing chunk cache carries timings too.
 - A timing provider `episode.timing.ElevenLabsTimings` reads those files, turns characters into
@@ -82,9 +93,9 @@ short request (about 20 characters) with `model_id: eleven_v4`, and look for a n
   feeds the same aligner (`episode.align.align`) in place of the recognizer's words. The script
   alignment, `estimated` marking and all of stages 2-4 stay as they are.
 
-The recognizer provider remains useful either way: it hears what was actually said. On chapter
-one it found two places where the narration dropped text (see REPORT.md), which the requested
-text's timings would not show.
+The recognizer provider remains useful either way: it hears what was actually said, so it is the
+check that the narration said every word (ElevenLabs' timings describe the text it was asked to
+say). With timings from generation, Whisper becomes an optional audit rather than a required step.
 
 ## 4. Where the repo differed from the spec
 
