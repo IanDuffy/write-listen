@@ -213,6 +213,20 @@ def test_a_number_the_scout_used_twice_keeps_its_first_entry(tmp_path, cfg, fake
     assert "The first fact." in text and "A second fact" not in text
 
 
+def test_a_scout_that_numbers_its_entries_under_another_row_still_cites_d_numbers(tmp_path, cfg, fake, kind):
+    # Live, 2026-11-13: the scout wrote [L01.n] for its own entries; the scenes of 01_scout.md then
+    # pointed at no entry ("Entries: L01.11, L01.9"), so nobody could trace a scene's claim to its source.
+    fake.script.scout_text = ("<scout>\n## Territory\nA sketch, as L01.1 has it.\n\n## Entries\n"
+                              "[L01.1] (claim, tier 2) The first fact. Source: https://a.example.org/1\n"
+                              "[L01.2] (material, tier 3) A scene. Source: https://a.example.org/2\n\n"
+                              "## Scenes\n### One\nIt happened.\nEntries: L01.1, L01.2\n</scout>")
+    r = seed_run(tmp_path, cfg)
+    d = make_dossier(kind, r, cfg)
+    text = scout.run(r, cfg, d).read_text()
+    assert d.numbers_of("L00") == [1, 2]
+    assert "Entries: D01, D02" in text and "as D01 has it" in text and "L01." not in text
+
+
 # --- step 0: the early scout, and adopting it -------------------------------------------------
 
 def early_dir(tmp_path):

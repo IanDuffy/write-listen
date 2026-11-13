@@ -71,7 +71,7 @@ Bring back:
 1. **Claims**: the facts that answer the question, each with its source and tier.
 2. **Tellable material**: at least one concrete scene, story, example or image that the scout's entries do not already have and that makes the idea land for a listener who hears it once, at speaking pace: a person in a place, in a year, doing something. Research with claims but nothing tellable is only partly done.
 3. **A primary quote**: one short passage worth reading aloud, if one exists, copied from the primary text on a page you fetched.
-4. **Tension**: the strongest objection or complication to the idea, with its source. The lesson is stronger for facing it.
+4. **Tension**: the strongest objection or complication to the idea, with its source. Where the angle or the question says what the listener does or knows, give as well the objection a person in their place would raise first, and what your sources answer to it, with their figures. If a page you fetched gives no answer, say so in a claim entry that names the page: the writer may call a source silent only where an entry does. The lesson is stronger for facing it.
 5. **Connections**: any link you noticed to another row's idea, one line each.
 
 Primary sources first: the text, document, record, paper or archive itself (Project Gutenberg, Wikisource, the Internet Archive, a university or museum collection, the publisher), read at the passage the question turns on. Then tier 2 sources: the field's academic encyclopedias, university presses, peer-reviewed papers. Avoid content farms, AI-generated summaries and unsourced listicles.

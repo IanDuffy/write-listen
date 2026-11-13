@@ -51,7 +51,8 @@ Read the draft as the listener would, start to finish, then as a fact-checker, s
 As a listener:
 - The start. Is the listener inside a scene from the first lines? Within the first minute, do they know what they are listening to, that it grows from what they asked about, and the question the chapter will chase? Cut any "welcome to", any stock formula, anything that delays the question.
 - The first paragraph is at most {{first_words}} words and complete in itself: it is narrated alone so the audio can start. Split or tighten it if it is longer.
-- Cut what slows it without earning it: throat-clearing, a second example where one would do, evidence that belongs to a later section's job in the outline.
+- Cut what slows it without earning it: throat-clearing, a phrase or image brought back as a refrain (rule 8), the closing idea's wording or point used here, evidence that belongs to a later section's job in the outline.
+- Circling. The chapter's question is asked once inside the first minute and may come back once, in a sentence; the through-line's tension is stated once. After the tie to the listener's words, a paragraph with no marked sentence in it, the hand-off aside, is the draft filling time: keep its best sentence beside the fact it bears on and cut the rest. Hold the length by telling: in its place put a detail or a scene from an entry above that the draft has not used and that is not a later section's job in the outline, in the draft's voice, with its marker. If no such entry is left, come down to the low edge of the length.
 - Promises. The later sections are written from research nobody has seen yet. Cut or soften any promise of specifics; the questions the plan sets up stay open.
 - The ear: long sentences, lists, asides, a hard name not introduced slowly, anything a narrator would stumble on.
 - Tone: warm and plain. Cut performed enthusiasm, hedging and lecturing. The tie back to what the listener said is a sentence or two, and never thanks or flatters.
@@ -62,7 +63,7 @@ As a fact-checker, for every sentence that says something about the world or abo
 - It carries a [Dn] marker. A factual claim without one is tied to the entry that supports it, or cut.
 - The cited entry says what the sentence says, not something weaker, stronger or different. Reword to what the entry supports.
 - Only the entries above may be cited.
-- Every direct quote is the exact words of an entry marked verbatim: yes, attributed aloud before it begins to the right speaker and translator. A quote from any other entry becomes a paraphrase without quotation marks; never credit wording to someone else or to unnamed "scholars". The listener's own words are not a quotation from a source: where the draft has them in quotation marks, take the marks off and keep the words.
+- Every direct quote is the exact words of an entry marked verbatim: yes, attributed aloud before it begins to the right speaker and translator. A quote from any other entry becomes a paraphrase without quotation marks; never credit wording to someone else or to unnamed "scholars". Where the entry is second-hand (a written work quoted or reported by a page that is not the work), the attribution names that page as well as the author, and every sentence in the section that states in the narrator's own voice what the work says or is about is handed to that page or cut; the plan's wording is no support for one. The listener's own words are not a quotation from a source: where the draft has them in quotation marks, take the marks off and keep the words.
 - What the argument rests on is tier 1 or 2. A tier 4 entry is color only.
 - Where you know a source says otherwise than the draft, cut or soften the sentence. Never add a fact the entries do not contain.
 

@@ -43,7 +43,9 @@ TAG = "scout"
 EARLY_DIR = "_scouts"  # under the runs folder; not a run (no status.json), so the server never shows it
 EARLY_INFO = "early.json"
 ADOPTED = "early_scout.json"  # in the run's fast/ folder: which early scout it took
-LOCAL = re.compile(r"\bL0*0\.0*(\d+)\b")  # the scout citing its own entry: 'L00.3'
+# The scout citing its own entry: 'L00.3'. It sometimes numbers them under another row ('L01.3');
+# every entry in its block is its own, so any row number is taken.
+LOCAL = re.compile(r"\bL\d+\.0*(\d+)\b")
 STALE_SECONDS = 600  # an early scout still "running" after this was killed
 EARLY_WINDOW_SECONDS = 2 * 3600  # an early scout older than a conversation can be is no candidate for a new chapter
 _EARLY_LOCK = threading.Lock()
