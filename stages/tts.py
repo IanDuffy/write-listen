@@ -261,7 +261,11 @@ def join_to_mp3(parts: list[Path | int], out_mp3: Path, work: Path, bitrate: str
     joined = work / "joined.wav"
     ffmpeg(["-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(joined)])
     out_mp3.parent.mkdir(parents=True, exist_ok=True)
-    ffmpeg(["-i", str(joined), "-c:a", "libmp3lame", "-b:a", bitrate, str(out_mp3)])
+    # Encoded beside it, then moved into place: the MP3 marks narration done, and a stop (SIGINT to the
+    # run's process group, ffmpeg included) mid-encode leaves a shorter but valid file behind.
+    part = out_mp3.with_name(out_mp3.stem + ".part" + out_mp3.suffix)
+    ffmpeg(["-i", str(joined), "-c:a", "libmp3lame", "-b:a", bitrate, str(part)])
+    part.replace(out_mp3)
 
 
 # --- narrate a script ----------------------------------------------------------

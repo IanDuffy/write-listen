@@ -5,4 +5,5 @@ was empty, so the listener still hears what happened. One "key: line" per line.
 ---
 started: It's under way. It takes about {minutes} minutes; I'll let you know when it's ready.
 noted: Noted.
+quiet: I'll be here.
 done: Done.

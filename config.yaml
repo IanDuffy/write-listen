@@ -143,6 +143,7 @@ status_minutes:
 # The guide's conversation (Phase 1, milestone 3): prompts/guide.md, prompts/guide_tools.json.
 guide:
   name_draw: 5            # names drawn from prompts/guide_names.md for a first meeting
+  spark_draw: 3           # subjects drawn from prompts/guide_sparks.md, for the small delight it offers
   max_tool_rounds: 4      # tool calls the guide may chain in one turn
   max_session_usd: 2.00   # a conversation stops talking past this
 
@@ -154,10 +155,26 @@ guide:
 voice:
   agent_name: write-listen guide
   llm: claude-sonnet-5-5        # offered with reasoning effort none..max (llm.list, 2026-11-12)
-  reasoning_effort: none
+  reasoning_effort: low         # was none (Ian, for latency). At none the model has nowhere to think, and
+                                # in 2 of 6 test conversations it reasoned aloud ("They haven't picked, so
+                                # I'll decide..."), which the voice would speak; at low, 0 of 3, with shorter
+                                # turns. The latency check found no gain from none (0.99 s against 0.87 s).
   tts_model: eleven_v4_turbo    # ~100 ms; eleven_v4 (narration) is not offered for agents
   voice_id: null                # null: narration.voice_id, so the guide sounds like the chapters
   turn_eagerness: patient       # let the listener finish a thought
+  turn_timeout: -1              # never answer a silence (the platform's default re-prompts after 7 s)
+  # Stepping back: the page ends the voice connection (no model, no per-minute cost) when the guide
+  # calls step_back or after a silence, and listens locally (page/wake.js) to bring it back.
+  rest_after_silence_secs: 25   # nobody has spoken for this long: the guide steps back without a word
+  rest_after_ready_secs: 12     # the same, after it came back for the chapter or because of a sound
+  rest_after_no_words_secs: 90  # no words from either side for this long, however loud the room is
+  rest_max_minutes: 90          # resting this long ends the conversation and releases the microphone
+  wake:                         # the local listener: a sound in the voice band, well above the room, sustained
+    ratio: 4                    # times the room's noise floor
+    min_rms: 0.006              # and at least this loud (0-1, about -44 dBFS)
+    need_ms: 240                # for this long within window_ms
+    window_ms: 600
+    max_sound_wakes: 8          # sounds may wake it this often between taps; two unanswered in a row also stop it
   max_duration_seconds: 2400    # a conversation can outlast the ~20-minute wait
   tool_timeout_secs: 30         # start_chapter starts a run on the local server
   client_js: https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.32.1/dist/lib.iife.js  # pinned, 2026-10-29

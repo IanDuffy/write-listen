@@ -47,8 +47,10 @@ def test_opening_first_meeting(world, cfg):
     assert s.say(None).startswith("Hello, I'm Wren")
     (call,) = guide_calls(resp)
     assert call["model"] == cfg["models"]["guide"] == "claude-sonnet-5-5"
-    assert [t["name"] for t in call["tools"]] == ["start_chapter", "add_note", "get_status"]
+    assert [t["name"] for t in call["tools"]] == ["start_chapter", "add_note", "get_status", "step_back"]
     system = all_text(call)
+    assert guide.NO_EARLIER in system  # a conversation starts with nothing before it
+    assert f"It is {guide.day_part()}." in system
     assert "(none: this is your first meeting)" in system and "Pours concrete for a living." in system
     names = json.loads((listener / "sessions" / f"{s.id}.jsonl").read_text().splitlines()[0])["names"]
     assert len(names) == cfg["guide"]["name_draw"] and all(n in system for n in names)
@@ -219,3 +221,125 @@ def test_chat_after_a_restart_or_takeover_is_refused(client):
     assert c.post("/api/chat", json={"message": "hi", "session": sid}).status_code == 200
     assert c.post("/api/chat", json={"message": "hi", "session": "someone-else"}).status_code == 409
     assert c.post("/api/chat", json={"message": "hi"}).status_code == 409  # no id: not some other conversation
+
+
+# --- stepping back (Ian's notes on the first voice conversation, 2026-11-12) -------------------
+
+def test_step_back_is_a_tool_and_the_typed_guide_is_never_silent(world, monkeypatch):
+    session, resp, _, _, _, _ = world
+    s = session()
+    s.say(None)
+
+    from types import SimpleNamespace as NS
+
+    from fakes import text_block
+    use = NS(type="tool_use", id="tq", name="step_back", input={})
+
+    def parting_then_tool(kwargs):  # "Will do." then the tool, then nothing: the right voice behaviour
+        if isinstance(kwargs["messages"][-1]["content"], list):
+            return resp.msg(kwargs, None, content=[])
+        return resp.msg(kwargs, None, stop="tool_use", content=[text_block("Will do."), use])
+    monkeypatch.setattr(resp, "guide", parting_then_tool)
+    before = len(guide_calls(resp))
+    assert s.say("I'll wait, let me know when it's ready") == "Will do."
+    assert len(guide_calls(resp)) == before + 1  # words then step_back ends the turn: the model is not asked again
+    tool = [json.loads(x) for x in s.transcript.read_text().splitlines() if '"who": "tool"' in x][-1]
+    assert tool["name"] == "step_back" and tool["result"]["quiet"] is True
+    assert s.say("still there?")  # and the conversation goes on after it
+
+    def bare_tool(kwargs):  # an empty turn ("..."): the tool and no words at all
+        if isinstance(kwargs["messages"][-1]["content"], list):
+            return resp.msg(kwargs, None, content=[])
+        return resp.msg(kwargs, None, stop="tool_use", content=[use])
+    monkeypatch.setattr(resp, "guide", bare_tool)
+    assert s.say("...") == "I'll be here."  # typed, a line from prompts/guide_quiet.md rather than nothing
+
+
+def test_the_guide_coming_back_is_told_the_conversation_so_far(world):
+    session, _, _, status, _, _ = world
+    s = session()
+    assert s.values["earlier"] == guide.NO_EARLIER and s.values["chapter_now"] == "(none)"
+    s.record("page", text="[The listener has opened the page.]", mode="voice")
+    s.record("guide", text="Hey, good to see you.")
+    s.record("listener", text="I pour concrete for a living")
+    s.record("tool", name="start_chapter", input={"topic": "Roman harbours"}, result={"started": True, "minutes": 27})
+    s.record("guide", text="It's under way. Company, or quiet?")
+    s.record("listener", text="Let me know when it's ready.")
+    s.record("page", text="[The guide stepped back: it was asked to.]")
+    status["value"] = {"run": "lesson", "state": "ready", "title": "The Harbour That Would Not Sink"}
+    v = s.resume_values()
+    lines = v["earlier"].splitlines()
+    assert lines[1] == "you: Hey, good to see you." and lines[2] == "listener: I pour concrete for a living"
+    assert lines[3].startswith("(you called start_chapter:") and "Roman harbours" in lines[3]
+    s.record("tool", name="step_back", input={}, result={"quiet": True, "note": guide.STEP_BACK_NOTE})
+    assert s.resume_values()["earlier"].endswith("(you stepped back)")  # not its JSON: the window is 6,000 characters
+    assert lines[-1] == "page: [The guide stepped back: it was asked to.]"
+    assert "The Harbour That Would Not Sink" in v["chapter_now"]  # the chapter as it stands now, not at the start
+    assert v["identity"] == s.values["identity"] and s.values["earlier"] == guide.NO_EARLIER
+
+
+def test_a_long_conversation_is_cut_from_the_start(world):
+    session, _, _, _, _, _ = world
+    s = session()
+    for i in range(400):
+        s.record("listener", text=f"line {i} " + "x" * 40)
+    text = guide.earlier_text(s.transcript, limit=1000)
+    assert text.startswith("(the start is left out)\nlistener: line") and text.endswith("line 399 " + "x" * 40)
+    assert len(text) < 1100
+
+
+def test_the_prompt_asks_for_a_bare_hello_and_few_words():
+    prompt = common.load_prompt("guide", **{k: "x" for k in
+                                            ("identity", "names", "sparks", "profile", "history", "chapter_now", "minutes",
+                                             "now", "earlier")})
+    assert "Hello is only hello" in prompt and "Don't say who you are or what you do" in prompt
+    assert "Say little" in prompt and "one to three sentences" not in prompt
+    assert "say who you are in a line" not in prompt  # the old opening rule
+    assert "call step_back" in prompt and "never check in on a silence" in prompt
+    assert "Every word you produce is spoken aloud" in prompt and "under fifteen words" in prompt
+    # The shape of a first conversation (Ian, after the second night's test): them first, with no
+    # facts; then what the guide does and an open ask with edges; small delights later.
+    first, ask, later = prompt.index("First, them:"), prompt.index("Then what you do, and the ask:"), prompt.index("Later, small delights:")
+    assert first < ask < later < prompt.index("Deciding and starting:")
+    assert "Share first, then ask" not in prompt and "you are not informing them" in prompt
+    assert "never explain to them something from their own life or work" in prompt
+    assert "After three questions, or four at the most" in prompt and "if nothing comes to mind you will happily pick" in prompt
+    assert prompt.count("{{") == 0 and "x" in prompt[later:prompt.index("Deciding and starting:")]  # the sparks sit in "later"
+    assert "One move a turn" in prompt and "a friend you bump into on the street" in prompt
+
+
+def test_the_small_delight_is_drawn_like_the_names(world, cfg):
+    session, resp, _, _, _, _ = world
+    a, b = session(), guide.Session(cfg, lambda *x: "run", lambda: {"state": "idle"}, world[4], rng=random.Random(2))
+    sparks = a.values["sparks"].split(", ")
+    assert len(sparks) == cfg["guide"]["spark_draw"] and a.values["sparks"] != b.values["sparks"]
+    a.say(None)
+    assert all(s in all_text(guide_calls(resp)[0]) for s in sparks)
+
+
+def test_day_part():
+    import time
+    assert guide.day_part(time.strptime("2026-11-12 20:42", "%Y-%m-%d %H:%M")) == "Thursday evening"
+    assert guide.day_part(time.strptime("2026-11-13 02:10", "%Y-%m-%d %H:%M")) == "Friday night"
+    assert guide.day_part(time.strptime("2026-11-13 09:00", "%Y-%m-%d %H:%M")) == "Friday morning"
+
+
+def test_two_conversations_in_one_second_do_not_share_a_transcript(world):
+    session, _, _, _, _, _ = world
+    a, b, c = session(), session(), session()  # voice could not start, so typing began at once
+    assert len({a.id, b.id, c.id}) == 3 and len({a.transcript, b.transcript, c.transcript}) == 3
+    assert b.id.startswith(a.id[:15])
+
+
+def test_the_name_it_chose_survives_a_long_conversation(world):
+    session, _, _, _, _, _ = world
+    s = session()
+    name = s.names[2]
+    s.record("guide", text="Hi there.")
+    s.record("guide", text=f"It's under way. I'm {name}, by the way.")
+    for i in range(300):
+        s.record("listener", text=f"line {i} " + "x" * 40)
+    v = s.resume_values()
+    assert name not in v["earlier"]  # cut from the start of a long conversation
+    assert v["names"] == f"(you have already told them your name is {name}: keep it)"
+    assert session().resume_values()["names"].count(",") == 4  # no name said yet: the draw stands

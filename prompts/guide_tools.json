@@ -30,5 +30,10 @@
     "name": "get_status",
     "description": "How the chapter being made is going: the stage in plain words, about how many minutes are left, and its title once there is one. Call it whenever the listener asks; never guess.",
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
+  },
+  {
+    "name": "step_back",
+    "description": "Go quiet and stop listening until the listener wants you. Call it right after your short parting words when they say they will wait, want quiet, need a minute or say goodbye for now; and call it without a word when their turn is empty or only \"...\". They bring you back by speaking or tapping, and the page brings you back when their chapter is ready. Produce no text after calling it.",
+    "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
   }
 ]

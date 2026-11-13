@@ -10,6 +10,8 @@ ElevenLabs voice agent, where the tools become client tools in the page.
     add_note(note)                     appends to the run's 00_source/notes.md, which the
                                        stages that read the seed and have not run yet use
     get_status()                       the run's status.json, in plain terms
+    step_back()                        the guide goes quiet (voice: the page ends the connection
+                                       and listens locally for the listener; server.py, page/)
 
 The transcript is written as it happens to listener/sessions/<id>.jsonl, and each
 call's tokens and cost to listener/sessions/log.jsonl. A session stops talking
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from pathlib import Path
 
@@ -28,6 +31,10 @@ from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_profile, load_p
 
 TOOLS = json.loads((PROMPTS_DIR / "guide_tools.json").read_text(encoding="utf-8"))
 SEED_STAGES_DONE = "05_brief.md"  # once the brief exists, no later stage reads the seed or its notes
+NO_EARLIER = "(nothing yet: the conversation is just starting)"
+STEP_BACK_NOTE = ("You are stepping back. If you have not said your parting words"
+                  " yet, say them now, in a few words, once. Otherwise produce no text.")
+EARLIER_CHARS = 6000  # the end of a long conversation is what the guide needs when it comes back
 
 
 def listener_dir(cfg: dict) -> Path:
@@ -37,6 +44,11 @@ def listener_dir(cfg: dict) -> Path:
 def draw_names(cfg: dict, rng: random.Random) -> list[str]:
     names = [n.strip() for n in load_prompt("guide_names").splitlines() if n.strip()]
     return rng.sample(names, min(cfg["guide"]["name_draw"], len(names)))
+
+
+def draw_sparks(cfg: dict, rng: random.Random) -> list[str]:
+    sparks = [n.strip() for n in load_prompt("guide_sparks").splitlines() if n.strip()]
+    return rng.sample(sparks, min(cfg["guide"].get("spark_draw", 3), len(sparks)))
 
 
 def identity(cfg: dict) -> str | None:
@@ -58,7 +70,7 @@ def plain_status(status: dict) -> dict:
     """What get_status tells the guide: the state, the stage in plain words, minutes left, title."""
     state = status.get("state", "idle")
     out = {"state": {"idle": "no chapter yet", "making": "being made", "ready": "ready",
-                     "problem": "stopped"}.get(state, state)}
+                     "problem": "stopped", "stopped": "stopped by the listener"}.get(state, state)}
     if state == "making":
         out["stage"] = status.get("label") or "starting"
         if status.get("minutes_left") is not None:
@@ -70,6 +82,44 @@ def plain_status(status: dict) -> dict:
     return out
 
 
+def day_part(t: time.struct_time | None = None) -> str:
+    """'Thursday evening': enough for a hello that belongs to the moment."""
+    t = t or time.localtime()
+    part = ("night" if t.tm_hour < 5 else "morning" if t.tm_hour < 12 else "afternoon" if t.tm_hour < 17
+            else "evening" if t.tm_hour < 22 else "night")
+    return f"{time.strftime('%A', t)} {part}"
+
+
+def chapter_now(status: dict) -> str:
+    """The chapter being made or just finished, for the prompt's <chapter_now>."""
+    if status.get("state") in ("making", "ready", "problem", "stopped"):
+        return json.dumps({"run": status.get("run"), **plain_status(status)}, ensure_ascii=False)
+    return "(none)"
+
+
+def earlier_text(transcript: Path, limit: int = EARLIER_CHARS) -> str:
+    """The conversation so far as the guide should read it when it comes back: what each said
+    (its own lines as "you"), the tools it called, and the page's notes. The last `limit` characters."""
+    lines = []
+    for raw in transcript.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        who, text = rec.get("who"), (rec.get("text") or "").strip()
+        if who in ("listener", "guide", "page") and text:
+            lines.append(f"{'you' if who == 'guide' else who}: {text}")
+        elif who == "tool" and rec.get("name") == "step_back":
+            lines.append("(you stepped back)")
+        elif who == "tool":
+            lines.append(f"(you called {rec.get('name')}: {json.dumps(rec.get('input'), ensure_ascii=False)} -> "
+                         f"{json.dumps(rec.get('result'), ensure_ascii=False)})")
+    text = "\n".join(lines)
+    if len(text) > limit:
+        text = "(the start is left out)\n" + text[-limit:].split("\n", 1)[-1]
+    return text or NO_EARLIER
+
+
 class Session:
     """One conversation. `start(topic, why, notes)` starts a chapter and returns its run name
     (raising to refuse); `status()` returns the current run's status.json."""
@@ -78,26 +128,53 @@ class Session:
         self.cfg, self.start_fn, self.status_fn, self.runs_dir = cfg, start, status, runs_dir
         sessions = listener_dir(cfg) / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
-        self.id = time.strftime("%Y%m%d-%H%M%S")
+        self.id = stamp = time.strftime("%Y%m%d-%H%M%S")
+        n = 1
+        while (sessions / f"{self.id}.jsonl").exists():  # two in one second (voice failed, typing began): never share a file
+            n += 1
+            self.id = f"{stamp}-{n}"
         self.transcript = sessions / f"{self.id}.jsonl"
         self.log_run = Run(name="sessions", root=sessions)
         self.messages: list[dict] = []
         self.run: str | None = None  # the chapter started in this session
         known = identity(cfg)
-        names = [] if known else draw_names(cfg, rng or random.Random())
-        now = status() or {}
-        chapter_now = (json.dumps({"run": now.get("run"), **plain_status(now)}, ensure_ascii=False)
-                       if now.get("state") in ("making", "ready", "problem") else "(none)")
+        rng = rng or random.Random()
+        # A returning guide has its name in its identity and is not offered others. (A first meeting
+        # that ended before it said a name leaves no identity: prompts/memory.md.)
+        names = self.names = [] if known else draw_names(cfg, rng)
+        self.voice_conversations: list[str] = []  # ElevenLabs conversation ids: one per connection
         # The prompt's values: the typed chat renders them here; the voice agent (stages/voice.py) gets
         # them as dynamic variables, since its prompt is prompts/guide.md with the same {{placeholders}}.
         self.values = {
             "identity": known or "(none: this is your first meeting)",
             "names": ", ".join(names) or "(you already have a name: see above)",
-            "profile": listener_profile(cfg), "history": recent_history(cfg), "chapter_now": chapter_now,
+            "sparks": ", ".join(draw_sparks(cfg, rng)),
+            "profile": listener_profile(cfg), "history": recent_history(cfg),
+            "chapter_now": chapter_now(status() or {}),
             "minutes": str(round(sum((cfg.get("status_minutes") or {}).values())) or 25),
+            "now": day_part(), "earlier": NO_EARLIER,
         }
         self.system = load_prompt("guide", **self.values)
         self.record("session", names=names, returning=bool(known))
+
+    def resume_values(self) -> dict:
+        """The prompt's values for a new voice connection in the same conversation (the guide stepped
+        back and is coming back): the conversation so far, and the chapter as it stands now."""
+        values = {**self.values, "chapter_now": chapter_now(self.status_fn() or {}), "now": day_part(),
+                  "earlier": earlier_text(self.transcript)}
+        said = self.name_said()
+        if said:  # a long conversation's start is cut from "earlier": the name it chose must survive that
+            values["names"] = f"(you have already told them your name is {said}: keep it)"
+        return values
+
+    def name_said(self) -> str | None:
+        """The drawn name the guide has used in this conversation, if any (its first to appear)."""
+        if not self.names:
+            return None
+        spoken = " ".join(json.loads(x).get("text", "") for x in self.transcript.read_text(encoding="utf-8").splitlines()
+                          if '"who": "guide"' in x)
+        found = [(m.start(), n) for n in self.names if (m := re.search(rf"\b{re.escape(n)}\b", spoken))]
+        return min(found)[1] if found else None
 
     def record(self, who: str, **fields) -> None:
         line = json.dumps({"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "who": who, **fields}, ensure_ascii=False)
@@ -144,6 +221,11 @@ class Session:
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, ensure_ascii=False)})
             self.messages.append({"role": "user", "content": results})
+            if said and any(b.name == "step_back" for b in uses):
+                # It has said its parting words and stepped back: the turn is over. Asked again, the
+                # model has nothing to say and calls the tool again, round after round.
+                self.record("guide", text=" ".join(said))
+                return " ".join(said)
         self.record("guide", text=" ".join(said))
         if said:
             return " ".join(said)
@@ -162,6 +244,8 @@ class Session:
                 return lines["started"].replace("{minutes}", str(r.get("minutes", 25)))
             if r.get("added") is True:
                 return lines["noted"]
+            if r.get("quiet") is True:
+                return lines["quiet"]
         return lines["done"] if results else ""
 
     def _after_tools(self) -> bool:
@@ -178,6 +262,8 @@ class Session:
             return self.add_note(args.get("note") or "")
         if name == "get_status":
             return plain_status(self.status_fn() or {"state": "idle"})
+        if name == "step_back":  # typed, nothing else happens; by voice, the page ends the connection
+            return {"quiet": True, "note": STEP_BACK_NOTE}
         return {"error": f"no tool named {name}"}
 
     def start_chapter(self, topic: str, why: str, notes: str, listener_said: str = "") -> dict:

@@ -19,10 +19,12 @@ STUB = """window.ElevenLabsClient = { Conversation: { startSession: async (opts)
 def _open(cfg, tmp_path, mic: bool):
     """The page in Chromium; mic=True gives it a fake microphone it may use, False none at all."""
     cfg["voice"]["client_js"] = ORIGIN + "/stub-el.js"
-    html = TestClient(server.create_app(server.Pipeline(runs_dir=tmp_path), cfg, remember_on_start=False)).get("/").text
+    client = TestClient(server.create_app(server.Pipeline(runs_dir=tmp_path), cfg, remember_on_start=False))
+    html = client.get("/").text
     answers = {
         "/": ("text/html", html),
         "/stub-el.js": ("text/javascript", STUB),
+        "/wake.js": ("text/javascript", client.get("/wake.js").text),  # the page's local listener, as served
         "/api/events": ("text/event-stream", 'retry: 600000\ndata: {"state": "idle"}\n\n'),
         "/api/chat/start": ("application/json", json.dumps({"session": "s1", "reply": "Hello, I'm Wren."})),
         "/api/voice/start": ("application/json", json.dumps({"session": "s1", "signed_url": "wss://example/signed",

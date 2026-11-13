@@ -1,6 +1,6 @@
 """The guide's voice (Phase 1, milestone 4; docs/phase1-onboarding.md, docs/elevenlabs-agents-check.md).
 
-The voice guide is an ElevenLabs agent whose prompt is prompts/guide.md and whose three
+The voice guide is an ElevenLabs agent whose prompt is prompts/guide.md and whose
 client tools come from prompts/guide_tools.json, so the typed chat (stages/guide.py) and
 the voice share one persona. The repo is the source of truth: `sync_agent` creates the
 tools and the agent, or updates them when the prompt, tools or config.yaml's `voice`
@@ -23,9 +23,9 @@ import time
 from pathlib import Path
 
 from .common import PROMPTS_DIR, ROOT, StageError
-from .guide import TOOLS, listener_dir
+from .guide import STEP_BACK_NOTE, TOOLS, listener_dir
 
-PLACEHOLDERS = ("identity", "names", "profile", "history", "chapter_now", "minutes")
+PLACEHOLDERS = ("identity", "names", "sparks", "profile", "history", "chapter_now", "minutes", "now", "earlier")
 # The aside agent (ask mid-chapter, docs/ask-voice.md): the same guide, its aside mode and tools.
 ASIDE_PLACEHOLDERS = ("identity", "profile", "chapter", "where", "just_said", "coming", "later",
                       "dossier", "ledger", "earlier_asides")
@@ -81,7 +81,11 @@ def conversation_config(cfg: dict, tool_ids: list[str], kind: str = "guide") -> 
                        "tool_ids": tool_ids},
         },
         "tts": {"model_id": v["tts_model"], "voice_id": v.get("voice_id") or cfg["narration"]["voice_id"]},
-        "turn": {"turn_eagerness": v["turn_eagerness"]},
+        # turn_timeout: how long a silence the platform waits before sending the agent an empty turn
+        # ("...") to answer. On the first voice conversation its default of 7 s had the guide talking to
+        # an empty room every 15 s. -1 turns it off (accepted by the API, 2026-11-12; the docs give
+        # 1-30); the page also steps the guide back after voice.rest_after_silence_secs.
+        "turn": {"turn_eagerness": v["turn_eagerness"], "turn_timeout": v["turn_timeout"]},
         "conversation": {"max_duration_seconds": v["max_duration_seconds"]},
     }
     if kind == "aside":  # the page times silences itself (prompts/guide_aside.md), so the platform waits
@@ -179,14 +183,19 @@ def signed_url(cfg: dict, client=None, kind: str = "guide") -> str:
                    agent_id=sync_agent(cfg, client, kind=kind)).signed_url
 
 
-def dynamic_variables(session) -> dict[str, str]:
-    """The guide prompt's values for one conversation (guide.Session.values), as strings."""
-    return {k: str(session.values[k]) for k in PLACEHOLDERS}
+def dynamic_variables(session, resumed: bool = False) -> dict[str, str]:
+    """The guide prompt's values for one connection, as strings: guide.Session.values, or for a
+    guide coming back after stepping back, the same with the conversation so far."""
+    values = session.resume_values() if resumed else session.values
+    return {k: str(values[k]) for k in PLACEHOLDERS}
 
 
-def save_conversation(cfg: dict, session_id: str, conversation_id: str, client=None, wait_s: int = 120) -> dict | None:
+def save_conversation(cfg: dict, session_id: str, conversation_id: str, client=None, wait_s: int = 120,
+                      n: int = 1) -> dict | None:
     """After a voice conversation: ElevenLabs' record of it (transcript, tool calls, per-turn latency,
-    cost) to listener/sessions/<id>.voice.json, and its cost to the sessions log. Polls until done."""
+    cost) to listener/sessions/<id>.voice.json, and its cost to the sessions log. Polls until done.
+    A conversation in which the guide stepped back has several connections: the n-th after the
+    first goes to <id>.voice.<n>.json."""
     from .tts import el_call
     client = client or _client()
     deadline = time.monotonic() + wait_s
@@ -205,7 +214,8 @@ def save_conversation(cfg: dict, session_id: str, conversation_id: str, client=N
         return None
     data = rec.model_dump(mode="json") if hasattr(rec, "model_dump") else dict(rec)
     sessions = listener_dir(cfg) / "sessions"
-    (sessions / f"{session_id}.voice.json").write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
+    name = f"{session_id}.voice.json" if n <= 1 else f"{session_id}.voice.{n}.json"
+    (sessions / name).write_text(json.dumps(data, indent=1, default=str), encoding="utf-8")
     meta = data.get("metadata") or {}
     final = data.get("status") in ("done", "failed")
     line = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "stage": "voice", "session": session_id,
@@ -224,6 +234,7 @@ MOCK_RESULTS = {  # the voice agent's tools, mocked: a comparison never starts a
     "start_chapter": {"started": True, "minutes": 25},
     "add_note": {"added": True, "effect": "The stages still to come will take it into account."},
     "get_status": {"state": "being made", "stage": "Researching", "minutes_left": 18},
+    "step_back": {"quiet": True, "note": STEP_BACK_NOTE},
 }
 
 
@@ -274,8 +285,10 @@ def _voice_replies(cfg: dict, session, turns: list[str], client) -> list[dict]:
                 done.clear()
                 with lock:
                     mine = [e for e in events if e[0] == n]
-                tools_pending = any(k == "tool" and not any(k2 == "reply" and t2 > t for _, k2, t2, _ in mine)
-                                    for _, k, t, _ in mine)
+                # step_back is followed by silence, by design: never wait for words after it.
+                tools_pending = any(k == "tool" and v != "step_back"
+                                    and not any(k2 == "reply" and t2 > t for _, k2, t2, _ in mine)
+                                    for _, k, t, v in mine)
                 quiet = mine and time.monotonic() - mine[-1][2] >= 4 and not tools_pending
                 if quiet:
                     break
