@@ -112,6 +112,9 @@ def test_a_real_run_leaves_medians_the_next_run_estimates_from(tmp_path, cfg, mo
 
     real = new.write_status
     monkeypatch.setattr(new, "write_status", lambda r, c, state, **f: seen.append(real(r, c, state, **f)) or seen[-1])
+    assert T.estimate(again.cfg) == medians["first_audio"] is not None  # a time now, where the first run had none
     fast_run.run(again.r, again.cfg, episode=False)
-    assert seen[0]["minutes_left"] == 1 and seen[-1]["minutes_left"] == 0  # a time now, where the first run had none
+    # The fake steps take hundredths of a second, so each has run past its median by the time the status is
+    # written: no countdown (test_fast_run.py has the countdown on medians a step can be inside).
+    assert seen[0]["steps"][0]["state"] == "doing" and seen[-1]["minutes_left"] == 0
     assert len(json.loads(T.path(w.cfg).read_text(encoding="utf-8"))["runs"]) == 2

@@ -8,7 +8,11 @@
 // and, for each, the pieces narrated so far; a piece is its own file that never changes, and the
 // pieces played back to back are the chapter. This script:
 //
-//   - shows the section markers under the line: played, playing, ready, being written;
+//   - before the first audio, shows the four steps to it under the circle (status.steps: done ticked,
+//     the current one pulsing) and a countdown on the line (status.first_audio_in, counted down here
+//     from status.updated; none when the run gives none);
+//   - shows the section markers under the line: played, playing, ready, or, for one being written, the
+//     step it is at (researching, writing, editing, recording), the next one with "ready in about N min";
 //   - plays the pieces through the page's one <audio> element, in order, with a pause between
 //     sections, from the tap that follows "first audio";
 //   - tells the server where the listener is (POST /api/fast/position), which the run reads;
@@ -25,6 +29,7 @@
   const S = __FAST_SETTINGS__;  // config.yaml fast (faststart/routes.py page_settings)
   const audio = $("audio");
   const WORDS = { played: "played", playing: "playing", ready: "ready", being_written: "being written" };
+  const STEPS = { researching: "researching", writing: "writing", editing: "editing", recording: "recording" };
 
   const F = {
     run: null,           // the fast run being followed
@@ -506,8 +511,30 @@
   }
 
   // --- what the page shows ------------------------------------------------------------------------
+  // Seconds left of a countdown the run gave as `secs` at status.updated; null when none, or it has run out.
+  function left(secs) {
+    if (secs == null) return null;
+    const t = Date.parse(status.updated || "");
+    const rest = Number(secs) - (Number.isNaN(t) ? 0 : Math.max(0, (Date.now() - t) / 1000));
+    return rest > 0 ? rest : null;
+  }
+  // Whole minutes rounded up, as the guide is told them (faststart/guide_hooks.plain).
+  const about = (rest) => (rest < 60 ? "under a minute" : `about ${Math.ceil(rest / 60)} min`);
+
   const style = document.createElement("style");
   style.textContent = `
+  #steps { list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--muted); }
+  #steps li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  #steps .mark { width: 14px; text-align: center; flex: none; }
+  #steps li[data-state="done"] .mark::before { content: "\\2713"; }
+  #steps li[data-state="doing"] { color: var(--fg); }
+  #steps li[data-state="doing"] .mark::before { content: ""; display: inline-block; width: 8px; height: 8px;
+                                                border-radius: 50%; background: var(--accent); animation: stir 1.6s ease-in-out infinite; }
+  #steps li[data-state="todo"] { opacity: .6; }
+  #steps li[data-state="todo"] .mark::before { content: "\\00b7"; }
+  #steps .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @keyframes stir { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { #steps li[data-state="doing"] .mark::before { animation: none; } }
   #sections { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 26em; }
   #sections button { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
                      font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; border-radius: 6px;
@@ -520,6 +547,33 @@
   #sections button[data-state="being_written"] { font-style: italic; }
   body.fast-wait #orb { cursor: pointer; }`;
   document.head.appendChild(style);
+
+  const stepList = document.createElement("ol");
+  stepList.id = "steps";
+  stepList.setAttribute("aria-label", "Making the opening");
+  stepList.style.display = "none";
+  $("line").after(stepList);
+  const HIDDEN = { done: ", done", doing: ", now", todo: "" };
+
+  function openingSteps(listed) {  // one item per step; only what changed is touched
+    while (stepList.children.length > listed.length) stepList.lastChild.remove();
+    listed.forEach((x, k) => {
+      let li = stepList.children[k];
+      if (!li) {
+        li = document.createElement("li");
+        li.innerHTML = '<span class="mark" aria-hidden="true"></span><span class="label"></span><span class="sr"></span>';
+        stepList.appendChild(li);
+      }
+      if (li.dataset.state !== x.state) {
+        li.dataset.state = x.state;
+        li.lastChild.textContent = HIDDEN[x.state] || "";
+        if (x.state === "doing") li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+      }
+      if (li.children[1].textContent !== x.label) li.children[1].textContent = x.label;
+    });
+  }
+  // Before the first audio: the steps to it, from the status (a status from before the steps has none).
+  const opening = () => (!F.first && Array.isArray(status.steps) && status.steps.length ? status.steps : null);
 
   const list = document.createElement("ol");
   list.id = "sections";
@@ -541,10 +595,16 @@
         list.appendChild(li);
       }
       const b = li.firstChild, state = markerState(s), title = s.title || `Part ${s.n}`;
+      let word = WORDS[state];
+      if (state === "being_written" && STEPS[s.step]) {  // what is happening to it, and when it is expected
+        const rest = left(s.ready_in);
+        word = STEPS[s.step] + (rest === null ? "" : ` · ready in ${about(rest)}`);
+      }
       if (b.dataset.n !== String(s.n)) b.dataset.n = s.n;
-      if (b.dataset.state !== state) { b.dataset.state = state; b.lastChild.textContent = WORDS[state]; }
+      if (b.dataset.state !== state) b.dataset.state = state;
+      if (b.lastChild.textContent !== word) b.lastChild.textContent = word;
       if (b.firstChild.textContent !== title) b.firstChild.textContent = title;
-      const name = `${title}: ${WORDS[state]}`;
+      const name = `${title}: ${word}`;
       if (b.getAttribute("aria-label") !== name) b.setAttribute("aria-label", name);
     });
   }
@@ -555,13 +615,20 @@
   function line() {  // what the line under the circle says for a fast run, or null to leave it to the page
     if (!active()) return null;
     if (canPlay()) return status.title || "Your chapter is starting";
+    if (opening() && status.state === "making") {  // the step under way, and the countdown to the first audio
+      // none once the step has run past its median: the scout and the outline write no status meanwhile
+      const rest = left(status.step_ends_in) === null ? null : left(status.first_audio_in);
+      return (status.label || "Working") + (rest === null ? "" : ` · ${about(rest)}`);
+    }
     return F.mode === "waiting" && F.talk ? "Talk while you wait" : null;
   }
 
   function draw() {  // called at the end of the page's render()
-    const on = active();
-    list.style.display = on && F.secs.length ? "" : "none";
+    const on = active(), steps = on ? opening() : null;
+    stepList.style.display = steps ? "" : "none";
+    list.style.display = on && F.secs.length && !steps ? "" : "none";  // the steps first, then the markers
     if (!on) return;
+    if (steps) openingSteps(steps);
     markers();
     const b = document.body.classList;
     b.add("fast");
@@ -571,6 +638,8 @@
     const l = window.Ask && Ask.line() !== null ? null : line();                    // an aside, or "Ask a question", comes first
     if (l !== null) $("line").textContent = l;
   }
+
+  setInterval(() => { if (active() && status.state === "making") render(); }, 5000);  // the countdowns run down
 
   debug.state = () => ({ run: F.run, mode: F.mode, n: F.n, i: F.i, started: F.started, kept: F.kept, talk: F.talk,
                          checkIn: !!F.ci, since: F.since, reason: F.reason });

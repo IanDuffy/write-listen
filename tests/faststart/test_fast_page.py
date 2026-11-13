@@ -14,6 +14,7 @@ import socket
 import subprocess
 import threading
 import time
+from datetime import datetime
 
 import pytest
 
@@ -22,6 +23,7 @@ import server
 from fast_run_fakes import offline  # noqa: F401  (no live client for the whole session)
 from ask import aside as A
 from ask import routes as ask_routes
+from faststart import guide_hooks
 from faststart import run as fast_run
 from stages import memory, voice
 
@@ -66,6 +68,7 @@ class FastRun:
         self.numbers = list(range(1, sections + 1))
         self.pieces = {n: [] for n in self.numbers}
         self.complete, self.states, self.titles, self.more = set(), {}, dict(TITLES), {}
+        self.steps, self.ready_in = {}, {}  # a section's step and estimate, when the test gives one
         write(self.root / "fast.json", {"mode": "fast", "seed_set": 0})
         write(self.root / "05_outline.json", {
             "title": "Concrete That Heals", "through_line": "A material that was meant to change.",
@@ -92,7 +95,9 @@ class FastRun:
                    "state": self.states.get(n) or ("ready" if self.pieces[n] else "being_written"),
                    "ready": bool(self.pieces[n]), "complete": n in self.complete,
                    "pieces": [{"src": f"10_audio/sec{n:02d}/p{i:02d}.mp3", "seconds": s} for i, s in enumerate(self.pieces[n])],
-                   "seconds": sum(self.pieces[n]), "text": None, "timing": None} for n in self.numbers]
+                   "seconds": sum(self.pieces[n]), "text": None, "timing": None,
+                   **({"step": self.steps[n], "ready_in": self.ready_in.get(n)} if n in self.steps else {})}
+                  for n in self.numbers]
         write(self.root / "status.json", {
             "run": self.name, "state": "making", "mode": "fast", "pid": os.getpid(), "stage": "section 2",
             "label": "Writing part 2 of 3", "stages_done": 3, "stages_total": 9, "minutes_left": None,
@@ -650,7 +655,147 @@ def test_asking_mid_chapter_on_a_fast_run_uses_chapter_time_and_comes_back_throu
     assert [(x["kind"], x["ended"]) for x in log] == [("ask", "button")]
 
 
+# --- the steps and the countdowns (Ian, 2026-11-13) --------------------------------------------------
+
+def iso(ago=0.0):
+    """status.json's `updated`, as stages/new.write_status writes it, `ago` seconds back."""
+    return datetime.fromtimestamp(time.time() - ago).astimezone().isoformat(timespec="seconds")
+
+
+def opening_steps(doing):
+    keys = ["scout", "outline", "opening", "first_piece"]
+    labels = ["Looking into it", "Planning the chapter", "Writing the opening", "Recording the opening"]
+    at = keys.index(doing)
+    return [{"key": k, "label": label, "state": "done" if i < at else "doing" if i == at else "todo"}
+            for i, (k, label) in enumerate(zip(keys, labels))]
+
+
+def shown_steps(b):
+    return b.js("[...document.querySelectorAll('#steps li')].map((li) => [li.dataset.state, "
+                "li.querySelector('.label').textContent, li.getAttribute('aria-current'), li.textContent])")
+
+
+def line_is(b, text):
+    b.wait(f"document.getElementById('line').textContent === {json.dumps(text)}")
+
+
+def test_before_the_first_audio_the_steps_show_with_a_countdown_on_the_line(world):
+    r = world.run
+    r.status(label="Planning the chapter", steps=opening_steps("outline"), first_audio_in=130, step_ends_in=60,
+             updated=iso())
+    b = world.open()
+    # rounded up: the minutes the guide is given for the same status (guide_hooks.plain, run.py minutes_left)
+    line_is(b, "Planning the chapter · about 3 min")
+    assert shown_steps(b) == [["done", "Looking into it", None, "Looking into it, done"],
+                              ["doing", "Planning the chapter", "step", "Planning the chapter, now"],
+                              ["todo", "Writing the opening", None, "Writing the opening"],
+                              ["todo", "Recording the opening", None, "Recording the opening"]]
+    assert b.js("getComputedStyle(document.getElementById('steps')).display") != "none"
+    assert b.js("getComputedStyle(document.getElementById('sections')).display") == "none"  # the steps first
+    assert b.js("document.getElementById('steps').getAttribute('aria-label')") == "Making the opening"
+    mark = "(s) => getComputedStyle(document.querySelector(`#steps li[data-state='${s}'] .mark`), '::before')"
+    assert b.js(f"({mark})('doing').animationName") == "stir"  # the current step pulses, gently
+    assert b.js(f"({mark})('done').content") == '"✓"' and b.js(f"({mark})('done').animationName") == "none"
+    assert b.js("document.body.classList.contains('making')")
+    r.status(label="Writing the opening", steps=opening_steps("opening"), first_audio_in=40, step_ends_in=30,
+             updated=iso())
+    line_is(b, "Writing the opening · under a minute")
+    assert [x[0] for x in shown_steps(b)] == ["done", "done", "doing", "todo"]
+    r.status(label="Recording the opening", steps=opening_steps("first_piece"), first_audio_in=None, step_ends_in=None,
+             updated=iso())
+    line_is(b, "Recording the opening")  # no medians, or the step ran past its median: no time at all
+    assert [x[0] for x in shown_steps(b)] == ["done", "done", "done", "doing"]
+    r.status(first_audio_in=120, step_ends_in=300, updated=iso(ago=200))  # a countdown run out is not shown at zero
+    b.wait("status.first_audio_in === 120")
+    assert b.page.inner_text("#line") == "Recording the opening"
+    r.add(1, 2.0).status(steps=[{**x, "state": "done"} for x in opening_steps("scout")], first_audio_in=None, updated=iso())
+    line_is(b, "Concrete That Heals")  # the first audio: the steps go, the markers come
+    assert b.js("getComputedStyle(document.getElementById('steps')).display") == "none"
+    assert b.js("getComputedStyle(document.getElementById('sections')).display") != "none"
+
+
+def test_the_countdown_runs_down_on_the_page_between_statuses(world):
+    world.run.status(label="Looking into it", steps=opening_steps("scout"), first_audio_in=62, step_ends_in=30,
+                     updated=iso())
+    b = world.open()
+    line_is(b, "Looking into it · about 2 min")
+    b.wait("document.getElementById('line').textContent === 'Looking into it · under a minute'", timeout=9000)
+
+
+def test_the_countdown_goes_when_the_step_under_way_runs_past_its_median(world):
+    """The scout and the outline write no status while they run, so the page itself stops counting once
+    the step's own median has passed (step_ends_in), rather than run on to "under a minute" and then
+    jump back up when the next step's status comes."""
+    world.run.status(label="Looking into it", steps=opening_steps("scout"), first_audio_in=200, step_ends_in=60,
+                     updated=iso(ago=140))
+    b = world.open()
+    b.wait("status.step_ends_in === 60")
+    line_is(b, "Looking into it")
+    world.run.status(updated=iso())
+    line_is(b, "Looking into it · about 4 min")
+
+
+def test_the_page_names_the_minutes_the_guide_names(world):
+    """The line under the circle and get_status's starts_playing_in_minutes are one number."""
+    st = dict(label="Planning the chapter", steps=opening_steps("outline"), first_audio_in=130, step_ends_in=60,
+              updated=iso())
+    world.run.status(**st)
+    b = world.open()
+    line_is(b, "Planning the chapter · about 3 min")
+    assert guide_hooks.plain({}, {"state": "making", **st})["starts_playing_in_minutes"] == 3
+
+
+def test_the_current_step_holds_still_for_reduced_motion(world):
+    world.run.status(label="Looking into it", steps=opening_steps("scout"), first_audio_in=None, updated=iso())
+    b = world.open()
+    b.page.emulate_media(reduced_motion="reduce")
+    b.wait("document.querySelector(\"#steps li[data-state='doing']\") !== null")
+    assert b.js("getComputedStyle(document.querySelector(\"#steps li[data-state='doing'] .mark\"), '::before')"
+                ".animationName") == "none"
+    assert b.page.inner_text("#line") == "Looking into it"
+
+
+def test_after_the_first_audio_the_markers_say_each_parts_step_and_the_next_ones_time(world):
+    r = world.run = FastRun(world.runs, sections=4)
+    r.add(1, 6.0)
+    r.steps = {1: "ready", 2: "editing", 3: "researching", 4: "researching"}
+    r.ready_in = {2: 200}
+    r.status(updated=iso())
+    b = world.open()
+    b.wait("document.querySelectorAll('#sections button').length === 4")
+    assert b.markers() == [["ready", TITLES[1], "ready", f"{TITLES[1]}: ready"],
+                           ["being_written", TITLES[2], "editing · ready in about 4 min",
+                            f"{TITLES[2]}: editing · ready in about 4 min"],
+                           ["being_written", TITLES[3], "researching", f"{TITLES[3]}: researching"],
+                           ["being_written", TITLES[4], "researching", f"{TITLES[4]}: researching"]]
+    assert b.js("getComputedStyle(document.getElementById('steps')).display") == "none"
+    b.page.click("#orb")
+    b.wait("!document.getElementById('audio').paused")
+    r.steps = {1: "ready", 2: "recording", 3: "writing", 4: "researching"}
+    r.ready_in = {2: 45}
+    r.status(updated=iso())
+    b.wait("document.querySelectorAll('#sections button')[1].querySelector('.state').textContent === "
+           "'recording · ready in under a minute'")
+    assert [m[2] for m in b.markers()] == ["playing", "recording · ready in under a minute", "writing", "researching"]
+    r.ready_in = {}  # no estimate: the step alone
+    r.status(updated=iso())
+    b.wait("document.querySelectorAll('#sections button')[1].querySelector('.state').textContent === 'recording'")
+    assert b.markers()[1][3] == f"{TITLES[2]}: recording"
+
+
 # --- what Fast leaves alone ------------------------------------------------------------------------
+
+def test_an_overnight_run_keeps_its_line_and_minutes(world):
+    """The steps are a fast run's: an overnight run being made shows its label and minutes as before."""
+    write(world.runs / "night" / "status.json", {
+        "run": "night", "state": "making", "pid": os.getpid(), "label": "Drafting", "stages_done": 5, "stages_total": 14,
+        "minutes_left": 7, "updated": iso()})
+    b = world.open(fast=False)
+    b.wait("document.body.classList.contains('making')")
+    assert b.page.inner_text("#line") == "Drafting · about 7 min" and b.js("Fast.active()") is False
+    assert b.js("getComputedStyle(document.getElementById('steps')).display") == "none"
+    assert b.js("document.querySelectorAll('#steps li').length") == 0
+
 
 def test_an_overnight_run_being_made_is_untouched(world):
     write(world.runs / "night" / "status.json", {

@@ -5,6 +5,7 @@ thread may outlive its test (`no_leaks`): once a test's fake client is gone, a s
 would make real, paid calls."""
 
 import json
+import math
 import random
 import re
 import shutil
@@ -146,7 +147,7 @@ def test_a_fast_run_of_four_sections_end_to_end(tmp_path, cfg, monkeypatch):
     assert [s["state"] for s in seen][-1] == "ready" and {s["state"] for s in seen[:-1]} == {"making"}
     labels = [s["label"] for s in seen if s["label"]]
     assert labels[0] == "Looking into it" and "Planning the chapter" in labels and "Writing the opening" in labels
-    assert "Finishing" in labels and any(re.fullmatch(r"(Writing|Recording) part \d of 4", x) for x in labels)
+    assert "Finishing" in labels and any(re.fullmatch(r"(Researching|Writing|Editing|Recording) part \d of 4", x) for x in labels)
     assert seen[0]["sections"] == [] and seen[0]["first_audio"] is False and seen[0]["minutes_left"] is None
     states = [[x["state"] for x in s["sections"]] for s in seen if s["sections"]]
     assert states[0] == ["being_written"] * 4 and all(len(x) == 4 for x in states)
@@ -176,6 +177,60 @@ def test_a_fast_run_of_four_sections_end_to_end(tmp_path, cfg, monkeypatch):
     assert set(medians) >= {*MEDIANS, "scout", "outline", "first_audio"} and medians["lock_final"] is not None
     assert all(medians[k] is not None for k in (*MEDIANS, "scout", "outline", "first_audio"))
     assert T.estimate(w.cfg) == events(r, T.FIRST_AUDIO)[0]["t"]
+
+
+def test_status_moves_through_the_opening_steps_and_sections_carry_their_steps(tmp_path, cfg, monkeypatch):
+    """Ian, 2026-11-13: the steps instead of a timer. Before the first audio the status names the four
+    steps in order with a countdown from the medians; after it, each section says what is happening to it
+    and the next one not ready carries its estimate."""
+    w = world(tmp_path, cfg, monkeypatch)
+    medians = {k: 1000.0 for k in (*MEDIANS, "scout", "outline", "first_audio")}  # no fake step runs past these
+    base.write_json(T.path(w.cfg), {"medians": medians, "runs": []})
+    seen, real = [], new.write_status
+    monkeypatch.setattr(new, "write_status", lambda r, cfg, state, **f: seen.append(real(r, cfg, state, **f)) or seen[-1])
+
+    fast_run.run(w.r, w.cfg, player=SimPlayer(), episode=False)
+
+    early = [s for s in seen if not s["first_audio"]]
+    doing = [next(x["key"] for x in s["steps"] if x["state"] == "doing") for s in early]
+    assert [k for i, k in enumerate(doing) if i == 0 or doing[i - 1] != k] == ["scout", "outline", "opening", "first_piece"]
+    for s in early:
+        keys = [x["key"] for x in s["steps"]]
+        at = keys.index(next(x["key"] for x in s["steps"] if x["state"] == "doing"))
+        assert [x["state"] for x in s["steps"]] == ["done"] * at + ["doing"] + ["todo"] * (3 - at)
+        assert s["first_audio_in"] is not None and s["minutes_left"] == math.ceil(s["first_audio_in"] / 60)
+        # the current step's median and every later one's, less what has run of it
+        assert 1000 * (4 - at) - 30 < s["first_audio_in"] <= 1000 * (4 - at)
+        # the end of the step under way: the page and the guide stop counting there with no new status
+        assert 0 < s["step_ends_in"] <= s["first_audio_in"] and 1000 - 30 < s["step_ends_in"] <= 1000
+    assert early[0]["first_audio_in"] > 3900 and early[-1]["first_audio_in"] <= 1000
+    assert all(s["first_audio_in"] is None and s["step_ends_in"] is None and {x["state"] for x in s["steps"]} == {"done"}
+               for s in seen if s["first_audio"])
+
+    listed = [s["sections"] for s in seen if s["sections"]]
+    assert all(x["step"] in status.STEPS for secs in listed for x in secs)
+    assert any(x["step"] == "researching" for secs in listed for x in secs)
+    for step in ("writing", "editing", "recording"):
+        assert any(x["step"] == step for secs in listed for x in secs if x["n"] > 1), step
+    for secs in listed:
+        for x in secs:
+            assert (x["step"] == "ready") == x["ready"]
+    after = [s for s in seen if s["first_audio"] and s["state"] == "making" and not all(x["ready"] for x in s["sections"])]
+    assert after and all(sum(x["ready_in"] is not None for x in s["sections"]) == 1 for s in after)
+    for s in after:  # on the first section not ready, and only there
+        (x,) = [x for x in s["sections"] if x["ready_in"] is not None]
+        assert x["n"] == next(y["n"] for y in s["sections"] if not y["ready"]) and x["ready_in"] > 0
+    assert all(x["ready_in"] is None for x in final_status(w.r)["sections"])
+
+
+def test_status_gives_no_countdown_without_medians(tmp_path, cfg, monkeypatch):
+    w = world(tmp_path, cfg, monkeypatch)
+    seen, real = [], new.write_status
+    monkeypatch.setattr(new, "write_status", lambda r, cfg, state, **f: seen.append(real(r, cfg, state, **f)) or seen[-1])
+    fast_run.run(w.r, w.cfg, player=SimPlayer(), episode=False)
+    assert seen[0]["steps"][0] == {"key": "scout", "label": "Looking into it", "state": "doing"}
+    assert all(s["first_audio_in"] is None and s["step_ends_in"] is None and s["minutes_left"] in (None, 0) for s in seen)
+    assert all(x["ready_in"] is None for s in seen for x in s["sections"])
 
 
 @pytest.mark.parametrize("total", [3, 5])

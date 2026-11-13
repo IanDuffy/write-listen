@@ -33,6 +33,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from stages.common import load_prompt
@@ -70,8 +71,8 @@ NO_FIGURE = "no known number of (give no time unless a tool result gives one)"
 def for_guide(out: dict, status: dict, cfg: dict, runs_dir: Path) -> dict:
     """What the conversation adds to plain(), with the config and the run folder to hand: the wait
     rules while a fast run is being made and nothing can play yet, and no countdown to the first
-    audio once the run is past the earlier runs' median (the run clamps its countdown at 1 minute,
-    a figure nothing measured)."""
+    audio once the run is past the earlier runs' median (the run itself gives none once the step
+    under way has run past its median: faststart/status.first_audio_by)."""
     if status.get("mode") != "fast" or status.get("state") != "making":
         return out
     out = dict(out)
@@ -90,11 +91,31 @@ def for_guide(out: dict, status: dict, cfg: dict, runs_dir: Path) -> dict:
 def plain(out: dict, status: dict) -> dict:
     """guide.plain_status for a fast run: the overnight keys, each section's title and state, and
     whether listening can start. The run's own countdown (from the medians of earlier runs, absent
-    until one has been measured) is to the first audio, so it is named for that."""
+    until one has been measured) is to the first audio, so it is named for that, and counted down
+    from `updated` as the page counts it (status.json is not rewritten while it runs down, nor at
+    all during the scout and the outline): whole minutes rounded up, and none once the step under
+    way has run past its median (step_ends_in) or the countdown has run out."""
     out = {**out, **fast_status.plain(status)}
-    if "minutes_left" in out:
-        out["starts_playing_in_minutes"] = out.pop("minutes_left")
+    out.pop("minutes_left", None)
+    if status.get("state") == "making":
+        rest, step = since_written(status, "first_audio_in"), since_written(status, "step_ends_in")
+        if rest is not None and step is not None:
+            out["starts_playing_in_minutes"] = max(1, math.ceil(rest / 60))
     return out
+
+
+def since_written(status: dict, key: str) -> float | None:
+    """Seconds left of the countdown status[key] (given as of status["updated"]), or None when there
+    is none or it has run out: the page's left() (page/fast.js)."""
+    secs = status.get(key)
+    if secs is None:
+        return None
+    try:
+        written = datetime.fromisoformat(str(status.get("updated"))).timestamp()
+    except ValueError:
+        written = time.time()
+    rest = float(secs) - max(0.0, time.time() - written)
+    return rest if rest > 0 else None
 
 
 class Hooks:

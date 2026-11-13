@@ -214,11 +214,14 @@ class _Driver:
         self.heard = 0                            # the section the listener was last playing
         self.page_at = None
         self.last_now = 0.0
-        self.last_fields: dict | None = None
+        self.last_fields: tuple | None = None    # what status.json last said (status.settled, deadlines)
         self.idle_turns = 0
         self.archived: dict | None = None
         self.medians: dict = {}
-        self.estimate: float | None = None
+        self.step_at: float | None = None         # when the scout or the outline began (before the scheduler)
+        self.ready_key = None                     # what the next section's estimate was made from
+        self.ready_by: float | None = None        # and when it said the section would be ready
+        self.deadlines: tuple = ()                # the countdowns' end times, as last computed
 
     # --- the run ------------------------------------------------------------------------
 
@@ -296,9 +299,9 @@ class _Driver:
         r, cfg, f = self.r, self.cfg, self.f
         self.narrator = narrate.Narrator(r, cfg)  # first: it refuses a build test continued as a real chapter
         self._voice()
-        self.estimate = T.estimate(cfg)
         self.medians = T.load(cfg) or {}
         had, t0 = base.path(r, "scout").exists(), self.clock()
+        self.step_at = t0
         if not had:  # a continued run's first status is the loop's, with its sections: never "making" from nothing
             self._status()
         dossier = self.dossier = Dossier(r, cfg)
@@ -311,6 +314,7 @@ class _Driver:
 
         self.stage, self.label = "outline", "Planning the chapter"
         had, t0 = base.path(r, "outline_json").exists(), self.clock()
+        self.step_at = t0
         if not had:
             self._status()
         self.outline = outline_mod.run(r, cfg, dossier)
@@ -799,33 +803,76 @@ class _Driver:
         if not self.first_audio:
             return "opening", "Writing the opening" if 1 not in sched.locked else "Recording the opening"
         n = next((k for k in sched.sections if k not in sched.narrated), total)
-        doing = "Recording" if n in sched.locked else "Writing"
+        snap = sched.snapshot()  # the word is the marker's (status.section_step), so the two agree
+        step = status.section_step(n, snap["sections"][n], snap["rows"], snap["running"])
+        doing = {"researching": "Researching", "writing": "Writing", "editing": "Editing"}.get(step, "Recording")
         return f"section {n}", f"{doing} part {n} of {total}"
+
+    def _opening_step(self) -> tuple[str | None, float | None]:
+        """(the step to the first audio under way, when it began): status.OPENING's keys; (None, None)
+        once the first audio is playable. The start is unknown between two tries of a step."""
+        sched = self.sched
+        if self.first_audio:
+            return None, None
+        if sched is None:
+            return self.stage, self.step_at
+        if 1 not in sched.locked:
+            return "opening", sched.running.get(("opening",))
+        return "first_piece", sched.running.get(("narrate", 1))
+
+    def _ready_by(self, snapshot: dict | None, now: float) -> tuple[int, float] | None:
+        """(section, when it is expected) for the next section the listener reaches that is not
+        ready, after the first audio. The estimate is made again only when the run has moved on
+        (an action started or finished, a piece, a wait begun), so between those it is one fixed
+        time the page counts down to; once that time has passed there is none."""
+        n = status.next_up(snapshot) if self.first_audio and snapshot and not self.sched.finished else None
+        if n is None:
+            return None
+        hold = self.sched.hold()
+        key = (n, json.dumps([snapshot["running"], snapshot["done"], snapshot["rows"],
+                              hold and [hold["section"], hold["start"]]], sort_keys=True, default=str))
+        if key != self.ready_key:
+            self.ready_key = key
+            eta = self.sched.eta(n, now, self.medians) if self.medians else None
+            self.ready_by = None if eta is None else now + eta
+        return (n, self.ready_by) if self.ready_by is not None and self.ready_by > now else None
 
     def _fields(self) -> dict:
         sched = self.sched
+        now = self._now()
         snapshot = sched.snapshot() if sched else None
         hold = sched.hold() if sched else None
         waiting = hold["section"] if hold else None
-        eta = sched.eta(waiting, self.last_now, self.medians) if hold else None
+        eta = sched.eta(waiting, now, self.medians) if hold else None
         logged = hold is not None and len(self.hold_log) == len(sched.holds)
         decision = self.hold_log[-1]["decision"] if logged else None
         self.stage, self.label = self._where()
         done, total = status.progress(snapshot, len(self.outline["sections"]) if self.outline else self.f["sections"][1])
-        left = None
-        if self.estimate is not None and not self.first_audio and self.tl is not None:
-            left = max(1, math.ceil((self.estimate - self.tl.now()) / 60))
+        step, started = self._opening_step()
+        first_by = status.first_audio_by(step, started, now, self.medians)
+        # The step's own end: the page and the guide drop the countdown once it passes, with no new
+        # status (the scout and the outline write none while they run). Fixed while first_by is.
+        step_by = None if first_by is None else started + float(self.medians[step])
+        ready = self._ready_by(snapshot, now)
+        self.deadlines = (first_by, step_by, ready)
+        # The page's countdown in whole minutes, rounded up as the page and the guide round it.
+        left = None if first_by is None else max(1, math.ceil((first_by - now) / 60))
         return {"stage": self.stage, "label": self.label, "stages_done": done, "stages_total": total,
                 "minutes_left": left, "title": self.outline["title"] if self.outline else None,
                 **status.fields(self.r, self.outline, snapshot, self.titles, first_audio=self.first_audio,
-                                waiting_for=waiting, eta_seconds=eta, check_in=decision)}
+                                waiting_for=waiting, eta_seconds=eta, check_in=decision, step=step,
+                                first_audio_in=None if first_by is None else first_by - now,
+                                step_ends_in=None if step_by is None else step_by - now,
+                                ready_in=ready and (ready[0], ready[1] - now))}
 
     def _status(self) -> None:
-        """Write status.json when what it says has changed. Only ever called from the loop's thread."""
+        """Write status.json when what it says has changed. Only ever called from the loop's thread.
+        A countdown running down is not a change: its end time is compared, not its seconds."""
         fields = self._fields()
-        if fields == self.last_fields:
+        key = (status.settled(fields), self.deadlines)
+        if key == self.last_fields:
             return
-        self.last_fields = fields
+        self.last_fields = key
         overnight.write_status(self.r, self.cfg, "making", **fields)
         if self.sched is not None:
             base.write_json(base.path(self.r, "state"), self.sched.snapshot())

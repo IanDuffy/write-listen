@@ -2,7 +2,7 @@
 
 Built overnight on 2026-11-13 from `docs/fast-start.md`, on branch `feature/fast-start` in this worktree
 (`.claude/worktrees/fast-start-spec-phase-5de248`). Nothing is pushed. All five milestones are built and
-the whole suite passes (867 tests). Milestones 1 to 4 have run live. Milestone 5 (page and guide) has
+the whole suite passes (935 tests). Milestones 1 to 4 have run live. Milestone 5 (page and guide) has
 only been tested offline and in headless Chromium: no voice session was run.
 
 ## In one page
@@ -37,10 +37,11 @@ comparison and its options.
 
 ## Branch and commits
 
-`feature/fast-start` started from `8d582d9` (the ask-by-voice branch, not yet merged into the default
-branch) and has Ian's later ask-voice commit `e322052` merged in. Both had added ElevenLabs character
-timings to `stages/tts.py`; I kept Ian's version (on by default through `narration.timestamps`) and added
-an explicit `timestamps=` argument, which Fast Start's pieces pass.
+`feature/fast-start` started from `8d582d9` (the ask-by-voice branch) and has since taken in Ian's later
+ask-voice commit `e322052` and then the default branch at `15d0413` (the voice-first page and the quiet
+guide). So it is ready to merge into the default branch as it stands. Both sides had added ElevenLabs
+character timings to `stages/tts.py`; I kept Ian's version (on by default through
+`narration.timestamps`) and added an explicit `timestamps=` argument, which Fast Start's pieces pass.
 
 | Commit | What |
 |---|---|
@@ -50,13 +51,19 @@ an explicit `timestamps=` argument, which Fast Start's pieces pass.
 | `614cd93` | Merge of `feature/ask-voice` `e322052` |
 | `e4518c7` | The row agents are told science.org refuses the fetch tool |
 | `f473915` | Milestone 5: the review's confirmed findings fixed |
-| (last two) | The guide's `{{minutes}}` as a plain number; this report and the CLAUDE.md section |
+| `55e5f91` | The guide's `{{minutes}}` as a plain number |
+| `c51cdc5` | This report, the CLAUDE.md section, and a race in one page test |
+| `d7d1a79` | Merge of the default branch `15d0413` (voice-first page, quiet guide) |
+| (last) | The step-by-step progress display Ian asked for on 2026-11-13 |
 
-Not merged, on purpose: `voice/quiet-guide` (the spec's "wait conversation and ready ping", still being
-tuned in the main checkout) and `claude/voice-first-page`. Both edit `page/index.html`, `server.py`,
-`stages/guide.py` and `prompts/guide.md`, so milestone 5 kept its edits to those files to single lines
-and put the substance in new files (`page/fast.js`, `faststart/routes.py`, `faststart/guide_hooks.py`).
-Expect small conflicts in those four files when they meet.
+The merge with the default branch conflicted in `page/index.html`, `stages/guide.py`, `stages/voice.py`
+and `tests/test_voice.py`, all where both sides added a guide tool: the guide now has five
+(`scout_topic` first, then `start_chapter`, `add_note`, `get_status`, and the quiet guide's
+`step_back`). `page/fast.js` followed the page's renames (`endVoice()` became `endConversation()`),
+and a resting guide (stepped back, the page listening locally) now counts as a conversation the chapter
+must not play over; first audio wakes a resting guide to say so, as a finished chapter does. The quiet
+guide asks the listener whether they want company or quiet while they wait; the fast wait rules
+(very short replies, notes with kinds) apply when they choose company. Not tried live together.
 
 ## Live try (check 13)
 
@@ -289,7 +296,7 @@ the repo's existing tests pass unchanged. Milestone 5's changes are listed in it
 
 Checks 1, 2, 3, 4, 7 and 8 pass. Checks 5, 5b and 6 belong to milestone 5: see the page and guide section.
 
-The whole suite passes: **867 tests** (`.venv/bin/python -m pytest -q -p no:cacheprovider`, about 4.5 minutes, none skipped). The per-check counts below were taken at `614cd93` with the milestone 5 fixes in place.
+The whole suite passes: **935 tests** at the end of the build (`.venv/bin/python -m pytest -q -p no:cacheprovider`, about 6 minutes, none skipped; 867 when milestone 5 was finished). The per-check counts below were taken at `614cd93` with the milestone 5 fixes in place.
 
 "Recorded model and speech responses" here means the fake clients in `tests/fakes.py` and `tests/faststart/*_fakes.py`. They are scripted replies written for the tests, not recordings of real API responses.
 
@@ -1077,7 +1084,7 @@ Nothing plays over the conversation. The next tap ends the conversation and play
 - each section's title and state in words;
 - `waiting_for` (a title), and `expected_in_seconds` when the run has an estimate.
 
-While a fast run is being made and nothing can play yet, `guide_hooks.for_guide` adds `while_waiting`. The run's countdown is renamed `starts_playing_in_minutes`. `for_guide` drops it when there is no measured estimate, or once the run has gone past the earlier runs' median. The same wording opens a conversation started mid-wait (`chapter_now`).
+While a fast run is being made and nothing can play yet, `guide_hooks.for_guide` adds `while_waiting`. The run's countdown becomes `starts_playing_in_minutes`, worked out when it is read from `first_audio_in` and `updated` and rounded up, as the page shows it (status.json is not rewritten while a countdown runs down, nor during the scout and the outline). It is left out once the step under way has passed its median (`step_ends_in` run out), when there is no measured estimate, or once the run has gone past the earlier runs' median. The same wording opens a conversation started mid-wait (`chapter_now`).
 
 **The estimate.** It comes only from `faststart/timings.json` (`timings.estimate`, the medians of earlier runs on this machine). The file is gitignored. When checked on 2026-11-13 it held 5 runs with a median first audio of 243.59 s, so `Hooks.minutes()` gave 5 minutes. With no file, the guide is given no figure at all.
 
@@ -1185,7 +1192,7 @@ This covers milestone 5 only: `ebaaafe` and the fixes in `f473915`.
 ### Where this differs from the spec
 
 1. **The guide's prompt file was not edited.**
-   - `prompts/guide.md` line 64 still says "about {{minutes}} minutes, or what start_chapter says". A fast conversation fills `{{minutes}}` from `Hooks.minutes()`: the minutes to first audio when earlier runs measured it ("about 5 minutes"), else a phrase with no figure, which renders clumsily ("about no known number of (give no time unless a tool result gives one) minutes") but only on a machine with no finished fast run. The clean fix is one line in `guide.md`, left for whoever merges `voice/quiet-guide`, which rewrites that file.
+   - `prompts/guide.md` (as merged from the quiet guide, line 105) still says "about {{minutes}} minutes, or what start_chapter says". A fast conversation fills `{{minutes}}` from `Hooks.minutes()`: the minutes to first audio when earlier runs measured it ("about 5 minutes"), else a phrase with no figure, which renders clumsily ("about no known number of (give no time unless a tool result gives one) minutes") but only on a machine with no finished fast run. The clean fix is one line in `guide.md`, which I left alone because Ian is still tuning that file.
    - The tool descriptions no longer promise twenty minutes.
    - The wait rules reach the guide as `while_waiting`: in `start_chapter`'s result, in `get_status`, and in `chapter_now` for a conversation opened mid-wait. They are not in the system prompt.
    - "Lessons of about twenty minutes" stays: that is the chapter's length, not the wait.
@@ -1235,6 +1242,30 @@ No voice session was run live: no microphone, no ElevenLabs agent, no text-only 
 - The chapter resuming while the listener is mid-sentence.
 - The check-in closing on someone who is thinking (8 s), or staying open on steady background noise (up to 30 s).
 - The chapter and a guide heard at the same time.
+
+## Progress shown as steps (Ian's request, 2026-11-13)
+
+Asked for after the build, through another session: show what is happening rather than a long timer.
+
+- **Before the first audio**, four steps sit under the circle: Looking into it, Planning the chapter,
+  Writing the opening, Recording the opening. Done steps are ticked, the current one pulses gently (still
+  under reduced motion). The line names the current step with a countdown to the first audio, for example
+  "Planning the chapter · about 3 min", from the medians of earlier fast runs (`faststart/timings.json`).
+  When a step runs past its median the countdown goes, rather than sitting at "under a minute" or jumping
+  back up. With no medians there is no countdown.
+- **After the first audio**, each part not yet ready says what is happening to it: researching, writing,
+  editing or recording. The next part the listener will reach adds "ready in about N min" when there is an
+  estimate. While the listener waits, the line names the same step as that part's marker.
+- The guide's `get_status` gives the same minutes as the page (both rounded up) and the section steps.
+- `status.json` is still written only when something changes: the countdowns are stored as seconds as of
+  `updated`, and the page and the guide run them down themselves.
+- An overnight run's display is unchanged.
+
+Checked on the page with a mock run in headless Chromium (screenshots in the build session's scratchpad,
+`preview/before_first_audio.png` and `preview/playing.png`), and by tests in `tests/faststart/test_fast_status.py`
+(new), `test_fast_run.py`, `test_fast_page.py` and `test_fast_guide.py`. A review with three lenses confirmed six
+findings (a countdown that ran on past an overrun step, the page and the guide rounding differently, the
+line and the marker naming different steps), all fixed with tests. Not yet seen in a live run.
 
 ## The build's cost
 

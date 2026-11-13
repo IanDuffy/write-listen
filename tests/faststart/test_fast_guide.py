@@ -4,9 +4,11 @@ get_status. Offline: a fake model, the pipeline's command recorded, never run.""
 
 import functools
 import json
+import math
 import random
 import threading
 import time
+from datetime import datetime
 from types import SimpleNamespace as NS
 
 import pytest
@@ -336,11 +338,36 @@ def test_get_status_gives_the_time_to_first_audio_only_when_the_run_has_one():
     early = {**FAST_STATUS, "first_audio": False, "waiting_for": None, "eta_seconds": None, "check_in": None,
              "label": "Looking into it", "title": None, "sections": []}
     assert guide.plain_status(early) == {"state": "being made", "stage": "Looking into it", "can_start_listening": False}
-    assert guide.plain_status({**early, "minutes_left": 3}) == {
+    assert guide.plain_status({**early, **counting(130)}) == {
         "state": "being made", "stage": "Looking into it", "can_start_listening": False, "starts_playing_in_minutes": 3}
     # an overnight run's status is worded as it was
     assert guide.plain_status({"state": "making", "label": "Researching", "minutes_left": 12}) == \
         {"state": "being made", "stage": "Researching", "minutes_left": 12}
+
+
+def iso(ago=0.0):
+    """status.json's `updated`, as stages/new.write_status writes it, `ago` seconds back."""
+    return datetime.fromtimestamp(time.time() - ago).astimezone().isoformat(timespec="seconds")
+
+
+def counting(first_audio_in, step_ends_in=60, ago=0.0):
+    """A fast run's countdown to the first audio as the run writes it (minutes_left rounded up)."""
+    return {"first_audio_in": first_audio_in, "step_ends_in": step_ends_in, "updated": iso(ago),
+            "minutes_left": max(1, math.ceil(first_audio_in / 60))}
+
+
+def test_the_guides_minutes_run_down_from_the_status_as_the_pages_do():
+    """status.json is not rewritten while a countdown runs down, nor at all during the scout and the
+    outline: the guide's figure is worked out when it is read, rounded up as the page rounds it."""
+    early = {**FAST_STATUS, "first_audio": False, "waiting_for": None, "label": "Looking into it", "sections": []}
+    assert guide.plain_status({**early, **counting(130)})["starts_playing_in_minutes"] == 3
+    assert guide.plain_status({**early, **counting(130, step_ends_in=100, ago=80)})["starts_playing_in_minutes"] == 1
+    assert "starts_playing_in_minutes" not in guide.plain_status({**early, **counting(130, step_ends_in=300, ago=200)})
+    # the step under way has run past its median (the scout took long): no figure, though the sum has time left
+    assert guide.plain_status({**early, **counting(200, step_ends_in=60)})["starts_playing_in_minutes"] == 4
+    stale = guide.plain_status({**early, **counting(200, step_ends_in=60, ago=140)})
+    assert "starts_playing_in_minutes" not in stale and "minutes_left" not in stale
+    assert "starts_playing_in_minutes" not in guide.plain_status({**early, **counting(200, step_ends_in=None)})
 
 
 def test_the_guide_reads_a_fast_runs_status_through_the_tool(chat):
@@ -468,11 +495,11 @@ def test_get_status_drops_a_countdown_the_run_can_no_longer_back(chat):
     base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 185.0}, "runs": []})
     s = chat.session()
     start(s)
-    making_early(s, chat, minutes_left=3)
+    making_early(s, chat, **counting(130))
     mode = chat.runs / s.run / base.FILES["mode"]
     base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 30})
     assert s.tool("get_status", {})["starts_playing_in_minutes"] == 3
-    making_early(s, chat, minutes_left=1)
+    making_early(s, chat, **counting(50))
     base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 600})  # past the median: the clamp
     out = s.tool("get_status", {})
     assert "starts_playing_in_minutes" not in out and "minutes_left" not in out
@@ -480,7 +507,7 @@ def test_get_status_drops_a_countdown_the_run_can_no_longer_back(chat):
     # no earlier run measured: never a figure
     T.path(chat.cfg).unlink()
     base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 30})
-    making_early(s, chat, minutes_left=3)
+    making_early(s, chat, **counting(130))
     assert "starts_playing_in_minutes" not in s.tool("get_status", {})
 
 

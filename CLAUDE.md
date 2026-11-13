@@ -349,7 +349,11 @@ and Ian's live-try script: `faststart/REPORT.md`. Code in `faststart/`, tests in
 - `faststart/scheduler.py` is pure (no I/O, no clock); `faststart/run.py` drives it from one thread
   with lanes. Generation never waits for the listener; the only thing the listener changes is the
   solo lock after `fast.max_hold_seconds` of waiting. `status.json` stays `making` until archived (the
-  server's invariants key on it); `first_audio`, `sections`, `waiting_for`, `check_in` are added.
+  server's invariants key on it); `first_audio`, `sections`, `waiting_for`, `check_in` are added, and for the page's progress
+  (Ian, 2026-11-13) `steps`, `first_audio_in` and `step_ends_in` before the first audio, each section's `step`
+  and the next one's `ready_in` after it: countdowns in seconds as of `updated`, which the page and the guide
+  (`guide_hooks.plain`) run down themselves, in minutes rounded up. The countdown goes once `step_ends_in`
+  runs out: the scout and the outline write no status while they run.
 - `04_dossier.md` is append-only: a D number never changes (unlike `research.build_dossier`).
 - Listener notes: `listener_notes.md` (`faststart/notes.py`), not `00_source/notes.md`, for a fast run;
   read before every draft and lock.
