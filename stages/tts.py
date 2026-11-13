@@ -7,6 +7,7 @@ on plain text and WAV files.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -62,16 +63,28 @@ def el_call(fn, *args, **kwargs):
         raise ElevenLabsError(f"Could not reach ElevenLabs: {e}") from None
 
 
+ALIGNMENT_KEYS = ("characters", "character_start_times_seconds", "character_end_times_seconds")
+
+
 @dataclass
 class Synth:
     audio: bytes      # raw PCM s16le mono when the format is pcm_*, else encoded audio
     request_id: str | None
+    # With timestamps=True: when each character of the text sent is spoken, in seconds from the start
+    # of this audio ({characters, character_start_times_seconds, character_end_times_seconds}, the
+    # shape episode.timing.ElevenLabsTimings reads from a chunk's .json). None otherwise.
+    alignment: dict | None = None
 
 
 def synthesize(text: str, *, voice_id: str, ncfg: dict,
                previous_request_ids: list[str] | None = None,
-               previous_text: str | None = None, next_text: str | None = None) -> Synth:
-    """Text -> audio for one chunk. The only function that knows about ElevenLabs."""
+               previous_text: str | None = None, next_text: str | None = None,
+               timestamps: bool = False) -> Synth:
+    """Text -> audio for one chunk. The only function that knows about ElevenLabs.
+
+    timestamps=True asks the with-timestamps endpoint for the same audio plus character timings
+    (episode/INTEGRATION.md section 3): same request fields, same characters billed. The default
+    is the plain call, unchanged."""
     from elevenlabs import VoiceSettings
 
     client = elevenlabs_client()
@@ -92,12 +105,20 @@ def synthesize(text: str, *, voice_id: str, ncfg: dict,
         kwargs["next_text"] = next_text
     def convert():
         with client.text_to_speech.with_raw_response.convert(voice_id, **kwargs) as resp:
-            return b"".join(resp.data), resp.headers.get("request-id") or resp.headers.get("x-request-id")
+            return b"".join(resp.data), resp.headers.get("request-id") or resp.headers.get("x-request-id"), None
 
-    audio, request_id = el_call(convert)
+    def convert_timed():
+        # One JSON response (not a stream, not a context manager): the audio in base64 and the alignment.
+        resp = client.text_to_speech.with_raw_response.convert_with_timestamps(voice_id, **kwargs)
+        a = resp.data.alignment
+        alignment = {key: list(getattr(a, key)) for key in ALIGNMENT_KEYS} if a else None
+        return (base64.b64decode(resp.data.audio_base_64),
+                resp.headers.get("request-id") or resp.headers.get("x-request-id"), alignment)
+
+    audio, request_id, alignment = el_call(convert_timed if timestamps else convert)
     if not audio:
         raise StageError("ElevenLabs returned no audio.")
-    return Synth(audio=audio, request_id=request_id)
+    return Synth(audio=audio, request_id=request_id, alignment=alignment)
 
 
 def model_char_limit(model_id: str) -> int | None:

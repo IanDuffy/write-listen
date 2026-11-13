@@ -54,6 +54,19 @@ stages:
   ask_grade: {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 12000}  # ask/scenarios.py: grades the asides (Opus)
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
+  # Fast Start (docs/fast-start.md; code in faststart/). A listener is waiting, so nothing is batched.
+  # The opening's two calls run at medium: they stand between the listener and the first audio.
+  fast_scout:         {model: claude-opus-5-5, max_tokens: 32000, effort: low, expected_output_tokens: 6000, max_continuations: 4}
+  fast_scout_writeup: {model: claude-opus-5-5, max_tokens: 32000, effort: low, expected_output_tokens: 5000}
+  fast_scout_match:   {model: claude-haiku-5-5, max_tokens: 1024, effort: low, expected_output_tokens: 20}
+  fast_outline:       {max_tokens: 32000, effort: medium, expected_output_tokens: 5000}
+  fast_outline_edit:  {max_tokens: 32000, effort: medium, expected_output_tokens: 5000}
+  fast_opening:       {max_tokens: 32000, effort: medium, expected_output_tokens: 4000}
+  fast_opening_edit:  {max_tokens: 32000, effort: medium, expected_output_tokens: 4000}
+  fast_draft:         {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
+  fast_lock:          {max_tokens: 64000, effort: high, expected_output_tokens: 9000}
+  fast_note:          {model: claude-sonnet-5-5, max_tokens: 4000, effort: low, expected_output_tokens: 300}
+  fast_compare:       {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
 
 chapter:
   target_words: 6000
@@ -259,3 +272,43 @@ ask:
   silence_after_question_secs: 8 # it asked something: give them longer
   long_aside_minutes: 5          # the guide may offer once to save the thread
   dossier_line_words: 24         # entries outside the current and next segment: one line each
+
+# Fast Start (docs/fast-start.md; code in faststart/): the opening plays a few minutes after the
+# topic is set, and the rest is researched, written, edited and narrated section by section while
+# the listener listens. `python cli.py new --seed "..." --unattended --mode fast`. The overnight
+# pipeline reads none of this.
+fast:
+  words_per_minute: 150
+  target_minutes: 20
+  sections: [3, 5]              # decided by the outline within these limits
+  opening_min_minutes: 6        # the intro and section 1 together: time for the research behind section 2
+  section_min_minutes: 3
+  total_minutes: [18, 24]
+  max_run_usd: 8.00             # the run's cap; starting a fast run approves spending up to it
+  scout: {searches: 6, fetches: 3}
+  research:
+    per_row: {searches: 5, fetches: 2}
+    max_searches: 30            # the agents of the outline's rows together. Beside it: the scout's own budget,
+                                # and note_research.max_agents x searches (6) for listeners' notes: 36 at most
+    parallel: 4
+    row_timeout_seconds: 600    # after this a section is drafted without the row; it is flagged thin
+  note_research: {searches: 3, fetches: 1, max_agents: 2}  # a listener's note the dossier cannot serve
+  max_hold_seconds: 180         # the listener has waited this long for a section: lock it with a solo edit
+  short_wait_seconds: 15        # a section expected sooner than this is just a pause, with no check-in
+  silence_seconds: 8            # the check-in's mic closes after this much silence
+  gap_mic: auto                 # auto: the mic opens with the check-in. tap: it waits for a tap
+  position_seconds: 3           # how often the page reports the player's position
+  narration:
+    first_piece_max_chars: 450  # the first piece is one short paragraph, so the first audio comes soon
+    piece_min_chars: 350        # after that, short paragraphs are narrated together up to about this
+    piece_max_chars: 1500
+    simulate_after_chars: null  # build tests only: past this many real characters, silence of the right
+                                # length stands in for the voice (ElevenLabs characters are scarce)
+    speech_chars_per_second: 15.5  # measured on three chapters: the voice's pace, and how fast
+    synth_chars_per_second: 50     # ElevenLabs returns it (the simulated narration keeps both)
+  timings_file: faststart/timings.json  # medians of earlier runs, for the guide's time estimate
+  step_timeout_seconds: 600     # a draft, lock or narration with no result after this counts as failed
+  exit_wait_seconds: 150        # a run that stops waits this long for calls in flight, so their cost is logged
+                                # and their results kept for the run that continues (a hung call gets 5 s)
+  tick_seconds: 0.5             # how often the run's loop looks at the clock and the listener's position
+  build_cap_usd: 25.00          # the build's own cap: python -m faststart e2e and compare refuse to pass it

@@ -39,6 +39,10 @@ Seed runs (Phase 1, docs/phase1-onboarding.md): a 20-minute lesson from a listen
                                  seed -> finished chapter with no checkpoints (decisions.md records
                                  every choice); the run name is made from the seed if not given.
                                  The same command again continues a stopped run.
+    new [run] --seed "..." --unattended --mode fast
+                                 Fast Start (docs/fast-start.md): the opening plays a few minutes after
+                                 the topic is set, and the rest is researched, written, edited and narrated
+                                 section by section meanwhile. A run started fast continues fast.
     new [run] --seed "..."       just write 00_source/seed.md; then run the stages one by one:
     scout <run>                  seed -> 01_map.md (10 searches), then angles, choose, ... as above
     chat                         talk with the guide in the terminal (milestone 3); it starts the
@@ -153,6 +157,19 @@ def chat(cfg: dict) -> int:
     return 0
 
 
+def _continues(root, mode: str) -> bool:
+    """Whether an unfinished run folder a seed lookup found is this mode's to continue. A run
+    started fast (fast.json) is continued only by --mode fast, and one the overnight pipeline has
+    worked in (a status, a log or a map, and no fast.json) only without it; a folder that holds
+    just its seed belongs to neither yet. (A run named on the command line is not asked: a run
+    marked fast continues fast, which is how the server's Try again continues one.)"""
+    from faststart import base as fast_base
+
+    if (root / fast_base.FILES["mode"]).exists():
+        return mode == "fast"
+    return mode != "fast" or not any((root / PATHS[k]).exists() for k in ("status", "log", "map"))
+
+
 def new_run(args, cfg: dict) -> int:
     """`new`: create (or continue) a seed run; with --unattended, run it to the end."""
     from stages import new, seed
@@ -163,7 +180,8 @@ def new_run(args, cfg: dict) -> int:
             raise StageError("new needs --seed \"...\" (or --seed-file), or the name of a run to continue.")
         text = (seed.seed_text(args.seed, args.why, args.notes) if args.seed
                 else open(args.seed_file, encoding="utf-8").read().strip() + "\n")
-        name = seed.find_run(text) or seed.run_name(args.seed or text)
+        # the newest unfinished run of this seed and of this mode; the other mode's run is left alone
+        name = seed.find_run(text, ok=lambda root: _continues(root, args.mode)) or seed.run_name(args.seed or text)
     r = Run.open(name, force=args.force, yes=args.yes, create=True)
     if r.path("seed").exists():
         if args.seed or args.seed_file:
@@ -177,11 +195,21 @@ def new_run(args, cfg: dict) -> int:
             raise StageError(f"{r.name} starts from a transcript; a seed run needs its own name.")
         seed.write(r, args.seed or "", args.why, args.notes, args.seed_file)
     cfg = run_config(r, cfg)
+    from faststart import base as fast_base
+    fast = args.mode == "fast" or fast_base.is_fast(r)  # a run marked fast is continued as one (the server's retry)
     if not args.unattended:
+        if fast:
+            print(f"  Next: python cli.py new {r.name} --unattended --mode fast")
+            return 0
         print(f"  Next: python cli.py scout {r.name}, then the stages one by one; or the whole run:\n"
               f"  python cli.py new {r.name} --unattended")
         return 0
     r.unattended = True
+    if fast:
+        from faststart import run as fast_run
+        r.max_usd = args.max_usd if args.max_usd is not None else cfg["fast"]["max_run_usd"]
+        fast_run.run(r, cfg)
+        return 0
     r.max_usd = args.max_usd if args.max_usd is not None else cfg["unattended"]["max_run_usd"]
     new.run(r, cfg)
     return 0
@@ -206,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--unattended", action="store_true",
                     help="new: run every stage with no checkpoints, under the run's spending cap")
     ap.add_argument("--max-usd", type=float, help="new --unattended: this run's spending cap")
+    ap.add_argument("--mode", choices=["overnight", "fast"], default="overnight",
+                    help="new: overnight (the whole chapter, then narration) or fast (docs/fast-start.md)")
     ap.add_argument("--plan-only", action="store_true",
                     help="research: show each row's budget and the estimate, spend nothing")
     ap.add_argument("--rows", help="research: ledger rows to research (or redo), e.g. L01 or L01,L03")

@@ -38,12 +38,14 @@ def run_name(topic: str, runs_dir: Path | None = None) -> str:
     return candidate
 
 
-def find_run(text: str, runs_dir: Path | None = None) -> str | None:
+def find_run(text: str, runs_dir: Path | None = None, ok=None) -> str | None:
     """The newest unfinished run started from exactly this seed, so the same `new --seed ...`
-    command continues a stopped run instead of paying for a second one."""
+    command continues a stopped run instead of paying for a second one. With `ok`, only among
+    the run folders ok(folder) accepts (cli.py: the runs of the mode that was asked for)."""
     root = runs_dir or RUNS_DIR
     found = [p for p in root.glob("*/00_source/seed.md")
-             if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()]
+             if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()
+             and (ok is None or ok(p.parent.parent))]
     return max(found, key=lambda p: p.stat().st_mtime).parent.parent.name if found else None
 
 

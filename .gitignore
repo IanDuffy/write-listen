@@ -29,3 +29,6 @@ voice_test/log.jsonl
 
 # Ask mid-chapter: the grading pass's run log (costs are summarised in ask/build_costs.jsonl)
 ask/_runs/
+
+# Fast Start: medians of this machine's runs (build costs are in faststart/build_costs.jsonl, committed)
+faststart/timings.json

@@ -229,16 +229,18 @@ def has_pending(r: Run, row: dict, followup: bool = False) -> bool:
 
 
 def run_agent(r: Run, cfg: dict, row: dict, led: dict, angle: str, episode_map: str,
-              followup: dict | None = None, check_spend=None) -> dict:
+              followup: dict | None = None, check_spend=None, prompt: str | None = None) -> dict:
     """Research one row. A row's files (Lnn.md and Lnn.sources.json) change only when new findings
-    have been written, so a failed redo leaves the old findings, and their sources, as they were."""
+    have been written, so a failed redo leaves the old findings, and their sources, as they were.
+    `prompt`, when given, is sent in place of agent_prompt's (a fast run's rows have their own:
+    faststart/research.py); it must ask for the same reply format."""
     if check_spend:
         check_spend()  # a queued agent does not start once the spend cap is reached
     searches, fetches = ledger.budget(cfg, row, followup=bool(followup))
     stage = "research_followup" if followup else "research_row"
     label = f"research {row['id']}" + (" follow-up" if followup else "")
     extra = {"row": row["id"]}
-    prompt = agent_prompt(r, cfg, row, led, angle, episode_map, followup)
+    prompt = prompt or agent_prompt(r, cfg, row, led, angle, episode_map, followup)
     md, src = row_paths(r, row["id"], followup=bool(followup))
     pending = pending_path(r, row["id"], followup=bool(followup))
     md.parent.mkdir(parents=True, exist_ok=True)
