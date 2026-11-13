@@ -177,11 +177,30 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   it answered every one. A connection also bills about $0.08 a minute while silent.
 - **Says little** (`prompts/guide.md`): a hello of two to five words and nothing else; no
   introduction (the name comes up in passing, at the latest when the chapter starts; what
-  it makes, when it offers to make it); a turn is usually under fifteen words, one move a
+  it makes, a few exchanges in); a turn is usually under fifteen words, one move a
   turn; never reasons aloud or talks about the listener as "they" (every word is spoken).
   `{{now}}` is the day and part of day. `{{sparks}}`: three subjects drawn from
   `prompts/guide_sparks.md` for the small delight it offers, as names are drawn: left
   alone it offered an octopus's hearts in 7 of 11 conversations.
+- **The shape of a first conversation** (Ian, after his next test the same night; this
+  replaces the Phase 1 doc's "share first, then ask" and "it decides"). After "Hi there"
+  the guide had offered a fact about elevator buttons ("interesting but random") and
+  explained plywood to a man building his own cabinets (a lecture); and his wife, asked
+  cold what to talk about, felt put on the spot. Now, in order: **them first**: easy,
+  concrete questions about their day, most turns only the next question, no facts and
+  never an explanation of their own life or work, three questions or four at the most
+  (fewer if they answer in a word or two); **then what it does**, in a sentence or two,
+  **and the ask**: what would they like a chapter about, with edges (something from what
+  they said, or something else, or the guide will pick) and never "anything"; if they
+  hesitate it offers one or two ideas from what they told it, or to surprise them, and
+  never asks twice; a choice they made or handed over is not confirmed again. **Small
+  delights later**: once the chapter is under way and they want company (`{{sparks}}`).
+  Tuned with simulated listeners talking to the typed guide (a builder, a reserved
+  listener, a terse one, an eager one, a returning one; scratch script, Claude only) and
+  a blind panel against the previous prompt: preferred in four of five pairs, and the
+  panel's six edits (each checked by a skeptic) are in. What reads as lecturing, from the
+  panel: a remark triggered by a noun rather than by what the person meant, about
+  something they know better, that cannot be answered, before the guide knows them.
 - **Effort `low`, not `none`** (`voice.reasoning_effort`). At `none` the model has nowhere
   to think: in 2 of 6 text-only test conversations it reasoned aloud ("They haven't
   picked, so I'll decide..."), which the voice would speak. At `low`: 0 of 3, shorter

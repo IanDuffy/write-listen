@@ -156,9 +156,12 @@ guesses; each `status.json` records every stage's real duration (`history`)
 to calibrate them.
 
 **The guide (milestone 3, typed).** Tap the circle and the guide speaks first;
-the text box talks to it. Its persona is `prompts/guide.md` (the doc's rules for
-finding a seed without an interview: share first, never two questions in a row,
-ordinary answers are doors, offer tastes, decide), its tools
+the text box talks to it. Its persona is `prompts/guide.md`: after a bare hello
+it gets to know the listener with easy questions and very little of its own (no
+facts, and never an explanation of their own work); after three or four it says
+in a sentence or two what it does and asks what they would like a chapter
+about, offering to pick if nothing comes to mind; small delights wait until the
+chapter is under way. Its tools are
 `prompts/guide_tools.json`: `start_chapter` starts the unattended run,
 `add_note` passes on something said afterwards (stages still to come read
 `00_source/notes.md` with the seed), `get_status` reads `status.json`. A first

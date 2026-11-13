@@ -297,6 +297,14 @@ def test_the_prompt_asks_for_a_bare_hello_and_few_words():
     assert "say who you are in a line" not in prompt  # the old opening rule
     assert "call step_back" in prompt and "never check in on a silence" in prompt
     assert "Every word you produce is spoken aloud" in prompt and "under fifteen words" in prompt
+    # The shape of a first conversation (Ian, after the second night's test): them first, with no
+    # facts; then what the guide does and an open ask with edges; small delights later.
+    first, ask, later = prompt.index("First, them:"), prompt.index("Then what you do, and the ask:"), prompt.index("Later, small delights:")
+    assert first < ask < later < prompt.index("Deciding and starting:")
+    assert "Share first, then ask" not in prompt and "you are not informing them" in prompt
+    assert "never explain to them something from their own life or work" in prompt
+    assert "After three questions, or four at the most" in prompt and "if nothing comes to mind you will happily pick" in prompt
+    assert prompt.count("{{") == 0 and "x" in prompt[later:prompt.index("Deciding and starting:")]  # the sparks sit in "later"
     assert "One move a turn" in prompt and "a friend you bump into on the street" in prompt
 
 
