@@ -19,7 +19,9 @@ def _heading(path: Path, prefix: str) -> str | None:
 
 def make(run: Path) -> dict:
     timing = json.loads((run / EPISODE_DIR / "timing.json").read_text(encoding="utf-8"))
-    refs = json.loads((run / EPISODE_DIR / "references.json").read_text(encoding="utf-8"))
+    rp = run / EPISODE_DIR / "references.json"
+    # No references yet (an unattended run builds only the timing): the transcript reads along without cards.
+    refs = json.loads(rp.read_text(encoding="utf-8")) if rp.exists() else []
     sentence = {x["id"]: x for s in timing["segments"] for x in s["sentences"]}
     missing = [r["sentence_id"] for r in refs if r["sentence_id"] not in sentence]
     if missing:
@@ -39,5 +41,7 @@ def make(run: Path) -> dict:
 
 def write(run: Path) -> Path:
     p = run / EPISODE_DIR / "episode.json"
-    p.write_text(json.dumps(make(run), ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(make(run), ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
     return p

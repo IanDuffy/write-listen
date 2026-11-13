@@ -75,7 +75,8 @@ def recognize_pieces(pieces: list[dict], recognizer, cache_path: Path | None) ->
             continue
         key = f"{getattr(recognizer, 'name', 'recognizer')}|{p['path'].name}:{p['path'].stat().st_size}"
         if key not in cache:
-            print(f"  recognizing {p['path'].name} ({audio_duration(p['path']):.0f} s)", flush=True)
+            verb = "reading the timings of" if getattr(recognizer, "name", "") == "elevenlabs" else "recognizing"
+            print(f"  {verb} {p['path'].name} ({audio_duration(p['path']):.0f} s)", flush=True)
             cache[key] = recognizer(p["path"])
             if cache_path:
                 cache_path.write_text(json.dumps(cache), encoding="utf-8")
@@ -243,7 +244,9 @@ def build(run: Path, recognizer, pronunciations: dict[str, str], audio_rel: str 
 def write(run: Path, timing: dict) -> Path:
     p = run / EPISODE_DIR / "timing.json"
     p.parent.mkdir(exist_ok=True)
-    p.write_text(json.dumps(timing, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp = p.with_suffix(".tmp")  # whole or not at all: asking mid-chapter and the runner trust that it exists
+    tmp.write_text(json.dumps(timing, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
     return p
 
 

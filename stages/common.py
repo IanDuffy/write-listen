@@ -62,6 +62,9 @@ PATHS = {
     "script_final": "09_script_final.md",
     "audio_dir": "10_audio",
     "chapter_mp3": "10_audio/chapter.mp3",
+    "timing": "11_episode/timing.json",  # every word's time (episode/timing.py): read along, ask mid-chapter
+    "episode": "11_episode/episode.json",  # the episode page's one file (episode/bundle.py)
+    "episode_step": "11_episode/step.json",  # what an unattended run's episode step did: built, or why not
     "baseline_dir": "baseline",
     "baseline_script": "baseline/script.md",
     "baseline_mp3": "baseline/chapter.mp3",

@@ -39,12 +39,12 @@ with real files and real ffmpeg.
 
 **The hands-off run, in order:** `init --source <pdf>`, `map`, `angles`,
 `choose`, `ledger`, `research --yes`, `ledger-update --yes`, `brief`, `draft`,
-`assemble`, `coverage`, `edit`, `factcheck`, `revise`, `narrate`; then `baseline`,
+`assemble`, `coverage`, `edit`, `factcheck`, `revise`, `narrate`, `episode`; then `baseline`,
 `narrate --baseline`, `compare`, `report`. `--yes` passes the $5 guard and
 needs Ian's say-so for that run (he gave it for `beauty-scarry` on 2026-11-11).
 Check the script's character count against the ElevenLabs balance before
-narrating: the `starter` plan has 40,000 characters a month and one chapter is
-about 36,000, so the baseline narration needs a bigger plan or the next month.
+narrating: one chapter is about 36,000 characters (a seed chapter about 18,000). The account
+was on the `creator` plan, 121,074 characters a month, on 2026-11-12 (it was `starter`, 40,000).
 
 ## Phase 1: real-time onboarding (merged from `claude/realtime-onboarding`, 2026-11-12)
 
@@ -189,7 +189,8 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
 Spec: `docs/ask-voice.md` (Ian). While a chapter plays, the circle reads "Ask a question"; a tap fades
 the chapter out, the circle stirs (Connecting), the same guide answers by voice, and the chapter picks
 up again. Built on the episode page work (merged into this branch, fast-forward): it needs
-`11_episode/timing.json`, so today only chapter one (`beauty-scarry`) can be asked about. Report,
+`11_episode/timing.json`. Chapter one has one (Whisper); every chapter narrated since narration kept
+ElevenLabs' timings gets one from the unattended run's `episode` step (below). Report,
 results, costs and Ian's test script: `ask/REPORT.md`. Open a finished chapter with
 `http://127.0.0.1:8765/?chapter=<run>`.
 
@@ -211,6 +212,18 @@ results, costs and Ian's test script: `ask/REPORT.md`. Open a finished chapter w
   giving up; the agent's `turn_timeout` is 30 s so the platform never nudges first.
 - `python -m ask.scenarios <run>` (checks 6-19, text-only, graded by Opus in a fresh context),
   `python -m ask.live <run>` (check 20, real page in headless Chromium).
+
+**The timed transcript for new chapters** (episode/INTEGRATION.md sections 1 and 3, 2026-11-12):
+- Narration asks ElevenLabs for timings (`narration.timestamps: true`): `tts.synthesize` calls
+  `convert_with_timestamps` (same body, stitching and billing; audio whole as base64) and
+  `narrate_segments` keeps `alignment` in each chunk's `.json`. Checked live on a 95-character
+  script: the characters are exactly the text sent (pronunciations applied), every word matched.
+- `new.py`'s `episode` step, after narrate: `timing.json` from those timings and `episode.json`
+  without reference cards (Claude calls; `cli.py episode <run>` adds them, Whisper if a chunk lacks
+  timings). Deliberate departures from INTEGRATION.md: the step never stops a chapter (it is finished
+  either way), ElevenLabs' timings only (Whisper can take minutes and download a model while a
+  listener waits), and its done-key is `11_episode/step.json`, written whether or not it built,
+  so a finished run stays finished. Steps that cost nothing run even past the spending cap.
 
 ## Local setup
 
@@ -372,6 +385,8 @@ real key), so locally it must be in `.env`.
 | script | `<!-- segNN -->` before each segment; `[Dn]` markers after sentences; `[pause]` for a held beat | `common.split_script_segments`, `spoken_text`, `tts.split_beats` |
 | edit notes, fact-check notes | `## Global`, `## seg01` (or `## Segment 1`) sections, in `08_edit_notes.md` and `08b_factcheck.md` | `revise.parse_notes`, `revise.merge_notes` |
 | baseline | inside `<script>` tags | `baseline.run` |
+| narration timings | `alignment` `{characters, character_start_times_seconds, character_end_times_seconds}` in `10_audio/chunks/<key>.json`, one character per character sent | written by `tts.narrate_segments`, read by `episode.timing.chunk_alignment` |
+| timed transcript | `11_episode/timing.json`: segments > sentences (`segNN-sNNN` ids) > words with start/end | `episode.timing`, `ask.aside.Chapter`, the episode page |
 
 ## Layout
 
