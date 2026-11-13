@@ -34,6 +34,7 @@ class Sentence:
     id: str
     words: list[Word]
     dossier: list[str] = field(default_factory=list)  # D-numbers from its markers, in order
+    para: int = 0     # its paragraph within the segment (0-based): where a long aside rewinds to
 
     @property
     def text(self) -> str:
@@ -63,7 +64,7 @@ def parse(script: str, pronunciations: dict[str, str] | None = None) -> list[Seg
     segments = []
     for n, body in split_script_segments(script):
         sid, sentences = f"seg{n:02d}", []
-        for para in re.split(r"\n\s*\n", _clean(body)):
+        for pi, para in enumerate(re.split(r"\n\s*\n", _clean(body))):
             para = PAUSE.sub(" ", para)
             markers: list[list[str]] = []
 
@@ -87,7 +88,7 @@ def parse(script: str, pronunciations: dict[str, str] | None = None) -> list[Seg
                 refs += [d for d in found if d not in refs]
                 nxt = next((d for d in displays[i + 1:] if d), None)
                 if nxt is None or (END.search(display) and not ABBREV.match(display) and STARTS.match(nxt)):
-                    sentences.append(Sentence(f"{sid}-s{len(sentences) + 1:03d}", words, refs))
+                    sentences.append(Sentence(f"{sid}-s{len(sentences) + 1:03d}", words, refs, pi))
                     words, refs = [], []
         segments.append(Segment(sid, n, sentences))
     return segments

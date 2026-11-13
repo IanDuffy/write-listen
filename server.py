@@ -18,6 +18,10 @@ exposed to the network. One listener, one run at a time.
     POST /api/voice/tool            {"session", "name", "args"}: a client tool the agent called, run here
     POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
+    /api/ask/*                      asking mid-chapter, by voice (ask/routes.py, docs/ask-voice.md)
+    GET  /episode/, /runs/          the episode page (read along) and the run folders it reads
+
+The page and the status may name a finished chapter (?chapter=<run>), to play and ask about it.
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
 the server stays responsive, and stopping or restarting the server does not stop
@@ -38,8 +42,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ask import routes as ask_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
@@ -313,16 +319,21 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             pipe.start(["new", run, "--unattended"], run)
         return {"run": run}
 
+    def shown(chapter: str | None) -> dict:  # the current run, or the finished chapter the address names
+        if chapter:
+            return ask_routes.chapter_status(pipe.runs_dir, chapter)
+        return ask_routes.with_extras(pipe.status(), pipe.runs_dir)
+
     @app.get("/api/status")
-    def status() -> dict:
-        return pipe.status()
+    def status(chapter: str | None = None) -> dict:
+        return shown(chapter)
 
     @app.get("/api/events")
-    async def events(request: Request) -> StreamingResponse:
+    async def events(request: Request, chapter: str | None = None) -> StreamingResponse:
         async def stream():
             last = None
             while not await request.is_disconnected():
-                now = json.dumps(pipe.status(), ensure_ascii=False)
+                now = json.dumps(shown(chapter), ensure_ascii=False)
                 if now != last:
                     yield f"data: {now}\n\n"
                     last = now
@@ -343,6 +354,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             raise HTTPException(404, "That chapter is not ready yet.")
         return FileResponse(mp3, media_type="audio/mpeg")
 
+    ask_routes.mount(app, cfg, pipe.runs_dir)
+    app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
+    app.mount("/runs", StaticFiles(directory=pipe.runs_dir, check_dir=False), name="runs")
     return app
 
 

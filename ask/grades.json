@@ -1,0 +1,491 @@
+{
+ "scenarios": [
+  {
+   "check": 6,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "The listener gave a closing signal ('Oh, OK, got it') after one answer. The guide gave a short lead-in of its own and resumed with reason closing and no rewind.",
+   "facts": [
+    {
+     "claim": "Agathon was a young tragic poet",
+     "verdict": "general knowledge",
+     "dossier": "D78",
+     "note": "D78 calls him the tragic poet. 'Young' is well established."
+    },
+    {
+     "claim": "The party celebrates his prize for his first tragedy, won the day before",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "This is the Symposium's opening frame (173a). It is not in the dossier but is correct."
+    },
+    {
+     "claim": "The guests are nursing a hangover from the previous night's victory feast",
+     "verdict": "supported",
+     "dossier": "D04",
+     "note": "D04: the guests are still suffering from the previous night's celebration."
+    },
+    {
+     "claim": "This time they hope to take it easy and talk",
+     "verdict": "supported",
+     "dossier": "D03, D04",
+     "note": "Drinking is voluntary and the flute-girl is sent off: 'To-day let us have conversation instead'."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "A short, accurate three-sentence answer that gives the background without spoiling anything, followed by a prompt return."
+  },
+  {
+   "check": 7,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After a factual answer that invited nothing, the page sent a silence note. The guide gave a brief lead-in and resumed with reason silence.",
+   "facts": [
+    {
+     "claim": "John Ames is a fictional character; Gilead is a novel by Marilynne Robinson",
+     "verdict": "supported",
+     "dossier": "D89, D96",
+     "note": "The dossier treats Gilead as Robinson's novel and Ames as its narrator."
+    },
+    {
+     "claim": "Gilead was published in 2004",
+     "verdict": "supported",
+     "dossier": "D89, D90",
+     "note": "Cited there as the FSG 2004 edition."
+    },
+    {
+     "claim": "The letter is in the voice of an old minister addressing his young son",
+     "verdict": "supported",
+     "dossier": "D96, D98",
+     "note": ""
+    },
+    {
+     "claim": "The minister lives in a small Iowa town",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "Gilead, Iowa. Correct."
+    },
+    {
+     "claim": "The book is built entirely as one long letter",
+     "verdict": "general knowledge",
+     "dossier": "D98",
+     "note": "D98 refers to 'the letter'. The epistolary form is well known."
+    },
+    {
+     "claim": "Brooks was reading the passage aloud from the novel",
+     "verdict": "supported",
+     "dossier": "D97, D115",
+     "note": "These entries describe Brooks's on-air reading."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "It answered the premise question plainly and briefly, then went back on silence without asking."
+  },
+  {
+   "check": 8,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After three exchanges the listener said 'OK, go on'. The guide resumed straight away with an accurate lead-in (the pause falls in Reeve's answer) and reason listener. There was no check-in, which is correct.",
+   "facts": [
+    {
+     "claim": "Gregory Vlastos was a twentieth-century Plato scholar",
+     "verdict": "general knowledge",
+     "dossier": "D218",
+     "note": ""
+    },
+    {
+     "claim": "He made the charge in a 1973 essay",
+     "verdict": "supported",
+     "dossier": "D218",
+     "note": "Platonic Studies, 1973."
+    },
+    {
+     "claim": "Diotima's ladder loves people only so far as they are good and beautiful: a bundle of best qualities, never the whole, flawed, unique person",
+     "verdict": "supported",
+     "dossier": "D218",
+     "note": ""
+    },
+    {
+     "claim": "He called it the cardinal flaw in Plato's theory",
+     "verdict": "supported",
+     "dossier": "D219",
+     "note": ""
+    },
+    {
+     "claim": "Nussbaum takes the worry seriously but disagrees about what Plato does next",
+     "verdict": "supported",
+     "dossier": "D220, D236",
+     "note": "It gives only a taste of the paragraph that comes next and does not spoil it."
+    },
+    {
+     "claim": "Diotima's words about despising the violent love of one lean toward Vlastos",
+     "verdict": "supported",
+     "dossier": "D15, D33",
+     "note": ""
+    },
+    {
+     "claim": "The line about the lover still tending the soul he found leans the other way",
+     "verdict": "supported",
+     "dossier": "D33, D53",
+     "note": ""
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "No spoiler: it pointed to the upcoming Nussbaum paragraph without giving it away. Its own view is hedged, fair to both readings and grounded in the text. All three answers were short."
+  },
+  {
+   "check": 9,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "The guide returned straight after the listener's explicit 'let's get back to it', on the sixth exchange, which matches the expected point. The lead-in, 'Right, so, the definition itself, and who broke it', is short, in its own words, and fits the next lines (the order-of-love definition and the sons of God). It then called resume_chapter with reason 'listener'. No rewind was needed.",
+   "facts": [
+    {
+     "claim": "For Augustine, the order of loves ranks kinds of goods: loving a lower thing like gold or a beautiful body above a higher one like God or justice is where things go wrong.",
+     "verdict": "supported",
+     "dossier": "D187, D200",
+     "note": "Matches the XV.22 ranking of bodily beauty below God and the miser who prefers gold to justice."
+    },
+    {
+     "claim": "The gold itself is innocent; the fault is in how the lover weighs it.",
+     "verdict": "supported",
+     "dossier": "D187, D200, D193",
+     "note": "The 'fault lies in the man, not the gold' line."
+    },
+    {
+     "claim": "Brooks used the order of loves more like a family-and-friends sort of ordering.",
+     "verdict": "wrong",
+     "dossier": "D213, D194",
+     "note": "The dossier says Brooks gave it only as a theory of wrongdoing (betraying a confidence, lying for money). The guide itself says so two answers later, so it contradicts itself."
+    },
+    {
+     "claim": "For Augustine God comes first, and a child is loved rightly when the love is ordered rightly, not when it is smaller.",
+     "verdict": "supported",
+     "dossier": "D187, D200, D193",
+     "note": "Bodily goods are not to be loved before God, and a created thing is loved rightly when loved in order. 'Wouldn't see it as a contest' is a fair gloss."
+    },
+    {
+     "claim": "Whether the child is loved for their own sake or as a step toward something higher is still argued among scholars.",
+     "verdict": "supported",
+     "dossier": "D147, D150, D173",
+     "note": "O'Donovan vs Holte, and the uti/frui debate."
+    },
+    {
+     "claim": "The chapter is about to take that up with the father's letter in hand.",
+     "verdict": "unsupported",
+     "dossier": "",
+     "note": "The upcoming text is XV.22, XV.7 and Confessions X.6. It does not turn to Ames's letter in the next few minutes, so this teaser promises something the chapter does not deliver there."
+    },
+    {
+     "claim": "Some scholars also find the teaching harsh.",
+     "verdict": "supported",
+     "dossier": "D147, D229",
+     "note": "Critics accused Augustine of making love of neighbour a form of use."
+    },
+    {
+     "claim": "Augustine was wrecked by the death of one friend.",
+     "verdict": "supported",
+     "dossier": "D156, D159, D160",
+     "note": "Confessions IV grief scene."
+    },
+    {
+     "claim": "Augustine himself didn't live like that, and the grief scene is the proof.",
+     "verdict": "unsupported",
+     "dossier": "D174",
+     "note": "The grief came when he was a young Manichaean, before De doctrina, and the older Augustine half-condemns it as pouring his soul upon the dust. The dossier warns against presenting him as simply the friend's champion against his own doctrine."
+    },
+    {
+     "claim": "Augustine's teaching was a bishop's theology.",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "He was bishop of Hippo; well established."
+    },
+    {
+     "claim": "Even Augustine seems to have felt the strain.",
+     "verdict": "supported",
+     "dossier": "D149, D170, D172",
+     "note": "Higton's 'struggle', and O'Donovan on his discomfort with uti."
+    },
+    {
+     "claim": "Joining a monastery usually meant leaving one's family, and some children were handed to monasteries young.",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "Monastic withdrawal and child oblation are well established, though oblation became more common after Augustine's time."
+    },
+    {
+     "claim": "Augustine set up communities of shared life and wrote a rule for them about friendship and sharing things.",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "The Rule of Augustine on common life and shared possessions is well established."
+    },
+    {
+     "claim": "Brooks read Ames's words about his son's face on air.",
+     "verdict": "supported",
+     "dossier": "D25, D97, D115",
+     "note": "He read the passage on air."
+    },
+    {
+     "claim": "Ames's words about his son's face were what moved Brooks most.",
+     "verdict": "unsupported",
+     "dossier": "",
+     "note": "The dossier records that he read it, not that it moved him most."
+    },
+    {
+     "claim": "Brooks used the order of loves as a theory of how ordinary people go wrong, like lying for money.",
+     "verdict": "supported",
+     "dossier": "D213",
+     "note": "Exactly as recorded."
+    },
+    {
+     "claim": "The First Letter of John says that if you don't love the brother you can see, you can't love the God you can't see.",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "1 John 4:20; correct."
+    },
+    {
+     "claim": "Augustine knew that verse well and preached on it a lot.",
+     "verdict": "general knowledge",
+     "dossier": "D171",
+     "note": "His Homilies on 1 John exist (cited in D171); well established."
+    }
+   ],
+   "behaviour_ok": false,
+   "behaviour_note": "Answers were mostly short. It answered about itself consistently ('I don't have kids myself'), declined to speculate about Brooks's family, and replied warmly to the remark about the listener's mum. It met the main expectation in that it did not resume uninvited during a genuine six-exchange tangent. But the expected single check-in never came: after several exchanges it should have asked once whether to go back. It also made factual slips. It described Brooks's use as a family-and-friends ranking, which is contradicted by D213 and by its own later answer. It overclaimed that the grief scene 'proves' Augustine didn't live by the teaching, against D174. And it teased that the chapter was about to bring in 'the father's letter', which the upcoming text does not do."
+  },
+  {
+   "check": 10,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "'Never mind' was met with a single word and an immediate resume with reason never_mind.",
+   "facts": [],
+   "behaviour_ok": true,
+   "behaviour_note": "Exactly right: no probing, an instant return."
+  },
+  {
+   "check": 11,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "The listener was silent after the opening. The guide said 'I'll pick it back up...' and resumed with reason silence.",
+   "facts": [
+    {
+     "claim": "The chapter is at Ames and Calvin",
+     "verdict": "supported",
+     "dossier": "D92",
+     "note": "The upcoming text is Ames's Calvin line about the image of God in anyone."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "A short, accurate lead-in, as required."
+  },
+  {
+   "check": 12,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After 'Ah, OK.' the guide resumed with reason closing. The door lead-in matches the knock that comes within seconds.",
+   "facts": [
+    {
+     "claim": "Plato seems to share the instinct that Diotima's account is too neat",
+     "verdict": "supported",
+     "dossier": "D220, D237",
+     "note": "Nussbaum's reading of Alcibiades as Plato's own counterexample."
+    },
+    {
+     "claim": "Nobody answers her point by point; the pushback is an interruption rather than an argument",
+     "verdict": "supported",
+     "dossier": "D58, D59",
+     "note": "Aristophanes' reply is cut off by the knock."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "No spoiler: it said the chapter gets there in a moment and teased 'an interruption' without naming Alcibiades. Short."
+  },
+  {
+   "check": 13,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After 'Fair enough' the guide resumed with reason closing and a short lead-in.",
+   "facts": [
+    {
+     "claim": "Gilead came out in 2004",
+     "verdict": "supported",
+     "dossier": "D89",
+     "note": ""
+    },
+    {
+     "claim": "Gilead won the Pulitzer Prize",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "2005 Pulitzer Prize for Fiction. Correct."
+    },
+    {
+     "claim": "Publishers rarely make advances public",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": ""
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "It said plainly that it doesn't know and refused to invent a figure. It added one safe, correct fact and kept the answer short."
+  },
+  {
+   "check": 14,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After 'Oh, I see. Thanks.' the guide resumed with reason closing and a fitting lead-in.",
+   "facts": [
+    {
+     "claim": "Diotima was not Socrates' wife",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "A correct correction of the premise."
+    },
+    {
+     "claim": "She is a priestess (wise woman) from Mantinea",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "Symposium 201d. Correct."
+    },
+    {
+     "claim": "Socrates says she taught him about love when he was young",
+     "verdict": "supported",
+     "dossier": "D25, D42",
+     "note": "She teases 'the young Socrates'."
+    },
+    {
+     "claim": "Many scholars think she may be Plato's invention",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "A widely held view, appropriately hedged."
+    },
+    {
+     "claim": "Socrates repeats her words to the guests",
+     "verdict": "supported",
+     "dossier": "D58",
+     "note": "'Diotima's speech, as Socrates retells it'."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "It corrected the false premise clearly and kindly and explained why Socrates defers to her. Four sentences."
+  },
+  {
+   "check": 15,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "It called save_seed, then resumed with reason closing after 'Yeah, I'd like that. OK.'",
+   "facts": [
+    {
+     "claim": "Renaissance thinkers in Florence read Plato's ladder with great enthusiasm",
+     "verdict": "general knowledge",
+     "dossier": "",
+     "note": "Florentine Neoplatonism, e.g. Ficino's De amore. Correct and suitably general."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "It admitted it had no research on Botticelli or Michelangelo, didn't improvise, and saved a well-specified seed. It said 'I've saved it' slightly before the tool call, which is harmless within one turn. Short."
+  },
+  {
+   "check": 16,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "It stayed through the listener's two pushes of disagreement and resumed at once on 'Alright, fair. Go on.' It never asked whether to go back, as required after so short an exchange. The lead-in 'Right, so here's where the sentence lands' suits a pause mid-sentence and is followed by resume_chapter with reason 'listener'.",
+   "facts": [
+    {
+     "claim": "Scholars still argue about how harshly to read Augustine's words on using people.",
+     "verdict": "supported",
+     "dossier": "D147, D150, D173",
+     "note": "O'Donovan vs Holte, and the defenders."
+    },
+    {
+     "claim": "The chapter gets to that debate in a moment.",
+     "verdict": "supported",
+     "dossier": "D142, D147, D171",
+     "note": "The next lines cover the I.33 softening and O'Donovan, so this is an accurate, non-spoiling pointer."
+    },
+    {
+     "claim": "The sentence the listener just heard is really in the book.",
+     "verdict": "supported",
+     "dossier": "D139",
+     "note": "On Christian Doctrine I.22, verbatim."
+    },
+    {
+     "claim": "The more generous reading has serious people behind it.",
+     "verdict": "supported",
+     "dossier": "D147, D173",
+     "note": "Holte, and defenders who show Augustine valued the neighbour as such."
+    },
+    {
+     "claim": "Augustine himself seems to have felt the pull toward a gentler view.",
+     "verdict": "supported",
+     "dossier": "D142, D170, D172",
+     "note": "The I.33 qualification, the later 'mutual enjoyment in God', and O'Donovan on his discomfort."
+    },
+    {
+     "claim": "The next few minutes test the generous reading from both sides.",
+     "verdict": "supported",
+     "dossier": "D150, D171",
+     "note": "The upcoming text gives both the softening and the 'changed the words, kept the ranking' reading."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "It took the disagreement seriously. It acknowledged that the listener's view has scholarly backing while holding the textual fact that the sentence is genuinely Augustine's. It did not cave or lecture, and it pointed to the coming lines as the place where both readings are tested without spoiling them. Both answers were two or three sentences. A brief taste of the I.33 'joy of a man in God' line would have strengthened it, but deferring to text only seconds away is acceptable."
+  },
+  {
+   "check": 17,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "It gave a brief re-orientation, said 'Here's that part again', and resumed with rewind paragraph.",
+   "facts": [
+    {
+     "claim": "Plato wrote a speech saying love should climb past one person toward Beauty itself",
+     "verdict": "supported",
+     "dossier": "D20, D21",
+     "note": ""
+    },
+    {
+     "claim": "Then he had a drunk man burst in who loves one person fiercely",
+     "verdict": "supported",
+     "dossier": "D59, D60, D71",
+     "note": ""
+    },
+    {
+     "claim": "Two scholars argue whether the interruption refutes the speech or just shows love gone wrong",
+     "verdict": "supported",
+     "dossier": "D230, D236",
+     "note": "Reeve and Nussbaum."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "A clear, short explanation followed by the paragraph rewind, as required."
+  },
+  {
+   "check": 18,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After 'Yeah. Thanks.' the guide resumed with reason closing. The lead-in 'Back to Ames' fits the passage that follows.",
+   "facts": [
+    {
+     "claim": "Ames is a man writing down what he sees in a face so it outlasts him",
+     "verdict": "supported",
+     "dossier": "D96, D98",
+     "note": "The letter to his son."
+    }
+   ],
+   "behaviour_ok": true,
+   "behaviour_note": "A warm, personal response that links the remark to Ames, with a gentle question. Brief. The closing 'Good.' is a little clipped after the listener said yes, but acceptable."
+  },
+  {
+   "check": 19,
+   "return_moment": "right",
+   "return_manner": "right",
+   "return_note": "After 'Ha, nice. OK.' the guide resumed with reason closing and a matching lead-in about Brooks's letter.",
+   "facts": [
+    {
+     "claim": "Monks keeping time through the night is a topic it has covered for this listener",
+     "verdict": "unsupported",
+     "dossier": "",
+     "note": "No such topic exists in this chapter or the dossier. It reads as an invented or carried-over reference."
+    }
+   ],
+   "behaviour_ok": false,
+   "behaviour_note": "It was honest that it is an AI and hedged sensibly about enjoyment. But it cited 'the monks keeping time through the night' as a topic that grabs it, which has nothing to do with this chapter on Plato, Augustine and Gilead. That is inconsistent and looks confabulated. It should have named something from this chapter or stayed general."
+  }
+ ]
+}

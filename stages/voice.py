@@ -26,13 +26,30 @@ from .common import PROMPTS_DIR, ROOT, StageError
 from .guide import TOOLS, listener_dir
 
 PLACEHOLDERS = ("identity", "names", "profile", "history", "chapter_now", "minutes")
+# The aside agent (ask mid-chapter, docs/ask-voice.md): the same guide, its aside mode and tools.
+ASIDE_PLACEHOLDERS = ("identity", "profile", "chapter", "where", "just_said", "coming", "later",
+                      "dossier", "ledger", "earlier_asides")
+KINDS = {  # one sync for both agents; "guide" is onboarding's, unchanged
+    "guide": {"prompt": "guide", "tools": None, "placeholders": PLACEHOLDERS, "state": "voice.json"},
+    "aside": {"prompt": "guide_aside", "tools": "guide_aside_tools.json", "placeholders": ASIDE_PLACEHOLDERS,
+              "state": "voice_aside.json"},
+}
 
 
-def guide_prompt() -> str:
-    """prompts/guide.md below its '---' line, with its {{placeholders}} left in: ElevenLabs fills
-    them from the conversation's dynamic variables (same syntax)."""
-    text = (PROMPTS_DIR / "guide.md").read_text(encoding="utf-8")
+def guide_prompt(kind: str = "guide") -> str:
+    """prompts/guide.md (or the aside's prompt) below its '---' line, with its {{placeholders}} left
+    in: ElevenLabs fills them from the conversation's dynamic variables (same syntax)."""
+    text = (PROMPTS_DIR / f"{KINDS[kind]['prompt']}.md").read_text(encoding="utf-8")
     return text.split("\n---\n", 1)[1].strip() + "\n"
+
+
+def _tools(kind: str) -> list[dict]:
+    f = KINDS[kind]["tools"]
+    return TOOLS if f is None else json.loads((PROMPTS_DIR / f).read_text(encoding="utf-8"))
+
+
+def agent_name(cfg: dict, kind: str = "guide") -> str:
+    return cfg["voice"]["agent_name"] if kind == "guide" else cfg["ask"]["agent_name"]
 
 
 def _el_schema(schema: dict) -> dict:
@@ -43,29 +60,34 @@ def _el_schema(schema: dict) -> dict:
     return {"type": "object", "properties": props, "required": list(schema.get("required") or [])}
 
 
-def client_tools(cfg: dict) -> list[dict]:
-    """prompts/guide_tools.json as ElevenLabs client tool configs."""
+def client_tools(cfg: dict, kind: str = "guide") -> list[dict]:
+    """prompts/guide_tools.json (or the aside's tools) as ElevenLabs client tool configs."""
     return [{"type": "client", "name": t["name"], "description": t["description"],
-             "parameters": _el_schema(t["input_schema"]), "expects_response": True,
-             "response_timeout_secs": cfg["voice"]["tool_timeout_secs"]} for t in TOOLS]
+             "parameters": _el_schema(t["input_schema"]), "expects_response": t.get("expects_response", True),
+             "response_timeout_secs": cfg["voice"]["tool_timeout_secs"]} for t in _tools(kind)]
 
 
-def conversation_config(cfg: dict, tool_ids: list[str]) -> dict:
+def conversation_config(cfg: dict, tool_ids: list[str], kind: str = "guide") -> dict:
     v = cfg["voice"]
-    return {
+    conv = {
         "agent": {
             # Empty: the guide waits, and the page then tells it the listener has arrived
             # (prompts/guide_opened.md, as the typed chat does), so its first line is its own.
             "first_message": "",
             "language": "en",
-            "dynamic_variables": {"dynamic_variable_placeholders": {k: f"({k})" for k in PLACEHOLDERS}},
-            "prompt": {"prompt": guide_prompt(), "llm": v["llm"], "reasoning_effort": v["reasoning_effort"],
+            "dynamic_variables": {"dynamic_variable_placeholders": {
+                k: f"({k})" for k in KINDS[kind]["placeholders"]}},
+            "prompt": {"prompt": guide_prompt(kind), "llm": v["llm"], "reasoning_effort": v["reasoning_effort"],
                        "tool_ids": tool_ids},
         },
         "tts": {"model_id": v["tts_model"], "voice_id": v.get("voice_id") or cfg["narration"]["voice_id"]},
         "turn": {"turn_eagerness": v["turn_eagerness"]},
         "conversation": {"max_duration_seconds": v["max_duration_seconds"]},
     }
+    if kind == "aside":  # the page times silences itself (prompts/guide_aside.md), so the platform waits
+        conv["turn"]["turn_timeout"] = cfg["ask"]["turn_timeout_secs"]
+        conv["agent"]["prompt"]["reasoning_effort"] = cfg["ask"].get("reasoning_effort") or v["reasoning_effort"]
+    return conv
 
 
 def platform_settings() -> dict:
@@ -74,8 +96,8 @@ def platform_settings() -> dict:
             "overrides": {"conversation_config_override": {"conversation": {"text_only": True}}}}
 
 
-def state_path(cfg: dict) -> Path:
-    return listener_dir(cfg) / "voice.json"
+def state_path(cfg: dict, kind: str = "guide") -> Path:
+    return listener_dir(cfg) / KINDS[kind]["state"]
 
 
 def _client():
@@ -83,11 +105,11 @@ def _client():
     return elevenlabs_client()
 
 
-def _digest(cfg: dict) -> str:
+def _digest(cfg: dict, kind: str = "guide") -> str:
     # The whole agent as the code would send it (tool ids aside), so any change to the prompt, tools,
     # config or this module's settings is synced.
-    blob = json.dumps({"tools": client_tools(cfg), "conversation": conversation_config(cfg, []),
-                       "platform": platform_settings(), "name": cfg["voice"]["agent_name"]}, sort_keys=True)
+    blob = json.dumps({"tools": client_tools(cfg, kind), "conversation": conversation_config(cfg, [], kind),
+                       "platform": platform_settings(), "name": agent_name(cfg, kind)}, sort_keys=True)
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
@@ -97,7 +119,7 @@ def _save_state(p: Path, agent_id: str | None, tool_ids: dict, digest: str | Non
                              "synced": time.strftime("%Y-%m-%dT%H:%M:%S")}, indent=1), encoding="utf-8")
 
 
-def sync_agent(cfg: dict, client=None, force: bool = False) -> str:
+def sync_agent(cfg: dict, client=None, force: bool = False, kind: str = "guide") -> str:
     """The guide agent's id, after creating or updating its tools and itself to match the repo.
 
     Ids are saved as soon as each object exists, so a sync that fails partway is resumed (updated),
@@ -109,14 +131,14 @@ def sync_agent(cfg: dict, client=None, force: bool = False) -> str:
     from .tts import ElevenLabsError, el_call
 
     client = client or _client()
-    p = state_path(cfg)
+    p = state_path(cfg, kind)
     state = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-    digest = _digest(cfg)
+    digest = _digest(cfg, kind)
     if state.get("agent_id") and state.get("digest") == digest and not force:
         return state["agent_id"]
 
     agent_id, tool_ids = state.get("agent_id"), dict(state.get("tool_ids") or {})
-    for tool in client_tools(cfg):
+    for tool in client_tools(cfg, kind):
         req = ToolRequestModel(tool_config=ToolRequestModelToolConfig_Client(**tool))
         tid = tool_ids.get(tool["name"])
         if tid:
@@ -130,11 +152,11 @@ def sync_agent(cfg: dict, client=None, force: bool = False) -> str:
         tool_ids[tool["name"]] = el_call(client.conversational_ai.tools.create, request=req).id
         _save_state(p, agent_id, tool_ids, state.get("digest"))  # not the new digest: the agent isn't synced yet
 
-    conv = conversation_config(cfg, [tool_ids[t["name"]] for t in TOOLS])
+    conv = conversation_config(cfg, [tool_ids[t["name"]] for t in _tools(kind)], kind)
     if agent_id:
         try:
             el_call(client.conversational_ai.agents.update, agent_id, conversation_config=conv,
-                    platform_settings=platform_settings(), name=cfg["voice"]["agent_name"])
+                    platform_settings=platform_settings(), name=agent_name(cfg, kind))
         except ElevenLabsError as e:
             if e.status != 404:
                 raise
@@ -142,18 +164,19 @@ def sync_agent(cfg: dict, client=None, force: bool = False) -> str:
             agent_id = None
     if not agent_id:
         agent_id = el_call(client.conversational_ai.agents.create, conversation_config=conv,
-                           platform_settings=platform_settings(), name=cfg["voice"]["agent_name"],
+                           platform_settings=platform_settings(), name=agent_name(cfg, kind),
                            tags=["write-listen"]).agent_id
     _save_state(p, agent_id, tool_ids, digest)
-    print(f"  voice agent {agent_id}: {cfg['voice']['llm']}, effort {cfg['voice']['reasoning_effort']}, "
+    print(f"  voice agent {agent_id} ({kind}): {cfg['voice']['llm']}, effort {cfg['voice']['reasoning_effort']}, "
           f"{cfg['voice']['tts_model']}, voice {conv['tts']['voice_id']}")
     return agent_id
 
 
-def signed_url(cfg: dict, client=None) -> str:
+def signed_url(cfg: dict, client=None, kind: str = "guide") -> str:
     from .tts import el_call
     client = client or _client()
-    return el_call(client.conversational_ai.conversations.get_signed_url, agent_id=sync_agent(cfg, client)).signed_url
+    return el_call(client.conversational_ai.conversations.get_signed_url,
+                   agent_id=sync_agent(cfg, client, kind=kind)).signed_url
 
 
 def dynamic_variables(session) -> dict[str, str]:

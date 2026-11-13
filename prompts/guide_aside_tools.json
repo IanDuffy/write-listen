@@ -1,0 +1,57 @@
+[
+  {
+    "name": "resume_chapter",
+    "description": "End this aside and restart the chapter. Call it first, with nothing said before it; its reply asks for your short lead-in, and the chapter starts when you finish saying it. Leave rewind out unless the listener seemed lost (then 'paragraph'): the page picks the restart point from how long the aside lasted.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "listener",
+            "closing",
+            "silence",
+            "never_mind",
+            "other"
+          ],
+          "description": "Why you are going back: the listener asked to (listener), a closing signal after your answer (closing), silence (silence), they said never mind (never_mind), anything else (other)."
+        },
+        "rewind": {
+          "type": "string",
+          "enum": [
+            "sentence",
+            "previous",
+            "paragraph"
+          ],
+          "description": "Optional. Where to restart: the interrupted sentence, one sentence earlier, or the start of the paragraph. Only 'paragraph', and only when the listener seemed lost."
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "save_seed",
+    "description": "Record a topic for a future chapter, when a question deserves real research beyond this chapter's dossier. Say that it's worth a proper look; you cannot research it now.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "description": "The topic, as a chapter could take it on, in a sentence."
+        },
+        "why": {
+          "type": "string",
+          "description": "Why it matters to the listener, in their own words where possible."
+        }
+      },
+      "required": [
+        "topic",
+        "why"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

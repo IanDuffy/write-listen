@@ -184,6 +184,34 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   thinking and speaking come with voice (milestone 4). The transcript toggle
   shows what was typed and the stages, until the conversation (milestone 3).
 
+## Ask mid-chapter, by voice (branch `feature/ask-voice`, 2026-11-12)
+
+Spec: `docs/ask-voice.md` (Ian). While a chapter plays, the circle reads "Ask a question"; a tap fades
+the chapter out, the circle stirs (Connecting), the same guide answers by voice, and the chapter picks
+up again. Built on the episode page work (merged into this branch, fast-forward): it needs
+`11_episode/timing.json`, so today only chapter one (`beauty-scarry`) can be asked about. Report,
+results, costs and Ian's test script: `ask/REPORT.md`. Open a finished chapter with
+`http://127.0.0.1:8765/?chapter=<run>`.
+
+- `ask/aside.py`: the chapter as the guide is told it (90 s just said and 3 minutes coming, word for
+  word; the outline; dossier entries of the current and next segment in full, one line for the rest;
+  the ledger; earlier asides), restart points (under 30 s the interrupted sentence, to 2 minutes one
+  earlier, over that the paragraph; never back across a segment start), the log
+  (`<run>/12_asks/asides.jsonl`, `seeds.md`). Paragraphs come from `episode.script` (`Sentence.para`).
+- `ask/routes.py`: `/api/ask/*`, mounted by `server.py`; `/ask.js` with config `ask`'s page settings.
+- A second ElevenLabs agent, `write-listen guide (aside)` (`stages/voice.py` `KINDS["aside"]`, ids in
+  `listener/voice_aside.json`): `prompts/guide_aside.md` (keep its tone rules in step with
+  `guide.md`), tools `resume_chapter` and `save_seed`, effort `low` (`ask.reasoning_effort`; at
+  `none` it went back in the same turn as its answer, 7 of 14 scenarios). The guide agent's
+  settings hash is unchanged.
+- `resume_chapter` is called first, then the lead-in: the platform always returns a tool's result to
+  the model, which speaks after it, so the result asks for the lead-in (`routes.RESUMED`) and the page
+  ends the session once it has been said. With no reply expected, the agent called it in a loop.
+- The page (`page/ask.js`) times the silences (`prompts/guide_aside_notes.md`) and the slow line /
+  giving up; the agent's `turn_timeout` is 30 s so the platform never nudges first.
+- `python -m ask.scenarios <run>` (checks 6-19, text-only, graded by Opus in a fresh context),
+  `python -m ask.live <run>` (check 20, real page in headless Chromium).
+
 ## Local setup
 
 ```bash
@@ -357,6 +385,7 @@ real key), so locally it must be in `.env`.
 - Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
 - `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestones 2-3.
 - `guide.py`: the guide's conversation (milestone 3); `memory.py`: the listener's memory (milestone 5).
+- `ask/` and `page/ask.js`: asking mid-chapter by voice; `episode/`: the episode page (timed transcript, references).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.

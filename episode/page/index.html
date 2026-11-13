@@ -53,6 +53,11 @@
          background: var(--accent); color: #fff; border-radius: 999px; padding: 8px 18px; font: inherit; font-size: 15px;
          cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.15); }
   #now.show { display: block; }
+  details.aside { display: block; margin: 8px 0 10px; padding: 2px 0 2px 12px; border-left: 2px solid var(--accent);
+                  font-size: 15px; line-height: 1.5; color: var(--muted); }
+  details.aside summary { cursor: pointer; }
+  details.aside p { margin: 4px 0; }
+  details.aside .guide { color: var(--fg); }
   #problem { max-width: 1100px; margin: 40px auto; padding: 0 20px; color: var(--muted); display: none; }
 </style>
 </head>
@@ -96,7 +101,35 @@ async function load() {
   words = T.flattenWords(ep);
   sentences = T.flattenSentences(ep);
   renderTranscript();
+  loadAsides();
   tick();
+}
+
+// Asides (docs/ask-voice.md): conversations with the guide during the chapter, logged by the server
+// to <run>/12_asks/asides.jsonl, shown where they interrupted, collapsed to their first line.
+async function loadAsides() {
+  let text = "";
+  try {
+    const res = await fetch(`${run}/12_asks/asides.jsonl`, { cache: "no-store" });
+    if (!res.ok) return;
+    text = await res.text();
+  } catch (e) { return; }
+  text.split("\n").filter((l) => l.trim()).forEach((l) => {
+    let x;
+    try { x = JSON.parse(l); } catch (e) { return; }
+    const se = sentenceEls[x.sentence_id];
+    const said = (x.transcript || []).filter((y) => (y.who === "guide" || y.who === "listener") && (y.text || "").trim());
+    if (!se || !said.length) return;
+    const d = document.createElement("details");
+    d.className = "aside";
+    said.forEach((y, i) => {
+      const el = document.createElement(i === 0 ? "summary" : "p");
+      el.className = y.who;
+      el.textContent = (y.who === "listener" ? "You: " : "") + y.text;
+      d.appendChild(el);
+    });
+    se.before(d);  // where the chapter was interrupted: before the sentence it picked up from
+  });
 }
 
 // Fetched whole into memory: a server without range requests (python -m http.server) can't

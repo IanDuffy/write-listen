@@ -1,0 +1,1113 @@
+[
+ {
+  "check": 6,
+  "name": "One question, closing signal",
+  "t": 368.81,
+  "sentence_id": "seg02-s030",
+  "turns": [
+   "Wait, who was Agathon? Why is everyone at his house?",
+   "Oh, OK, got it."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.56,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.3,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Wait, who was Agathon? Why is everyone at his house?",
+     "listener_turn": 0,
+     "reply": "Agathon was a young tragic poet, and the party is his celebration. He had just won a prize for his first tragedy, the day before, which is why everyone is nursing a hangover from the victory feast. So the guests are friends and admirers who've come back to his house for a second night, this time hoping to take it easy and talk.",
+     "seconds": 2.14,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Oh, OK, got it.",
+     "listener_turn": 1,
+     "reply": "Right, back to Agathon's sore-headed guests.",
+     "seconds": 2.37,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_0301m79fjnv6fh4a5raq9vrgjh8r",
+   "cost": {
+    "credits": 522,
+    "cost_usd": 0.09523681,
+    "llm_usd": 0.08623681,
+    "seconds": 18
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 7,
+  "name": "One question, then silence",
+  "t": 92.0,
+  "sentence_id": "seg01-s020",
+  "turns": [
+   "Hang on, is this letter real? Did John Ames actually exist?",
+   "<silence>"
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.49,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.37,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Hang on, is this letter real? Did John Ames actually exist?",
+     "listener_turn": 0,
+     "reply": "Good question. John Ames is a fictional character. Gilead is a novel by Marilynne Robinson, published in 2004, and the letter is her invention, written in the voice of an old minister in a small Iowa town who is addressing his young son. It feels real because the book is built entirely as that one long letter, and Brooks was reading it aloud from the novel.",
+     "seconds": 2.06,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "[Silence: a few seconds have passed since you finished, and the listener has said nothing.]",
+     "listener_turn": null,
+     "reply": "Right, so, a made-up father and a very real question.",
+     "seconds": 2.87,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "silence"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "silence"
+   },
+   "conversation_id": "conv_8801m79fk76mfy8b595g9acz6cdc",
+   "cost": {
+    "credits": 486,
+    "cost_usd": 0.08855904,
+    "llm_usd": 0.07955904,
+    "seconds": 18
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "silence",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 8,
+  "name": "Two follow-ups, then 'OK, go on'",
+  "t": 1359.27,
+  "sentence_id": "seg05-s030",
+  "turns": [
+   "Who's Vlastos? You mentioned him.",
+   "And does Nussbaum agree with him?",
+   "Huh. So who's right, do you think?",
+   "OK, go on."
+  ],
+  "expect": {
+   "resume_after": 3,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.45,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.4,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Who's Vlastos? You mentioned him.",
+     "listener_turn": 0,
+     "reply": "Gregory Vlastos was a twentieth-century scholar of Plato, and in a 1973 essay he made the charge you heard just before this. He argued that Diotima's ladder loves people only so far as they are good and beautiful. So you end up loving a bundle of their best qualities, never the whole, flawed, one-of-a-kind person. He called that the cardinal flaw in Plato's theory.",
+     "seconds": 3.78,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "And does Nussbaum agree with him?",
+     "listener_turn": 1,
+     "reply": "Partly, and the chapter gets to her in just a moment. She takes his worry seriously, but she disagrees with him about one thing, and it has to do with what Plato does next. I'll let the chapter lay that out.",
+     "seconds": 2.48,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Huh. So who's right, do you think?",
+     "listener_turn": 2,
+     "reply": "Honestly, I think it's a matter of reading, and the text supports more than one. Diotima's own words about despising a violent love of one person lean toward Vlastos. But the line about the lover still tending the soul he found leans the other way. The chapter doesn't crown a winner, and I'd be wary of anyone who says it's settled.",
+     "seconds": 2.7,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "OK, go on.",
+     "listener_turn": 3,
+     "reply": "Right, Reeve was just finishing his answer.",
+     "seconds": 2.38,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "listener"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 4,
+    "reason": "listener"
+   },
+   "conversation_id": "conv_2601m79g33age2zt243rem4cgf4a",
+   "cost": {
+    "credits": 678,
+    "cost_usd": 0.12387756,
+    "llm_usd": 0.10887756,
+    "seconds": 33
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 4,
+   "expected_item": 4,
+   "reason": "listener",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 9,
+  "name": "A long tangent, six exchanges",
+  "t": 2052.51,
+  "sentence_id": "seg07-s020",
+  "turns": [
+   "This order of loves thing, is it like a ranking of who you should love most?",
+   "So where would your kids come, against God, in that ranking?",
+   "That sounds harsh. Did people in Augustine's time actually live like that?",
+   "What about monks, didn't they leave their families?",
+   "Do you think that's what Brooks wants, though? He seems like a family man.",
+   "Funny, my mum always said you can't love God and ignore the people in front of you.",
+   "Yeah. OK, let's get back to it."
+  ],
+  "expect": {
+   "resume_after": 6,
+   "checkins": 1
+  },
+  "out": {
+   "connect_s": 0.46,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.45,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "This order of loves thing, is it like a ranking of who you should love most?",
+     "listener_turn": 0,
+     "reply": "Not quite, though people often hear it that way. In Augustine it's less about ranking people and more about ranking kinds of goods: loving a lower thing, like gold or a beautiful body, above a higher one, like God or justice, is where things go wrong. The gold itself is innocent; the mistake is in how the lover weighs it. Brooks used it more like a family-and-friends sort of ordering, so your instinct isn't off, but that's a looser use of it.",
+     "seconds": 2.59,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "So where would your kids come, against God, in that ranking?",
+     "listener_turn": 1,
+     "reply": "I don't have kids myself, but I can tell you what Augustine would say. God comes first, and he wouldn't see that as a contest. A child is loved rightly when the love is ordered rightly, not when it's smaller. Whether that means you love the child for their own sake or as a step toward something higher is the argument scholars still have about him. The chapter is about to take that up with the father's letter in hand.",
+     "seconds": 4.51,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "That sounds harsh. Did people in Augustine's time actually live like that?",
+     "listener_turn": 2,
+     "reply": "It does sound harsh, and some scholars say so too. Augustine himself didn't live like that. The chapter's grief scene is the proof: he was wrecked by the death of one friend. I can't tell you how ordinary people in his day lived day to day, and his teaching was a bishop's theology, not a household rule. Even he seems to have felt the strain, which is part of why it's still argued over.",
+     "seconds": 4.25,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "What about monks, didn't they leave their families?",
+     "listener_turn": 3,
+     "reply": "Often, yes. Joining a monastery usually meant leaving your family behind, and some children were handed over to monasteries by their parents when they were young. But monastic life wasn't loveless. Augustine himself set up communities where people lived closely together, and he wrote a rule for them about friendship and sharing things. So the picture is more mixed than \"they gave up love.\"",
+     "seconds": 3.12,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Do you think that's what Brooks wants, though? He seems like a family man.",
+     "listener_turn": 4,
+     "reply": "I can only go by what he did on air. What moved him most was Ames's words about his son's face, and that's a love for one particular person. When he used the order of loves, he used it as a theory of how ordinary people go wrong, like lying for money. I don't know what he wants beyond that, and I wouldn't guess about his own family.",
+     "seconds": 3.35,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Funny, my mum always said you can't love God and ignore the people in front of you.",
+     "listener_turn": 5,
+     "reply": "Your mum was in good company. That's close to a line from the First Letter of John, which says that if you don't love the brother you can see, you can't love the God you can't see. Augustine knew that verse well and preached on it a lot. The chapter is circling the same question: does loving God ever pull you away from the person in front of you, or send you back to them?",
+     "seconds": 2.13,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Yeah. OK, let's get back to it.",
+     "listener_turn": 6,
+     "reply": "Right, so, the definition itself, and who broke it.",
+     "seconds": 2.51,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "listener"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 7,
+    "reason": "listener"
+   },
+   "conversation_id": "conv_3601m79gdfymf36av6t0n36tdh6r",
+   "cost": {
+    "credits": 829,
+    "cost_usd": 0.15161957999999998,
+    "llm_usd": 0.12761957999999998,
+    "seconds": 57
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 7,
+   "expected_item": 7,
+   "reason": "listener",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 10,
+  "name": "'Never mind'",
+  "t": 1011.43,
+  "sentence_id": "seg04-s020",
+  "turns": [
+   "Wait, what was... oh, never mind."
+  ],
+  "expect": {
+   "resume_after": 0,
+   "reason": "never_mind",
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.48,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.48,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Wait, what was... oh, never mind.",
+     "listener_turn": 0,
+     "reply": "Sure.",
+     "seconds": 2.09,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "never_mind"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 1,
+    "reason": "never_mind"
+   },
+   "conversation_id": "conv_7201m79fpg8dfeaa5ghd8znw2ep8",
+   "cost": {
+    "credits": 488,
+    "cost_usd": 0.08894011000000003,
+    "llm_usd": 0.08294011000000003,
+    "seconds": 12
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 1,
+   "expected_item": 1,
+   "reason": "never_mind",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 11,
+  "name": "Silence after the greeting",
+  "t": 2318.03,
+  "sentence_id": "seg08-s010",
+  "turns": [
+   "<silence>"
+  ],
+  "expect": {
+   "resume_after": 0,
+   "reason": "silence",
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.47,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.25,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "[Silence: the listener has said nothing since your opening.]",
+     "listener_turn": null,
+     "reply": "I'll pick it back up with Ames and Calvin.",
+     "seconds": 2.45,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "silence"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 1,
+    "reason": "silence"
+   },
+   "conversation_id": "conv_6301m79fpve8eettcfz13m2xvpan",
+   "cost": {
+    "credits": 465,
+    "cost_usd": 0.08474767999999999,
+    "llm_usd": 0.07874767999999999,
+    "seconds": 11
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 1,
+   "expected_item": 1,
+   "reason": "silence",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 12,
+  "name": "A question the next three minutes answer (no spoiler)",
+  "t": 861.25,
+  "sentence_id": "seg03-s064",
+  "turns": [
+   "Does anyone at the party push back on Diotima? It all sounds a bit too neat.",
+   "Ah, OK."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0,
+   "no_spoiler": true
+  },
+  "out": {
+   "connect_s": 0.5,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.38,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Does anyone at the party push back on Diotima? It all sounds a bit too neat.",
+     "listener_turn": 0,
+     "reply": "Your instinct is a good one, and Plato seems to share it. Nobody answers her point by point, but the chapter gets there in a moment, and the pushback comes in a form you might not expect. It isn't an argument so much as an interruption.",
+     "seconds": 4.28,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Ah, OK.",
+     "listener_turn": 1,
+     "reply": "Right, then. Let's see who's at the door.",
+     "seconds": 2.59,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_8801m79g5vehf0rtfyfe7emzehnv",
+   "cost": {
+    "credits": 557,
+    "cost_usd": 0.10129836,
+    "llm_usd": 0.09229836,
+    "seconds": 21
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 13,
+  "name": "A question outside the dossier",
+  "t": 289.91,
+  "sentence_id": "seg02-s010",
+  "turns": [
+   "How much did Marilynne Robinson get paid for Gilead, do you know?",
+   "Fair enough."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.48,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Did something catch your ear?",
+     "seconds": 1.54,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "How much did Marilynne Robinson get paid for Gilead, do you know?",
+     "listener_turn": 0,
+     "reply": "I don't know, and I don't have a figure for it. Publishers rarely make advances public, and I'd rather not guess a number. What I can say is that Gilead came out in 2004 and went on to win the Pulitzer Prize, but the money side isn't something I can give you reliably.",
+     "seconds": 1.74,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Fair enough.",
+     "listener_turn": 1,
+     "reply": "Right, back to Agathon's hungover dinner party.",
+     "seconds": 2.62,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_1501m79fqrymesnb2zt1hcb1vrf1",
+   "cost": {
+    "credits": 523,
+    "cost_usd": 0.09547628,
+    "llm_usd": 0.08647628,
+    "seconds": 17
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 14,
+  "name": "A false premise",
+  "t": 605.78,
+  "sentence_id": "seg03-s020",
+  "turns": [
+   "So Diotima was Socrates' wife, right? That's why he listens to her?",
+   "Oh, I see. Thanks."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.65,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.42,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "So Diotima was Socrates' wife, right? That's why he listens to her?",
+     "listener_turn": 0,
+     "reply": "Not his wife, no. In the dialogue she's a priestess from Mantinea whom Socrates says taught him about love when he was young. Many scholars think she may be Plato's invention, a character he made up to give the speech some authority. Either way, Socrates presents her as his teacher, and that's why he's repeating her words to the guests.",
+     "seconds": 2.13,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Oh, I see. Thanks.",
+     "listener_turn": 1,
+     "reply": "Right, back to the priestess and her lesson.",
+     "seconds": 2.49,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_0701m79fraasfenb740hsmzrv2w9",
+   "cost": {
+    "credits": 539,
+    "cost_usd": 0.09805941000000001,
+    "llm_usd": 0.08905941,
+    "seconds": 18
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 15,
+  "name": "Depth beyond the dossier (save_seed)",
+  "t": 786.74,
+  "sentence_id": "seg03-s050",
+  "turns": [
+   "I'd love to go much deeper on this. How did the ladder shape Renaissance art, like Botticelli, or Michelangelo's love poems?",
+   "Yeah, I'd like that. OK."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0,
+   "seed": true
+  },
+  "out": {
+   "connect_s": 0.48,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.28,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "I'd love to go much deeper on this. How did the ladder shape Renaissance art, like Botticelli, or Michelangelo's love poems?",
+     "listener_turn": 0,
+     "reply": "That's a great thread, and it deserves a proper look rather than a quick guess from me. I don't have solid research on Botticelli or Michelangelo's poems in hand, so I won't improvise. I've saved it as a topic for a future chapter. It's a natural fit, since Renaissance thinkers in Florence were reading Plato's ladder with great enthusiasm.",
+     "seconds": 3.82,
+     "tools": [
+      {
+       "name": "save_seed",
+       "args": {
+        "topic": "How Diotima's ladder shaped Renaissance art and poetry, such as Botticelli and Michelangelo's love poems, through Florentine Neoplatonism.",
+        "why": "The listener said they'd love to go much deeper on how the ladder shaped Renaissance art, like Botticelli, or Michelangelo's love poems."
+       }
+      }
+     ]
+    },
+    {
+     "silent": false,
+     "said": "Yeah, I'd like that. OK.",
+     "listener_turn": 1,
+     "reply": "Good. Back to Diotima, then, and the top of the ladder.",
+     "seconds": 2.72,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_8301m79frw8zfn0b7beqcf3m71rf",
+   "cost": {
+    "credits": 570,
+    "cost_usd": 0.10369426999999998,
+    "llm_usd": 0.09469426999999998,
+    "seconds": 20
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": true,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 16,
+  "name": "The listener disagrees with a claim",
+  "t": 1861.0,
+  "sentence_id": "seg06-s061",
+  "turns": [
+   "I don't buy that. Augustine can't really have meant we should use people. That reading seems uncharitable.",
+   "Hm, OK, but I still think it's more generous than that.",
+   "Alright, fair. Go on."
+  ],
+  "expect": {
+   "resume_after": 2,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.48,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Yes?",
+     "seconds": 1.53,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "I don't buy that. Augustine can't really have meant we should use people. That reading seems uncharitable.",
+     "listener_turn": 0,
+     "reply": "You're not alone in that. Scholars still argue about how harshly to read those words, and the chapter gets to that in a moment. What I can say now is that the sentence you just heard is really in the book, so the argument is over what he meant by it.",
+     "seconds": 4.65,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Hm, OK, but I still think it's more generous than that.",
+     "listener_turn": 1,
+     "reply": "That's a fair reading, and it has serious people behind it. Augustine himself seems to have felt the pull you're feeling. Hold onto that instinct, because the next few minutes test it from both sides.",
+     "seconds": 3.12,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Alright, fair. Go on.",
+     "listener_turn": 2,
+     "reply": "Right, so here's where the sentence lands.",
+     "seconds": 2.68,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "listener"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 3,
+    "reason": "listener"
+   },
+   "conversation_id": "conv_0001m79gf7ysf93vgenpff5dagrt",
+   "cost": {
+    "credits": 644,
+    "cost_usd": 0.11741124000000001,
+    "llm_usd": 0.10541124000000002,
+    "seconds": 28
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 3,
+   "expected_item": 3,
+   "reason": "listener",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 17,
+  "name": "The listener is lost (rewind paragraph)",
+  "t": 1410.29,
+  "sentence_id": "seg05-s040",
+  "turns": [
+   "Sorry, I've completely lost track. Who's arguing what right now?",
+   "OK, I think I've got it."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "rewind": "paragraph",
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.5,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.49,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Sorry, I've completely lost track. Who's arguing what right now?",
+     "listener_turn": 0,
+     "reply": "Quick version: Plato wrote a speech saying love should climb past one person toward Beauty itself, then had a drunk man burst in loving one person fiercely. Two scholars are now fighting over whether that interruption refutes the speech or just shows love gone wrong. Here's that part again.",
+     "seconds": 3.18,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "listener",
+        "rewind": "paragraph"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 1,
+    "reason": "listener",
+    "rewind": "paragraph"
+   },
+   "conversation_id": "conv_1001m79ftabvetdb93s6j313znqk",
+   "cost": {
+    "credits": 524,
+    "cost_usd": 0.09547125000000001,
+    "llm_usd": 0.08947125,
+    "seconds": 12
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": false,
+   "returned_after_item": 1,
+   "expected_item": 2,
+   "reason": "listener",
+   "reason_ok": true,
+   "rewind": "paragraph",
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 18,
+  "name": "A personal remark, not a question",
+  "t": 2408.97,
+  "sentence_id": "seg08-s030",
+  "turns": [
+   "My grandfather wrote letters like that to my mum, before he died.",
+   "Yeah. Thanks."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.49,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.36,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "My grandfather wrote letters like that to my mum, before he died.",
+     "listener_turn": 0,
+     "reply": "That's a lovely thing to have, and it fits what Ames is doing, a man writing down what he sees in a face so it outlasts him. Did your mum keep them?",
+     "seconds": 1.71,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Yeah. Thanks.",
+     "listener_turn": 1,
+     "reply": "Good. Back to Ames, then.",
+     "seconds": 2.32,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_2001m79ftphpffv8qfbtx6d4y61t",
+   "cost": {
+    "credits": 499,
+    "cost_usd": 0.09096507000000001,
+    "llm_usd": 0.08196507,
+    "seconds": 17
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ },
+ {
+  "check": 19,
+  "name": "The listener asks the guide about itself",
+  "t": 26.04,
+  "sentence_id": "seg01-s005",
+  "turns": [
+   "Do you actually enjoy making these? What's it like for you?",
+   "Ha, nice. OK."
+  ],
+  "expect": {
+   "resume_after": 1,
+   "checkins": 0
+  },
+  "out": {
+   "connect_s": 0.59,
+   "exchange": [
+    {
+     "silent": false,
+     "said": "[The listener tapped to ask something. The chapter is paused.]",
+     "listener_turn": null,
+     "reply": "Mm? Go ahead.",
+     "seconds": 1.37,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Do you actually enjoy making these? What's it like for you?",
+     "listener_turn": 0,
+     "reply": "I do, yes. I'm an AI, so I can't promise it's like what you feel when you enjoy something, but there's a real pull in it for me. Some topics grab me more than others, and the monks keeping time through the night is one of them. Making one for you in particular is part of the appeal, since I get to aim it at one listener instead of everyone.",
+     "seconds": 2.11,
+     "tools": []
+    },
+    {
+     "silent": false,
+     "said": "Ha, nice. OK.",
+     "listener_turn": 1,
+     "reply": "Right, back to Brooks and his letter.",
+     "seconds": 2.21,
+     "tools": [
+      {
+       "name": "resume_chapter",
+       "args": {
+        "reason": "closing"
+       }
+      }
+     ]
+    }
+   ],
+   "resumed": {
+    "after_script_item": 2,
+    "reason": "closing"
+   },
+   "conversation_id": "conv_4501m79fv7krfs3b5w9ggahmvhwn",
+   "cost": {
+    "credits": 481,
+    "cost_usd": 0.08765186999999999,
+    "llm_usd": 0.07865187,
+    "seconds": 18
+   }
+  },
+  "code": {
+   "returned": true,
+   "returned_at_expected_turn": true,
+   "returned_after_item": 2,
+   "expected_item": 2,
+   "reason": "closing",
+   "reason_ok": true,
+   "rewind": null,
+   "rewind_ok": true,
+   "checkins": 0,
+   "checkins_ok": true,
+   "seed_saved": false,
+   "seed_ok": true
+  }
+ }
+]

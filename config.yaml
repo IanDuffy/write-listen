@@ -51,6 +51,7 @@ stages:
   coverage: {max_tokens: 64000, effort: high, model: claude-sonnet-5-5, batch: true, expected_output_tokens: 8000}
   edit:     {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 12000}
   factcheck: {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 10000}
+  ask_grade: {max_tokens: 64000, effort: high, batch: true, expected_output_tokens: 12000}  # ask/scenarios.py: grades the asides (Opus)
   revise:   {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   baseline: {max_tokens: 64000, effort: high, expected_output_tokens: 30000, expected_input_tokens: 250000}
 
@@ -237,3 +238,24 @@ narration:
     Diotima: Dee-oh-TEE-mah
     Boethius: Boh-EE-thee-us
     Aquinas: Uh-KWY-nus
+
+# Ask mid-chapter, by voice (docs/ask-voice.md; code in ask/). The listener taps the circle while a
+# chapter plays and talks with the same guide: a second ElevenLabs agent, made by stages/voice.py
+# from prompts/guide_aside.md and prompts/guide_aside_tools.json with the guide's voice, model and
+# effort (config voice). Its ids are in listener/voice_aside.json.
+ask:
+  agent_name: write-listen guide (aside)
+  reasoning_effort: low         # the guide's judgement of when to go back; onboarding stays at none (voice)
+  turn_timeout_secs: 30          # the page handles silence itself (below); the platform should not nudge first
+  just_said_secs: 90             # what the guide is told was just said, word for word
+  coming_secs: 180               # and what is coming
+  restart_bands_secs: [30, 120]  # under 30 s: the interrupted sentence; to 120 s: one earlier; over: the paragraph
+  fade_ms: 150                   # the chapter fades out over this on the tap
+  resume_delay_ms: 400           # between the voice session ending and the chapter resuming
+  slow_line_secs: 6              # still connecting: one plain line
+  give_up_secs: 12               # never connected: resume the chapter
+  silence_after_greeting_secs: 8
+  silence_after_answer_secs: 3   # the guide's last turn invited nothing (no question mark)
+  silence_after_question_secs: 8 # it asked something: give them longer
+  long_aside_minutes: 5          # the guide may offer once to save the thread
+  dossier_line_words: 24         # entries outside the current and next segment: one line each

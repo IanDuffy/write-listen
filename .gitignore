@@ -26,3 +26,6 @@ voice_test/log.jsonl
 
 # macOS
 .DS_Store
+
+# Ask mid-chapter: the grading pass's run log (costs are summarised in ask/build_costs.jsonl)
+ask/_runs/

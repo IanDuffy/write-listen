@@ -1,0 +1,517 @@
+{
+ "summary": {
+  "tap_to_animation_ms": {
+   "n": 3,
+   "median": 0.8,
+   "worst": 2.2
+  },
+  "tap_to_paused_ms": {
+   "n": 3,
+   "median": 163.6,
+   "worst": 165.4
+  },
+  "tap_to_ready_ms": {
+   "n": 3,
+   "median": 822,
+   "worst": 1303
+  },
+  "tap_to_first_sound_ms": {
+   "n": 3,
+   "median": 2264,
+   "worst": 2845
+  }
+ },
+ "runs": [
+  {
+   "k": 0,
+   "t": 428.4,
+   "how": "button",
+   "mode_before_tap": "listening",
+   "tap_to_animation_ms": 2.2,
+   "tap_to_paused_ms": 162.1,
+   "tap_to_ready_ms": 1303,
+   "tap_to_first_sound_ms": 2845,
+   "opening": "Yes? Go ahead."
+  },
+  {
+   "k": 1,
+   "t": 1285.3,
+   "how": "button",
+   "mode_before_tap": "listening",
+   "tap_to_animation_ms": 0.5,
+   "tap_to_paused_ms": 163.6,
+   "tap_to_ready_ms": 403,
+   "tap_to_first_sound_ms": 1899,
+   "opening": "Oh, hey. Did you have a question?"
+  },
+  {
+   "k": 2,
+   "t": 2142.1,
+   "how": "button",
+   "mode_before_tap": "listening",
+   "tap_to_animation_ms": 0.8,
+   "tap_to_paused_ms": 165.4,
+   "tap_to_ready_ms": 822,
+   "tap_to_first_sound_ms": 2264,
+   "opening": "Oh, hey. Did you have a question?"
+  }
+ ],
+ "asides": [
+  {
+   "id": "20261112-225404-ff87",
+   "started": "2026-11-12T22:54:04-0500",
+   "t": 129.809,
+   "sentence_id": "seg01-s027",
+   "segment": 1,
+   "transcript": [
+    {
+     "s": 1.96,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 5.8,
+   "restart": {
+    "t": 129.64,
+    "sentence_id": "seg01-s027",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 1602.0,
+   "tap_to_first_sound_ms": 2930.0,
+   "conversation_id": "conv_7001m79gn1vmed6szw6re3dr68kc",
+   "cost_usd": 0.07744961049999284,
+   "credits": 426,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225414-aa2f",
+   "started": "2026-11-12T22:54:14-0500",
+   "t": 387.096,
+   "sentence_id": "seg02-s037",
+   "segment": 2,
+   "transcript": [
+    {
+     "s": 2.17,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.5,
+   "restart": {
+    "t": 387.3,
+    "sentence_id": "seg02-s037",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 405.0,
+   "tap_to_first_sound_ms": 2053.0,
+   "conversation_id": "conv_0001m79gnaw4fs0aj9d4k8cnev9x",
+   "cost_usd": 0.08196201761868893,
+   "credits": 451,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225422-cdbd",
+   "started": "2026-11-12T22:54:22-0500",
+   "t": 644.19,
+   "sentence_id": "seg03-s028",
+   "segment": 3,
+   "transcript": [
+    {
+     "s": 2.48,
+     "who": "guide",
+     "text": "Mm? Did something catch your ear?"
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.7,
+   "restart": {
+    "t": 642.46,
+    "sentence_id": "seg03-s028",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 517.0,
+   "tap_to_first_sound_ms": 2219.0,
+   "conversation_id": "conv_9701m79gnjt2ffat5x0ad7dd6dwx",
+   "cost_usd": 0.0846856010973086,
+   "credits": 465,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225430-cf27",
+   "started": "2026-11-12T22:54:30-0500",
+   "t": 901.224,
+   "sentence_id": "seg03-s072",
+   "segment": 3,
+   "transcript": [
+    {
+     "s": 2.22,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.6,
+   "restart": {
+    "t": 897.29,
+    "sentence_id": "seg03-s072",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 416.0,
+   "tap_to_first_sound_ms": 2102.0,
+   "conversation_id": "conv_6301m79gntpvektrm9ze5wy13t6f",
+   "cost_usd": 0.08465151624403633,
+   "credits": 466,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225438-3540",
+   "started": "2026-11-12T22:54:38-0500",
+   "t": 1158.184,
+   "sentence_id": "seg04-s047",
+   "segment": 4,
+   "transcript": [
+    {
+     "s": 2.45,
+     "who": "guide",
+     "text": "Mm? Did something catch your ear?"
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.6,
+   "restart": {
+    "t": 1158.23,
+    "sentence_id": "seg04-s047",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 457.0,
+   "tap_to_first_sound_ms": 2198.0,
+   "conversation_id": "conv_3501m79gp322fgkrhwvedd4nnjqc",
+   "cost_usd": 0.08324712141595272,
+   "credits": 458,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225446-3ee9",
+   "started": "2026-11-12T22:54:46-0500",
+   "t": 1415.334,
+   "sentence_id": "seg05-s041",
+   "segment": 5,
+   "transcript": [
+    {
+     "s": 2.3,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.8,
+   "restart": {
+    "t": 1413.21,
+    "sentence_id": "seg05-s041",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 404.0,
+   "tap_to_first_sound_ms": 2002.0,
+   "conversation_id": "conv_3401m79gpb11eqtvrfbrq9pg8333",
+   "cost_usd": 0.08858139271198759,
+   "credits": 487,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225455-7536",
+   "started": "2026-11-12T22:54:55-0500",
+   "t": 1672.377,
+   "sentence_id": "seg06-s027",
+   "segment": 6,
+   "transcript": [
+    {
+     "s": 2.08,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.4,
+   "restart": {
+    "t": 1671.2,
+    "sentence_id": "seg06-s027",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 482.0,
+   "tap_to_first_sound_ms": 1921.0,
+   "conversation_id": "conv_0401m79gpkhjev283pknpge790zp",
+   "cost_usd": 0.0907310633719736,
+   "credits": 499,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225503-8424",
+   "started": "2026-11-12T22:55:03-0500",
+   "t": 1929.407,
+   "sentence_id": "seg06-s072",
+   "segment": 6,
+   "transcript": [
+    {
+     "s": 2.46,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.8,
+   "restart": {
+    "t": 1929.53,
+    "sentence_id": "seg06-s072",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 566.0,
+   "tap_to_first_sound_ms": 2317.0,
+   "conversation_id": "conv_4401m79gpv48f1c9ta01pv1bcr0n",
+   "cost_usd": 0.09127195269732537,
+   "credits": 502,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225511-0df4",
+   "started": "2026-11-12T22:55:11-0500",
+   "t": 2186.484,
+   "sentence_id": "seg07-s045",
+   "segment": 7,
+   "transcript": [
+    {
+     "s": 2.16,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.5,
+   "restart": {
+    "t": 2184.09,
+    "sentence_id": "seg07-s045",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 411.0,
+   "tap_to_first_sound_ms": 2043.0,
+   "conversation_id": "conv_8401m79gq333fbcvzftcaw1ww1t0",
+   "cost_usd": 0.08885484766002422,
+   "credits": 489,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225519-e315",
+   "started": "2026-11-12T22:55:19-0500",
+   "t": 2443.525,
+   "sentence_id": "seg08-s039",
+   "segment": 8,
+   "transcript": [
+    {
+     "s": 2.09,
+     "who": "guide",
+     "text": "Mm? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.4,
+   "restart": {
+    "t": 2443.21,
+    "sentence_id": "seg08-s039",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 423.0,
+   "tap_to_first_sound_ms": 1927.0,
+   "conversation_id": "conv_3201m79gqav3ecv93nfefa7g67tg",
+   "cost_usd": 0.07874456118532754,
+   "credits": 433,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225704-a98d",
+   "started": "2026-11-12T22:57:04-0500",
+   "t": 429.701,
+   "sentence_id": "seg02-s044",
+   "segment": 2,
+   "transcript": [
+    {
+     "s": 2.12,
+     "who": "guide",
+     "text": "Yes? Go ahead."
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.5,
+   "restart": {
+    "t": 430.0,
+    "sentence_id": "seg02-s044",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 1303.0,
+   "tap_to_first_sound_ms": 2845.0,
+   "conversation_id": "conv_7301m79gthcaet4s4k9c43agcmem",
+   "cost_usd": 0.08297574227734704,
+   "credits": 457,
+   "billed_seconds": 5
+  },
+  {
+   "id": "20261112-225712-7479",
+   "started": "2026-11-12T22:57:12-0500",
+   "t": 1286.796,
+   "sentence_id": "seg05-s016",
+   "segment": 5,
+   "transcript": [
+    {
+     "s": 2.21,
+     "who": "guide",
+     "text": "Oh, hey. Did you have a question?"
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.4,
+   "restart": {
+    "t": 1285.31,
+    "sentence_id": "seg05-s016",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 403.0,
+   "tap_to_first_sound_ms": 1899.0,
+   "conversation_id": "conv_6601m79gts16frp8ygdhymrxszye",
+   "cost_usd": 0.08923680457199942,
+   "credits": 491,
+   "billed_seconds": 4
+  },
+  {
+   "id": "20261112-225720-37a5",
+   "started": "2026-11-12T22:57:20-0500",
+   "t": 2143.634,
+   "sentence_id": "seg07-s038",
+   "segment": 7,
+   "transcript": [
+    {
+     "s": 2.57,
+     "who": "guide",
+     "text": "Oh, hey. Did you have a question?"
+    }
+   ],
+   "ended": "button",
+   "seconds": 4.7,
+   "restart": {
+    "t": 2142.69,
+    "sentence_id": "seg07-s038",
+    "rule": "sentence"
+   },
+   "rewind_asked": null,
+   "seeds": [],
+   "tap_to_ready_ms": 822.0,
+   "tap_to_first_sound_ms": 2264.0,
+   "conversation_id": "conv_3801m79gv0naf9wt0e3tna2kv6pr",
+   "cost_usd": null,
+   "credits": null
+  }
+ ],
+ "costs": [
+  {
+   "credits": 426,
+   "cost_usd": 0.07744961049999284,
+   "llm_usd": 0.06985605,
+   "seconds": 5
+  },
+  {
+   "credits": 451,
+   "cost_usd": 0.08196201761868893,
+   "llm_usd": 0.0760738,
+   "seconds": 4
+  },
+  {
+   "credits": 465,
+   "cost_usd": 0.0846856010973086,
+   "llm_usd": 0.0786203,
+   "seconds": 4
+  },
+  {
+   "credits": 466,
+   "cost_usd": 0.08465151624403633,
+   "llm_usd": 0.07871655,
+   "seconds": 4
+  },
+  {
+   "credits": 458,
+   "cost_usd": 0.08324712141595272,
+   "llm_usd": 0.0772288,
+   "seconds": 4
+  },
+  {
+   "credits": 487,
+   "cost_usd": 0.08858139271198759,
+   "llm_usd": 0.08239054999999999,
+   "seconds": 4
+  },
+  {
+   "credits": 499,
+   "cost_usd": 0.0907310633719736,
+   "llm_usd": 0.08506079999999999,
+   "seconds": 5
+  },
+  {
+   "credits": 502,
+   "cost_usd": 0.09127195269732537,
+   "llm_usd": 0.08505254999999999,
+   "seconds": 5
+  },
+  {
+   "credits": 489,
+   "cost_usd": 0.08885484766002422,
+   "llm_usd": 0.08299555,
+   "seconds": 5
+  },
+  {
+   "credits": 433,
+   "cost_usd": 0.07874456118532754,
+   "llm_usd": 0.07304055,
+   "seconds": 5
+  },
+  {
+   "credits": 457,
+   "cost_usd": 0.08297574227734704,
+   "llm_usd": 0.0772233,
+   "seconds": 5
+  },
+  {
+   "credits": 491,
+   "cost_usd": 0.08923680457199942,
+   "llm_usd": 0.0835648,
+   "seconds": 4
+  },
+  {
+   "credits": 496,
+   "cost_usd": 0.09005882594936764,
+   "llm_usd": 0.0839333,
+   "seconds": 5
+  }
+ ]
+}

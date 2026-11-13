@@ -13,6 +13,8 @@
   the circle starts a voice conversation with the guide (the ElevenLabs agent, milestone 4); tap
   again to finish. Without a microphone or voice, it falls back to the typed conversation. The text
   box talks to the guide either way, and the guide starts the chapter.
+  Asking mid-chapter (docs/ask-voice.md, page/ask.js): while a chapter plays, the circle reads "Ask
+  a question"; a tap pauses it and the guide answers; ?chapter=<run> opens a finished chapter.
 -->
 <style>
   :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
@@ -42,6 +44,14 @@
   body.idle:not(.talking) #orb, body.voice #orb { cursor: pointer; }
   body.voice #orb .core { transition: opacity .6s; animation: none; }  /* follows the sound, not a timer */
   @keyframes breathe { 50% { opacity: .75; } }
+  #orb .blob { fill: var(--accent); opacity: 0; }  /* an aside: the circle as a membrane (page/ask.js) */
+  body.aside #orb .core, body.aside #orb .icon { opacity: 0 !important; }
+  body.aside #orb .blob { opacity: 1; }
+  body.aside.thinking #orb .blob, body.aside.calm.connecting #orb .blob { animation: breathe 2s ease-in-out infinite; }
+  body.ready.playing.asks #orb .icon.pause { opacity: 0; }  /* the tap asks, it doesn't pause */
+  #read { font-size: 14px; color: var(--muted); text-underline-offset: 3px; }
+  #transcript details.aside { margin: 6px 0; border-left: 2px solid var(--line); padding-left: 10px; }
+  #transcript details.aside summary { cursor: pointer; color: var(--fg); }
   #line { min-height: 1.4em; text-align: center; color: var(--muted); max-width: 34em; }
   body.ready #line { color: var(--fg); font-weight: 600; }
   #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
@@ -74,6 +84,7 @@
   <button id="orb" aria-label="Chapter">
     <svg viewBox="0 0 180 180" aria-hidden="true">
       <circle class="core" cx="90" cy="90" r="78"/>
+      <path class="blob" d=""/>
       <circle class="track" cx="90" cy="90" r="88"/>
       <circle class="ring" cx="90" cy="90" r="88"/>
       <path class="icon play" d="M76 62 L124 90 L76 118 Z"/>
@@ -103,7 +114,8 @@ ring.style.strokeDashoffset = CIRC;
 let status = { state: "idle" }, lastState = "idle", lastLabel = null;
 let talking = false, thinking = false;  // a conversation has started; a reply is on its way
 let sessionId = null;                   // the conversation the server knows this page by
-let fresh = false;                      // the ready chapter was made (or played) during this visit
+const pinned = new URLSearchParams(location.search).get("chapter");  // a finished chapter to play and ask about
+let fresh = !!pinned;                   // the ready chapter was made (or played) during this visit
 let voiceConv = null, voiceMode = null; // the live voice conversation; "listening" or "speaking"
 let readyNote = "";                     // what to tell the voice guide when the chapter is ready
 let pendingReady = "";                  // told once the guide is listening (a contextual update wouldn't make it speak)
@@ -136,7 +148,7 @@ function render() {
   const shown = past ? "idle" : s.state;
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
     + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
-    + (voiceConv ? " voice " + (voiceMode || "") : "");
+    + (voiceConv ? " voice " + (voiceMode || "") : "") + (window.Ask ? Ask.classes() : "");
   $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
@@ -152,6 +164,7 @@ function render() {
   } else if (s.state === "problem") {
     $("line").textContent = s.message || "Something went wrong.";
   }
+  if (window.Ask) { const l = Ask.line(); if (l !== null) $("line").textContent = l; Ask.decorate(); }
 }
 
 function onStatus(s) {
@@ -170,7 +183,7 @@ function onStatus(s) {
   render();
 }
 
-new EventSource("/api/events").onmessage = (e) => onStatus(JSON.parse(e.data));
+new EventSource("/api/events" + (pinned ? "?chapter=" + encodeURIComponent(pinned) : "")).onmessage = (e) => onStatus(JSON.parse(e.data));
 setInterval(render, 30000);  // keep "about N min" counting down between stages
 
 async function post(url, body) {
@@ -357,6 +370,7 @@ $("retry").addEventListener("click", async () => {
 });
 
 $("orb").addEventListener("click", async () => {
+  if (window.Ask && Ask.onTap()) return;  // while a chapter plays: ask a question, or go back to it
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
   if (status.state === "ready" && fresh) { await endVoice(); return a.play(); }  // the mic would hear it
@@ -389,5 +403,6 @@ $("toggle").addEventListener("click", () => {
   $("toggle").setAttribute("aria-expanded", open);
 });
 </script>
+<script src="/ask.js"></script>
 </body>
 </html>
