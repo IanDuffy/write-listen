@@ -14,7 +14,7 @@
   },
   {
     "name": "start_chapter",
-    "description": "Start making the chapter you have told the listener you will make. Call it once they have said yes or not objected. It starts the research and writing, which takes about twenty minutes, and returns whether it started and about how long it will take.",
+    "description": "Start making the chapter you have told the listener you will make. Call it once they have said yes or not objected. It starts the research and writing, and returns whether it started and, only when earlier chapters have measured it, how soon it can start playing.",
     "input_schema": {
       "type": "object",
       "properties": {
@@ -42,7 +42,7 @@
   },
   {
     "name": "get_status",
-    "description": "How the chapter being made is going: the stage in plain words, about how many minutes are left, and its title once there is one. Call it whenever the listener asks; never guess.",
+    "description": "How the chapter being made is going: the stage in plain words, how many minutes are left when that is known, and its title once there is one. Call it whenever the listener asks; never guess.",
     "input_schema": {"type": "object", "properties": {}, "additionalProperties": false}
   }
 ]

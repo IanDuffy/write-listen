@@ -271,15 +271,53 @@ def ending(a: dict, how: str) -> str:
 
 # --- an ask on a fast run still being made ----------------------------------------------------
 
-def question_notes(run_root: Path, lines: list[dict], section: int) -> list[dict]:
+QUESTION_MIN_WORDS = 6  # a first line without a question mark counts as a question from this many words
+
+
+def question_notes(run_root: Path, lines: list[dict], section: int, how: str | None = None) -> list[dict]:
     """A mid-chapter question, saved to listener_notes.md as kind "question" when its aside ends
-    (the spec's "appended ... by the ask-by-voice aside log"): what the listener first said, and
-    anything later that is itself a question. Nothing for a run that is not fast or is archived."""
-    if not live(run_root):
+    (the spec's "appended ... by the ask-by-voice aside log"): what the listener first said when it
+    reads as a question (a question mark, or a request of QUESTION_MIN_WORDS words or more: "Tell me
+    more about how the Romans mixed it"), and anything later that has a question mark. Nothing when
+    the aside ended on "never mind" (`how`), or for a run that is not fast or is archived."""
+    if not live(run_root) or how == "never_mind":
         return []
     said = [x["text"].strip() for x in lines if x.get("who") == "listener" and x.get("text", "").strip(". ")]
-    asked = said[:1] + [s for s in said[1:] if "?" in s]
+    first = [s for s in said[:1] if "?" in s or len(s.split()) >= QUESTION_MIN_WORDS]
+    asked = first + [s for s in said[1:] if "?" in s]
     return [notes.add(run_root, s, "question", section=section) for s in asked]
+
+
+def unfinished(ch, t: float, values: dict[str, str]) -> dict[str, str]:
+    """An ask inside the rolling timing of a fast run still being made: ask.aside.Chapter `ch` knows
+    only the sections narrated and timed so far, so its context says the chapter ends with them. The
+    brief (archive.write_brief) lists every section: from it, the values that say otherwise (where,
+    later, coming, and the outline in chapter). {} when the run is finished or not fast, or the brief
+    lists nothing beyond the timing. An ask past the timing is `beyond`'s, which overrides these."""
+    from ask.aside import _clock
+    total, nseg = len(ch.brief_segments), len(ch.segments)
+    if total <= nseg or not live(Path(ch.run)):
+        return {}
+    t = min(max(t, 0.0), ch.duration)
+    s = ch.sents[ch.locate(t)]
+    heard = (f"They have heard segments 1 to {s.seg} and this segment up to here; " if s.seg > 1 else
+             "They have heard segment 1 and this segment up to here; " if s.seg == 1 else
+             "They are in the first segment; ")
+    rest = [ch.outline_line(k) for k in range(nseg, total)]
+    later = [] if values.get("later", "").startswith("(nothing after that") else [values["later"]]
+    coming = values.get("coming", "")
+    out = {
+        "where": (f"Segment {s.seg + 1} of {total}, \"{ch.seg_title(s.seg)}\": sentence {s.n} of {ch.counts[s.seg]} in "
+                  f"that segment. {t / 60:.1f} minutes into the chapter ({_clock(t)}), which is still being made, "
+                  "so its length is not known yet. " + heard
+                  + (f"segments {s.seg + 2} to {total} are still to come." if s.seg + 2 < total else
+                     f"segment {total} is still to come.")),
+        "later": "\n".join(later + rest),
+        "coming": ("(not recorded yet: the next lines are still being made)"
+                   if coming.startswith("(nothing: the chapter has ended)") else coming),
+        "chapter": "\n".join([values.get("chapter", "")] + rest),
+    }
+    return {k: v.replace("*", "") for k, v in out.items()}
 
 
 def beyond(ch, t: float) -> dict | None:
@@ -332,43 +370,62 @@ def beyond(ch, t: float) -> dict | None:
 
 # --- the profile ------------------------------------------------------------------------------
 
-def remember(cfg: dict, a: dict, title: str) -> Path | None:
-    """What was said at a check-in goes to the listener's profile as an onboarding conversation
-    does: its lines are written as a session transcript (listener/sessions/<id>.jsonl, the format
-    of guide.Session.record) and the memory pass runs on it in a daemon thread. Returns the
-    transcript, or None when the listener said nothing.
+# The page line a hand-off's transcript opens with, so the memory pass knows what kind of talk it was.
+HANDOFF = {"check_in": ("checkin", "[A check-in while the listener heard the chapter \"{title}\": its next part "
+                                   "was still being made, and the guide asked how the chapter was landing.]"),
+           "ask": ("ask", "[A question the listener asked mid-chapter, in \"{title}\", while the chapter was "
+                          "still being made: they tapped Ask and the guide answered.]")}
 
-    The id is the check-in's own (its start time, then "-checkin"), so sessions sort in the order
-    they began, which is the order stages.memory keeps."""
+
+def remember(cfg: dict, a: dict, title: str, kind: str = "check_in") -> Path | None:
+    """What was said at a check-in (or, kind "ask", in a mid-chapter question on a fast run) goes to
+    the listener's profile as an onboarding conversation does: its lines are written as a session
+    transcript (listener/sessions/<id>.jsonl, the format of guide.Session.record) and the memory
+    pass runs on it in a daemon thread. Returns the transcript, or None when the listener said nothing.
+
+    The id is the conversation's own (its start time, then "-checkin" or "-ask"), so sessions sort in
+    the order they began, which is the order stages.memory keeps."""
     from stages import memory
     lines = a.get("lines") or []
     if not any(x.get("who") == "listener" and x.get("text", "").strip(". ") for x in lines):
         return None
     sessions = memory.listener_dir(cfg) / "sessions"
     sessions.mkdir(parents=True, exist_ok=True)
-    path = sessions / f"{a['id']}-checkin.jsonl"
+    suffix, opening = HANDOFF[kind]
+    path = sessions / f"{a['id']}-{suffix}.jsonl"
     stamp = a.get("started") or time.strftime("%Y-%m-%dT%H:%M:%S")
-    recs = [{"t": stamp, "who": "session", "kind": "check_in", "run": Path(a["run"]).name, "section": a["section"]},
-            {"t": stamp, "who": "page", "text": f"[A check-in while the listener heard the chapter \"{title}\": its "
-                                                "next part was still being made, and the guide asked how the chapter "
-                                                "was landing.]"}]
+    recs = [{"t": stamp, "who": "session", "kind": kind, "run": Path(a["run"]).name, "section": a["section"]},
+            {"t": stamp, "who": "page", "text": opening.format(title=title)}]
     recs += [{"t": stamp, **{k: v for k, v in x.items() if k != "s"}} for x in lines]
     base.write_atomic(path, "\n".join(json.dumps(x, ensure_ascii=False) for x in recs))
     threading.Thread(target=_pass, args=(cfg, path), name="checkin-memory", daemon=True).start()
     return path
 
 
+WAIT_POLL_SECONDS = 2.0          # how often a deferred hand-off looks again
+WAIT_MAX_SECONDS = 12 * 3600     # then it gives up: the server's catch-up at its next start takes it
+
+
 def _pass(cfg: dict, path: Path) -> None:
     """The memory pass for a check-in's transcript. stages.memory skips a conversation older than one
     already remembered, so this never goes ahead of an earlier conversation that still waits for its
-    pass (one in flight is waited for; one still open, a typed chat left running, is left to go
-    first, and the server's catch-up at its next start then takes both in order)."""
+    pass: one in flight, or one still open (a typed chat left running). It waits in its daemon thread
+    and runs as soon as nothing earlier is pending, so the earlier one's pass at its end comes first
+    and this one is not left behind for a restart (where a newer conversation remembered meanwhile
+    would make stages.memory skip it). After WAIT_MAX_SECONDS it gives up, as before, to the catch-up."""
     from stages import memory
     try:
-        with memory.LOCK:  # a pass in flight finishes first
-            pass
-        if any(p.stem < path.stem for p in memory.pending_sessions(cfg)):
-            return
+        deadline = time.monotonic() + WAIT_MAX_SECONDS
+        while True:
+            with memory.LOCK:  # a pass in flight finishes first
+                pass
+            if path.with_suffix(".done").exists():
+                return
+            if not any(p.stem < path.stem for p in memory.pending_sessions(cfg)):
+                break
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(WAIT_POLL_SECONDS)
         memory.after_session(cfg, path)
     except Exception as e:  # never take the server down over the profile
         print(f"  memory: {path.name}: {e}")

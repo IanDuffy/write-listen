@@ -240,6 +240,9 @@ MOCK_RESULTS = {  # the voice agent's tools, mocked: a comparison never starts a
 }
 
 
+QUIET_SECONDS, TURN_SECONDS = 4, 60  # a turn is over after this long with nothing new; it fails after this
+
+
 def _voice_replies(cfg: dict, session, turns: list[str], client) -> list[dict]:
     # cfg is the real config: the agent's state (listener/voice.json) must be the listener's own.
     """One text-only conversation with the voice agent: the page's opening note, then each turn.
@@ -257,6 +260,8 @@ def _voice_replies(cfg: dict, session, turns: list[str], client) -> list[dict]:
             events.append((turn[0], kind, time.monotonic(), value))
         done.set()
 
+    # A tool the agent does not wait for (scout_topic) gets no reply after it: never wait for one.
+    unawaited = {t["name"] for t in _tools("guide") if t.get("expects_response") is False}
     tools = ClientTools()
     for name, result in MOCK_RESULTS.items():
         tools.register(name, lambda params, _n=name, _r=result: (add("tool", _n), json.dumps(_r))[1])
@@ -287,13 +292,14 @@ def _voice_replies(cfg: dict, session, turns: list[str], client) -> list[dict]:
                 done.clear()
                 with lock:
                     mine = [e for e in events if e[0] == n]
-                tools_pending = any(k == "tool" and not any(k2 == "reply" and t2 > t for _, k2, t2, _ in mine)
-                                    for _, k, t, _ in mine)
-                quiet = mine and time.monotonic() - mine[-1][2] >= 4 and not tools_pending
+                tools_pending = any(k == "tool" and v not in unawaited
+                                    and not any(k2 == "reply" and t2 > t for _, k2, t2, _ in mine)
+                                    for _, k, t, v in mine)
+                quiet = mine and time.monotonic() - mine[-1][2] >= QUIET_SECONDS and not tools_pending
                 if quiet:
                     break
-                if time.monotonic() - t0 > 60:
-                    raise StageError(f"voice agent: no complete reply within 60 s to {said[:60]!r}")
+                if time.monotonic() - t0 > TURN_SECONDS:
+                    raise StageError(f"voice agent: no complete reply within {TURN_SECONDS} s to {said[:60]!r}")
                 done.wait(0.5)
             replies = [e for e in mine if e[1] == "reply"]
             out.append({"said": said, "reply": " ".join(e[3] for e in replies),

@@ -321,6 +321,8 @@ fast:
     decision_wait_seconds: 20   # a wait the run has said nothing about for this long is treated as a check-in
     tap_wait_seconds: 20        # gap_mic: tap: how long the guide's question waits for the tap
     quiet_seconds: 1.5          # the listener counts as quiet (for the ready signal) after this long without speech
+    stall_seconds: 30           # a check-in where nothing is said for this long (a guide that never speaks, steady
+                                # noise on the mic) stops waiting on the mic's level: it closes, or the ready note goes
   checkin:                      # the guide's check-in when a section isn't ready: a third voice agent
     agent_name: write-listen guide (check-in)
     reasoning_effort: low

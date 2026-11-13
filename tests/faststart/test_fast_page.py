@@ -128,7 +128,7 @@ def site(cfg, tmp_path, monkeypatch):
     cfg["ask"].update(fade_ms=50, resume_delay_ms=50, slow_line_secs=4, give_up_secs=8)
     cfg["fast"].update(silence_seconds=1, position_seconds=0.3, gap_mic="auto")
     cfg["fast"]["page"].update(section_gap_ms=150, ready_beat_ms=150, decision_wait_seconds=30, tap_wait_seconds=1.2,
-                               quiet_seconds=0.4)
+                               quiet_seconds=0.4, stall_seconds=6)
     monkeypatch.setattr(voice, "signed_url", lambda cfg, client=None, kind="guide": f"wss://example/{kind}")
     monkeypatch.setattr(voice, "save_conversation", lambda *a, **k: None)
     monkeypatch.setattr(ask_routes, "_save_cost", lambda *a, **k: None)
@@ -164,8 +164,14 @@ class Browser:
             (r.url.split("://", 1)[1].split("/", 1)[1], json.loads(r.post_data or "{}"))))
         self.page.route(base + "/stub-el.js", lambda r: r.fulfill(status=200, content_type="text/javascript", body=STUB))
         self.page.add_init_script("""
-          window.__a = { plays: [], loads: 0 };
-          document.addEventListener("play", (e) => { if (e.target.id === "audio") window.__a.plays.push(new URL(e.target.src).pathname); }, true);
+          window.__a = { plays: [], loads: 0, at: [] };  // at: [event, piece, when] for every play and end
+          const mark = (e) => { if (e.target.id === "audio") window.__a.at.push([e.type, new URL(e.target.src).pathname, performance.now()]); };
+          document.addEventListener("play", (e) => { if (e.target.id === "audio") window.__a.plays.push(new URL(e.target.src).pathname); mark(e); }, true);
+          document.addEventListener("ended", mark, true);
+          window.__notes = [];  // every browser notification the page raised, permission granted
+          window.Notification = class { constructor(title, o) { window.__notes.push([title, (o || {}).body]); } };
+          window.Notification.permission = "granted";
+          window.Notification.requestPermission = async () => "granted";
           document.addEventListener("loadstart", (e) => { if (e.target.id === "audio") window.__a.loads++; }, true);
         """)
         self.page.goto(base + path)
@@ -178,8 +184,8 @@ class Browser:
     def wait(self, js, timeout=8000):
         return self.page.wait_for_function(js, timeout=timeout)
 
-    def js(self, code):
-        return self.page.evaluate(code)
+    def js(self, code, arg=None):
+        return self.page.evaluate(code, arg)
 
     def state(self):
         return self.js("Fast.debug.state()")
@@ -194,6 +200,11 @@ class Browser:
 
     def starts(self):
         return [body for path, body in self.posts if path == "api/ask/start"]
+
+    def between(self, ended, played):
+        """Milliseconds from one piece ending to another starting."""
+        return self.js("""([a, b]) => { const at = window.__a.at, when = (ev, p) => at.find((x) => x[0] === ev && x[1] === p)[2];
+                          return when("play", b) - when("ended", a); }""", [ended, played])
 
 
 @pytest.fixture
@@ -295,6 +306,10 @@ def test_pieces_play_in_order_and_a_new_piece_is_picked_up(world):
     b.wait("window.__a.plays.length === 4")  # the new piece after a beat, then part 2 after the pause between parts
     assert b.plays() == [piece(1, 0), piece(1, 1), piece(1, 2), piece(2, 0)]
     assert b.js("window.__a.loads") == 4  # each piece loaded once, at its own address
+    # Between two parts, the next one ready: the pause, then it continues, and no check-in (docs/fast-start.md).
+    gap = world.cfg["fast"]["page"]["section_gap_ms"]
+    assert b.between(piece(1, 2), piece(2, 0)) >= gap * 0.9 > b.between(piece(1, 0), piece(1, 1))
+    assert b.starts() == [] and b.js("window.__el.sessions.length") == 0
     waiting_for(b, 3)
     r.reported(state="waiting", section=3, piece=0, waiting_for=3)
     assert [m[0] for m in b.markers()] == ["played", "played", "being_written"]
@@ -553,6 +568,7 @@ def test_first_audio_tells_the_live_guide_and_the_tap_ends_the_conversation_and_
     assert b.js("window.__el.sessions[0].sent[1]").startswith('[The chapter is ready: "Concrete That Heals"')
     assert b.js("document.body.classList.contains('ready')") and b.page.inner_text("#line") == "Concrete That Heals"
     assert "Ready to play: Concrete That Heals" in b.js("document.getElementById('transcript').textContent")
+    assert b.js("window.__notes") == [["Your chapter is starting", "Concrete That Heals"]]  # as at ready
     b.page.wait_for_timeout(400)
     assert b.js("document.getElementById('audio').paused") and b.plays() == []  # never over the conversation
     b.page.click("#orb")
@@ -560,6 +576,7 @@ def test_first_audio_tells_the_live_guide_and_the_tap_ends_the_conversation_and_
     assert b.js("window.__el.sessions[0].ended") and b.js("voiceConv === null")  # the conversation ended first
     assert b.plays() == [piece(1, 0)]
     r.reported(state="playing", section=1, piece=0)
+    assert len(b.js("window.__notes")) == 1  # once, not again with each status
 
 
 def test_an_awaited_part_never_starts_over_a_conversation_begun_meanwhile(world):
@@ -647,3 +664,166 @@ def test_a_finished_chapter_is_an_ordinary_chapter(world):
     assert b.plays() == ["/api/chapters/synthetic/audio"]
     assert b.js("getComputedStyle(document.getElementById('sections')).display") == "none"
     assert not (world.runs / "synthetic" / "fast" / "player.json").exists()  # no position reports
+
+
+def test_a_fast_chapter_finished_before_this_visit_is_an_ordinary_chapter(world):
+    """The latest run's own status.json says fast and ready, with its sections and pieces (a past visit's
+    chapter, opened at /): Fast stays out of the way, and the whole chapter's file plays."""
+    r = world.run = FastRun(world.runs, sections=2)
+    r.add(1, 1.0).add(2, 1.0)
+    r.complete.update({1, 2})
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono", "-t", "3",
+                    "-b:a", "8k", str(r.root / "10_audio" / "chapter.mp3")], check=True)
+    r.status(state="ready", audio="10_audio/chapter.mp3", label="Ready", first_audio=True)
+    b = world.open(fast=False)
+    b.wait("status.state === 'ready' && document.body.classList.contains('past')")
+    assert b.js("Fast.active()") is False and b.js("Fast.onTap()") is False
+    assert b.js("getComputedStyle(document.getElementById('sections')).display") == "none"
+    b.page.click("#last")
+    b.wait("!document.getElementById('audio').paused")
+    assert b.plays() == ["/api/chapters/fast-run/audio"]
+    b.page.wait_for_timeout(500)
+    assert not (r.root / "fast" / "player.json").exists()  # no position reports
+
+
+# --- review fixes ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("second", ["fast", "overnight"])
+def test_a_chapter_heard_while_another_starts_plays_on_and_still_pauses(world, second):
+    """Regression: the run finished mid-listen, then another chapter started (the status follows it): the
+    chapter being heard stopped at the end of its piece, and the circle could no longer reach it."""
+    r = world.run = FastRun(world.runs, sections=2)
+    r.add(1, 3.0).add(2, 1.0)
+    r.complete.update({1, 2})
+    r.status()
+    b = world.open()
+    b.page.click("#orb")
+    b.wait("!document.getElementById('audio').paused")
+    r.status(state="ready", audio="10_audio/chapter.mp3", label="Ready")
+    b.wait("status.state === 'ready' && Fast.debug.state().kept")
+    time.sleep(0.05)  # the newer run is the one the server follows
+    if second == "fast":
+        FastRun(world.runs, name="fast-b", sections=2).status()
+    else:
+        write(world.runs / "night" / "status.json", {
+            "run": "night", "state": "making", "pid": os.getpid(), "label": "Drafting", "stages_done": 1,
+            "stages_total": 14, "minutes_left": None, "updated": time.strftime("%Y-%m-%dT%H:%M:%S%z")})
+    b.wait("status.run !== 'fast-run'")
+    assert not b.js("document.getElementById('audio').paused")
+    b.page.click("#orb")  # the circle still pauses the chapter being heard...
+    b.wait("Fast.debug.state().mode === 'paused' && document.getElementById('audio').paused")
+    if second == "fast":
+        FastRun(world.runs, name="fast-b", sections=2).status(label="Writing part 1 of 2")  # a new status meanwhile
+        b.wait("status.label === 'Writing part 1 of 2'")
+    b.page.click("#orb")  # ...and resumes it, where it was
+    b.wait("Fast.debug.state().mode === 'playing' && !document.getElementById('audio').paused")
+    b.wait("window.__a.plays.length === 3", timeout=10000)
+    assert b.plays() == [piece(1, 0), piece(1, 0), piece(2, 0)] and b.js("window.__a.loads") == 2
+    b.wait("Fast.debug.state().run === null")  # heard to the end: let go
+    assert b.js("Fast.debug.state().mode") == "done"
+
+
+def test_skipping_while_the_guide_talks_ends_the_conversation_before_it_plays(world):
+    """Regression: tapping a marker being written played the next part over a live onboarding conversation."""
+    r = world.run = FastRun(world.runs, sections=4)
+    r.add(1, 1.0)
+    r.complete.add(1)
+    r.status()
+    b = world.open()
+    b.page.click("#orb")
+    waiting_for(b, 2)
+    r.status(state="problem", message="The chapter stopped unexpectedly.", retryable=True)
+    b.wait("document.body.classList.contains('problem')")
+    b.page.click("#orb")  # the page's own tap: a conversation with the guide
+    b.wait("window.__el.sessions.length === 1 && voiceConv !== null")
+    r.add(2, 2.0).add(3, 2.0)
+    r.complete.add(2)
+    r.status(state="making", message=None)
+    b.wait("Fast.debug.state().mode === 'paused' && Fast.debug.state().n === 2")
+    assert b.js("document.getElementById('audio').paused") and not b.js("window.__el.sessions[0].ended")
+    b.page.click("#sections li:nth-child(4) button")  # being written: to the next marker, part 3, which is ready
+    b.wait("window.__a.plays.length === 2")
+    assert b.plays() == [piece(1, 0), piece(3, 0)]
+    assert b.js("window.__el.sessions[0].ended") and b.js("voiceConv === null")  # the conversation ended first
+
+
+def test_a_play_from_outside_during_a_check_in_is_paused_again(world):
+    """Regression: a headset or keyboard play during a check-in replayed the last piece under the guide."""
+    r = world.run
+    r.add(1, 2.0)
+    r.complete.add(1)
+    r.status()
+    b = world.open()
+    check_in(world, b)
+    b.js("document.getElementById('audio').play().catch(() => {})")
+    b.page.wait_for_timeout(400)
+    assert b.js("document.getElementById('audio').paused") and b.state()["mode"] == "waiting"
+    assert b.js("Ask.state().phase") == "live"
+
+
+def test_a_play_from_outside_after_the_place_moved_on_skips_nothing(world):
+    """Regression: the run stopped as a piece ended (the place moved on to the next piece, the old one still
+    loaded); a headset play replayed the old piece and then went on past the next one."""
+    r = world.run
+    r.add(1, 1.0).add(1, 1.0).add(1, 1.0).status()
+    b = world.open()
+    b.page.click("#orb")
+    b.wait("!document.getElementById('audio').paused")
+    r.status(state="problem", message="The chapter stopped unexpectedly.", retryable=True)
+    b.wait("Fast.debug.state().mode === 'paused' && Fast.debug.state().i === 1")
+    r.status(state="making", message=None)
+    b.wait("Fast.active()")
+    b.js("document.getElementById('audio').play().catch(() => {})")  # a headset play
+    b.page.wait_for_timeout(400)
+    assert b.js("document.getElementById('audio').paused") and b.state()["mode"] == "paused"
+    b.page.click("#orb")  # the circle carries on from the place kept
+    b.wait("window.__a.plays.includes('%s')" % piece(1, 2), timeout=6000)
+    assert [p for p in b.plays() if p != piece(1, 0)] == [piece(1, 1), piece(1, 2)]
+
+
+def test_an_outside_pause_and_play_of_the_chapter_still_work(world):
+    r = world.run
+    r.add(1, 4.0).status()
+    b = world.open()
+    b.page.click("#orb")
+    b.wait("!document.getElementById('audio').paused && document.getElementById('audio').currentTime > 0.3")
+    b.js("document.getElementById('audio').pause()")
+    b.wait("Fast.debug.state().mode === 'paused'")
+    b.js("document.getElementById('audio').play().catch(() => {})")
+    b.wait("Fast.debug.state().mode === 'playing'")
+    assert not b.js("document.getElementById('audio').paused") and b.js("document.getElementById('audio').currentTime") > 0.3
+    r.reported(state="playing", section=1, piece=0)
+
+
+def test_a_check_in_whose_guide_never_speaks_closes(world):
+    """Regression: with no reply to the opening, nothing ever closed the check-in (its timers waited for
+    the guide's first turn)."""
+    world.cfg["fast"]["page"]["stall_seconds"] = 1
+    r = world.run
+    r.add(1, 1.0)
+    r.complete.add(1)
+    r.status()
+    b = world.open()
+    check_in(world, b)
+    b.wait("Ask.state() === null && document.getElementById('line').textContent === 'Talk while you wait'", timeout=5000)
+    assert b.js("window.__el.sessions[0].ended")
+    assert [(x["kind"], x["ended"]) for x in A.load_asides(r.root)] == [("check_in", "timeout")]
+
+
+def test_steady_noise_on_the_mic_does_not_hold_the_ready_part_for_ever(world):
+    """Regression: the mic's level alone counted as the listener talking, so steady room noise kept the
+    ready note from being sent for as long as it lasted."""
+    world.cfg["fast"]["page"]["stall_seconds"] = 1.5
+    r = world.run
+    r.add(1, 1.0)
+    r.complete.add(1)
+    r.status()
+    b = world.open()
+    check_in(world, b)
+    b.js("window.__el.inVol = 0.5; window.__el.sessions[0].say('What do you make of it so far?')")  # and the noise stays
+    r.add(2, 2.0).status(waiting_for=None, check_in=None)
+    b.wait("window.__el.sessions[0].ctx.length === 1")
+    b.page.wait_for_timeout(600)
+    assert b.js("window.__el.sessions[0].sent.length") == 1  # within the bound, the level still holds it
+    b.wait("window.__el.sessions[0].sent.length === 2", timeout=5000)
+    assert b.js("window.__el.sessions[0].sent[1]").startswith("[The next part is ready")

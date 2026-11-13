@@ -97,7 +97,7 @@ class Session:
         known = identity(cfg)
         names = [] if known else draw_names(cfg, rng or random.Random())
         now = status() or {}
-        chapter_now = (json.dumps({"run": now.get("run"), **plain_status(now)}, ensure_ascii=False)
+        chapter_now = (json.dumps({"run": now.get("run"), **self._plain(now)}, ensure_ascii=False)
                        if now.get("state") in ("making", "ready", "problem") else "(none)")
         # The prompt's values: the typed chat renders them here; the voice agent (stages/voice.py) gets
         # them as dynamic variables, since its prompt is prompts/guide.md with the same {{placeholders}}.
@@ -107,6 +107,8 @@ class Session:
             "profile": listener_profile(cfg), "history": recent_history(cfg), "chapter_now": chapter_now,
             "minutes": str(round(sum((cfg.get("status_minutes") or {}).values())) or 25),
         }
+        if fast is not None:  # fast chapters: the minutes to the first audio when measured, else no figure
+            self.values["minutes"] = fast.minutes()
         self.system = load_prompt("guide", **self.values)
         self.record("session", names=names, returning=bool(known))
 
@@ -194,8 +196,15 @@ class Session:
         if name == "scout_topic":
             return self.fast.scout_topic(args.get("topic") or "") if self.fast else {"scouting": False}
         if name == "get_status":
-            return plain_status(self.status_fn() or {"state": "idle"})
+            return self._plain(self.status_fn() or {"state": "idle"})
         return {"error": f"no tool named {name}"}
+
+    def _plain(self, status: dict) -> dict:
+        out = plain_status(status)
+        if status.get("mode") == "fast":  # the wait rules, and no countdown the run can't back
+            from faststart import guide_hooks
+            out = guide_hooks.for_guide(out, status, self.cfg, self.runs_dir)
+        return out
 
     def start_chapter(self, topic: str, why: str, notes: str, listener_said: str = "") -> dict:
         if not topic.strip():
@@ -228,7 +237,11 @@ class Session:
         if not run:
             return {"added": False, "reason": "No chapter is being made yet: put it in start_chapter's notes."}
         root = self.runs_dir / run
-        if self.fast and (out := self.fast.add_note(root, note, kind)):
+        hooks = self.fast
+        if hooks is None:  # a conversation without them (cli.py chat) beside a fast run: routed by the run
+            from faststart import guide_hooks
+            hooks = guide_hooks.Hooks(self.cfg, self.runs_dir, self.status_fn) if guide_hooks.is_fast(root) else None
+        if hooks and (out := hooks.add_note(root, note, kind)):
             return out  # a fast run: listener_notes.md, with the kind and the section it was said in
         p = root / "00_source" / "notes.md"
         if not p.exists():

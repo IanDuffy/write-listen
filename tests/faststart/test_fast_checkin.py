@@ -372,10 +372,13 @@ def test_a_check_in_never_goes_ahead_of_an_earlier_conversation_still_waiting(wo
     write(sessions / "20261112-090000.jsonl", json.dumps({"who": "listener", "text": "I pour concrete."}) + "\n")
     ran = []
     monkeypatch.setattr(memory, "after_session", lambda cfg, path: ran.append(path))
+    # The hand-off now waits for the earlier conversation (the test below); shortened here to its give-up.
+    monkeypatch.setattr(checkin, "WAIT_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(checkin, "WAIT_MAX_SECONDS", 0.05)
     a = {"id": "20261113-101500-ab12", "run": world.root, "section": 2, "started": "2026-11-13T10:15:00",
          "lines": [{"s": 1.0, "who": "listener", "text": "It surprised me."}]}
     path = checkin.remember(cfg, a, "Concrete That Heals")
-    join_passes()  # its own thread found the earlier conversation waiting, and left it
+    join_passes()  # its own thread found the earlier conversation waiting, waited, and left it
     assert ran == []
     assert path.name == "20261113-101500-ab12-checkin.jsonl" and path.stem > "20261113-101500"  # sorts by when it began
     checkin._pass(cfg, path)
@@ -417,7 +420,8 @@ def test_a_question_asked_mid_chapter_becomes_a_question_note(world, asked, cfg)
                                                                    (2, "question", "And when was that?")]
     log = A.load_asides(asked)
     assert log[0]["kind"] == "ask" and log[0]["segment"] == 2 and "section" not in log[0]
-    assert world.passed == []  # the profile hand-off is the check-in's
+    join_passes()  # a question goes to the profile too (review fix; it was the check-in's alone)
+    assert [p.name for p in world.passed] == [f"{res['aside']}-ask.jsonl"]
     # once the chapter is archived, or on a run that was never fast, nothing is written
     write(asked / "fast" / "archive.json", {})
     ask(world, t, "One more?")
@@ -466,3 +470,103 @@ def test_a_fast_run_being_made_can_be_asked_about_once_it_is_timed(world, asked)
     ready = ask_routes.with_extras({"run": "synthetic", "state": "ready", "mode": "fast"}, world.runs)
     assert ready["asks"] is True and ready["episode"] is False
     assert ask_routes.with_extras({"state": "idle"}, world.runs) == {"state": "idle"}
+
+
+# --- review fixes -------------------------------------------------------------------------------
+
+def cut_timing(root, keep=1):
+    """The synthetic chapter as a fast run part-way: only the first `keep` sections narrated and
+    timed (11_episode/timing.json), while 05_brief.md lists every section, as archive.write_brief does."""
+    p = root / "11_episode" / "timing.json"
+    t = json.loads(p.read_text())
+    t["segments"] = t["segments"][:keep]
+    t["duration"] = round(t["segments"][-1]["end"] + 1.0, 3)
+    p.write_text(json.dumps(t))
+
+
+def test_an_ask_inside_the_timing_of_an_unfinished_fast_run_is_told_more_is_coming(world, asked, cfg):
+    """Regression: the timing holds only the sections narrated so far, so the aside guide was told
+    this was the last segment of a short chapter, with nothing after it."""
+    cut_timing(asked)
+    ch = A.Chapter(asked, cfg)
+    for t in (20.0, ch.duration - 2.0):  # early in section 1, and near the end of what is timed
+        v = world.c.post("/api/ask/start", json={"run": "synthetic", "t": t}).json()["dynamic_variables"]
+        assert v["where"].startswith('Segment 1 of 3, "Part 1"') and "last segment" not in v["where"]
+        assert "still being made" in v["where"] and f"{ch.duration / 60:.1f}-minute" not in v["where"]
+        assert "segments 2 to 3 are still to come" in v["where"]
+        assert v["later"].splitlines()[-2:] == ["Segment 2: Part 2. Say segment 2's words.",
+                                                "Segment 3: Part 3. Say segment 3's words."]
+        assert "chapter ends" not in v["later"] and "chapter has ended" not in v["coming"]
+        assert v["chapter"].splitlines()[-1] == "Segment 3: Part 3. Say segment 3's words."
+    # a finished chapter, or one whose brief has nothing beyond the timing, is told as before
+    whole = A.Chapter(asked, cfg)
+    write(asked / "fast" / "archive.json", {})
+    v = world.c.post("/api/ask/start", json={"run": "synthetic", "t": 20.0}).json()["dynamic_variables"]
+    assert v == whole.context(20.0, A.load_asides(asked)) and "last segment" in v["where"]
+
+
+def test_never_mind_and_a_few_words_that_are_not_a_question_leave_no_note(world, asked, cfg):
+    """Regression: the first thing said in an aside was always saved as a question, even 'Never mind.'"""
+    ch = A.Chapter(asked, cfg)
+    t = ch.segments[1]["start"] + 3.0
+    ask(world, t, "Never mind.")
+    ask(world, t, "I love this part")
+    res = world.c.post("/api/ask/start", json={"run": "synthetic", "t": t}).json()
+    world.line(res["aside"], "listener", "Who built the harbour at Caesarea?")
+    world.tool(res["aside"], "resume_chapter", reason="never_mind")
+    world.end(res["aside"], "guide")  # the guide went back because they said never mind
+    assert notes.load(asked) == []
+    ask(world, t, "Tell me more about how the Romans mixed it")  # a question without a question mark
+    assert [n["text"] for n in notes.load(asked)] == ["Tell me more about how the Romans mixed it"]
+
+
+def test_a_question_asked_mid_chapter_on_a_fast_run_also_goes_to_the_profile(world, asked, cfg):
+    """Spec: notes also go to the profile. A mid-chapter question is written as a session transcript
+    and passed to the memory pass, as a check-in is; one that left no note is not."""
+    ch = A.Chapter(asked, cfg)
+    t = ch.segments[1]["start"] + 3.0
+    ask(world, t, "Never mind.")
+    join_passes()
+    assert world.passed == []
+    res, _ = ask(world, t, "I've poured concrete for thirty years, why did nobody tell us this?")
+    assert world.done.wait(5)
+    join_passes()
+    path = world.tmp / "listener" / "sessions" / f"{res['aside']}-ask.jsonl"
+    assert world.passed == [path]
+    text = memory.transcript_text(path)
+    assert text.splitlines()[0].startswith('page: [A question the listener asked mid-chapter, in "A Synthetic Chapter"')
+    assert "listener: I've poured concrete for thirty years" in text
+
+
+def test_a_deferred_check_in_is_passed_once_the_earlier_conversation_is_remembered(world, cfg, monkeypatch):
+    """Regression: a check-in whose pass found an earlier conversation still open (a typed chat) was
+    left for the next server start, and was skipped for good if a newer conversation was remembered
+    first. Its thread now waits, and passes it as soon as nothing earlier is pending."""
+    monkeypatch.setattr(checkin, "WAIT_POLL_SECONDS", 0.05)
+    sessions = world.tmp / "listener" / "sessions"
+    write(sessions / "20261112-090000.jsonl", json.dumps({"who": "listener", "text": "I pour concrete."}) + "\n")
+    ran = []
+    monkeypatch.setattr(memory, "after_session", lambda cfg, path: ran.append(path))
+    a = {"id": "20261113-101500-ab12", "run": world.root, "section": 2, "started": "2026-11-13T10:15:00",
+         "lines": [{"s": 1.0, "who": "listener", "text": "My dad poured our driveway."}]}
+    path = checkin.remember(cfg, a, "Concrete That Heals")
+    threading.Event().wait(0.3)
+    assert ran == []  # the open chat goes first
+    (sessions / "20261112-090000.done").write_text("done\n")  # the chat ends and is remembered
+    join_passes()
+    assert ran == [path]
+    # it gives up after WAIT_MAX_SECONDS (the catch-up at the next start takes it then), and never
+    # passes a transcript something else has passed meanwhile
+    monkeypatch.setattr(checkin, "WAIT_MAX_SECONDS", 0.1)
+    write(sessions / "20261112-080000.jsonl", json.dumps({"who": "listener", "text": "Hi."}) + "\n")
+    checkin._pass(cfg, path)
+    assert ran == [path]
+
+
+def test_the_check_in_prompt_gives_no_time_of_its_own():
+    """Regression: it told the guide to say the next part was 'nearly there' and framed the wait as a
+    minute or so, times no tool had given."""
+    prompt = voice.guide_prompt("checkin")
+    for said in ("nearly there", "minute or so", "almost ready", "any moment"):
+        assert said not in prompt
+    assert "say the next part isn't ready yet" in prompt and "call get_status" in prompt

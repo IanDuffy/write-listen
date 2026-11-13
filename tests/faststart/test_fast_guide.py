@@ -408,3 +408,135 @@ def test_a_note_said_before_the_outline_reaches_each_stage_still_to_run_exactly_
     wrote = writing(w.chain)
     assert len(wrote) >= 8 and all(all_text(kw).count(said) == 1 for _, kw in wrote)
     assert [(n["section"], n["kind"]) for n in notes.load(w.r.root)] == [(0, "connection")]
+
+
+# --- review fixes (milestone 5) ------------------------------------------------------------------
+
+def overnight_minutes(cfg):
+    return str(round(sum(cfg["status_minutes"].values())))
+
+
+def test_a_fast_conversation_is_never_handed_the_overnight_time(chat, cfg):
+    """The guide prompt's {{minutes}} ("about {{minutes}} minutes, or what start_chapter says") for a
+    conversation that makes fast chapters: the time to the first audio when earlier runs measured it,
+    else no figure; never status_minutes. The voice agent gets the same value."""
+    from stages import voice
+    s = chat.session()
+    assert s.values["minutes"] == guide_hooks.NO_FIGURE and not any(ch.isdigit() for ch in guide_hooks.NO_FIGURE)
+    assert voice.dynamic_variables(s)["minutes"] == guide_hooks.NO_FIGURE
+    assert f"about {overnight_minutes(cfg)} minutes" not in s.system and "give no time unless" in s.system
+    base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 185.0}, "runs": []})
+    s = chat.session()
+    assert s.values["minutes"] == "4 (until it starts playing, going by earlier chapters)"
+    assert "about 4 (until it starts playing" in s.system
+    # without the hooks (cli.py chat, the text box's chapters) the value is what it was
+    plain = guide.Session(cfg, lambda *a: "run", lambda: {"state": "idle"}, chat.runs, rng=random.Random(1))
+    assert plain.values["minutes"] == overnight_minutes(cfg)
+    # and the tool itself no longer promises twenty minutes
+    (start_tool,) = [t for t in guide.TOOLS if t["name"] == "start_chapter"]
+    assert "twenty" not in start_tool["description"] and "minutes" not in start_tool["description"]
+
+
+def making_early(s, chat, **more):
+    """A fast run this conversation started, its status written as the run writes it before first audio."""
+    status = {**FAST_STATUS, "run": s.run, "pid": None, "first_audio": False, "waiting_for": None,
+              "eta_seconds": None, "check_in": None, "label": "Looking into it", "title": None, "sections": [], **more}
+    base.write_json(chat.runs / s.run / "status.json", status)
+    return status
+
+
+def test_a_conversation_opened_during_the_wait_has_the_wait_rules(chat):
+    """A reload or a return before the first audio: the new conversation is opened with the wait rules
+    (chapter_now, and get_status), not only the conversation whose start_chapter returned them."""
+    first = chat.session()
+    start(first)
+    making_early(first, chat)
+    wait = common.load_prompt("guide_wait_fast").strip()
+    s = chat.session()
+    assert json.loads(s.values["chapter_now"])["while_waiting"] == wait
+    assert s.tool("get_status", {})["while_waiting"] == wait
+    # once it can play, the ordinary rules: the key is gone
+    making_early(first, chat, first_audio=True)
+    assert "while_waiting" not in s.tool("get_status", {})
+    assert "while_waiting" not in json.loads(chat.session().values["chapter_now"])
+
+
+def test_get_status_drops_a_countdown_the_run_can_no_longer_back(chat):
+    """The run clamps its countdown to the first audio at 1 minute once the median has passed (and for
+    a run continued after a stop): that 1 is no measurement, so the guide is given no figure."""
+    base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 185.0}, "runs": []})
+    s = chat.session()
+    start(s)
+    making_early(s, chat, minutes_left=3)
+    mode = chat.runs / s.run / base.FILES["mode"]
+    base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 30})
+    assert s.tool("get_status", {})["starts_playing_in_minutes"] == 3
+    making_early(s, chat, minutes_left=1)
+    base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 600})  # past the median: the clamp
+    out = s.tool("get_status", {})
+    assert "starts_playing_in_minutes" not in out and "minutes_left" not in out
+    assert not any(ch.isdigit() for ch in json.dumps({k: v for k, v in out.items() if k != "while_waiting"}))
+    # no earlier run measured: never a figure
+    T.path(chat.cfg).unlink()
+    base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 30})
+    making_early(s, chat, minutes_left=3)
+    assert "starts_playing_in_minutes" not in s.tool("get_status", {})
+
+
+def test_a_note_from_a_conversation_without_the_hooks_reaches_a_fast_run(chat, cfg):
+    """cli.py chat builds its Session without the fast hooks but follows the newest run, which can be a
+    fast one started from the page: its notes are routed by the run, to listener_notes.md."""
+    s = chat.session()
+    start(s)
+    root = chat.runs / s.run
+    hookless = guide.Session(chat.cfg, chat.pipe.start_seed, chat.pipe.status, chat.runs, rng=random.Random(1))
+    assert hookless.fast is None
+    out = hookless.tool("add_note", {"note": "Mention the harbour at Caesarea.", "kind": "wants more"})
+    assert out == {"added": True, "kind": "wants more", "effect": "It can shape the parts of the chapter not yet written."}
+    assert [(n["kind"], n["text"]) for n in notes.load(root)] == [("wants more", "Mention the harbour at Caesarea.")]
+    assert not (root / "00_source" / "notes.md").exists()
+
+
+def test_voice_compare_never_waits_for_a_reply_to_a_tool_the_agent_does_not_wait_for(monkeypatch, cfg, tmp_path):
+    """voice-compare's turn ends when every tool call has had a reply after it; scout_topic
+    (expects_response false) gets none, so it must not hold the turn open until the timeout."""
+    from elevenlabs.conversational_ai import conversation as el
+
+    from stages import voice
+
+    class Tools:
+        def __init__(self):
+            self.handlers = {}
+
+        def register(self, name, handler):
+            self.handlers[name] = handler
+
+    class Conversation:
+        def __init__(self, client, agent_id, client_tools, callback_agent_response, **kw):
+            self.tools, self.reply = client_tools, callback_agent_response
+            self._conversation_id = None
+
+        def start_session(self):
+            self._conversation_id = "conv1"
+
+        def send_user_message(self, text):  # Claude's usual order: the words, then the silent tool, nothing after
+            self.reply("Harbours that set under water, then.")
+            if "concrete" in text:
+                self.tools.handlers["scout_topic"]({"topic": "Roman sea concrete"})
+
+        def end_session(self):
+            pass
+
+        def wait_for_session_end(self):
+            return "conv1"
+
+    monkeypatch.setattr(el, "ClientTools", Tools)
+    monkeypatch.setattr(el, "Conversation", Conversation)
+    monkeypatch.setattr(el, "ConversationInitiationData", lambda **kw: kw)
+    monkeypatch.setattr(voice, "sync_agent", lambda cfg, client: "agent1")
+    monkeypatch.setattr(voice, "QUIET_SECONDS", 0.05)
+    monkeypatch.setattr(voice, "TURN_SECONDS", 1.5)
+    session = NS(values={k: "x" for k in voice.PLACEHOLDERS})
+    out = voice._voice_replies(cfg, session, ["I pour concrete for a living"], client=None)
+    assert out[1]["tools"] == ["scout_topic"] and out[1]["reply"] == "Harbours that set under water, then."
+    assert out[-1] == {"conversation_id": "conv1"}

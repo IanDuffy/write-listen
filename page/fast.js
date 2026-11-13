@@ -61,6 +61,9 @@
     const s = status;
     return !!F.run && s.run === F.run && s.mode === "fast" && (s.state === "making" || (s.state === "ready" && F.kept));
   }
+  // A chapter heard while it was made, still being heard after the page moved on to follow another one (a new
+  // chapter started meanwhile): its pieces play on to the end, and the circle pauses and resumes it.
+  const heardOn = () => F.kept && F.started && owned() && (F.mode === "playing" || F.mode === "paused") && !active();
 
   function time() {  // where the listener is, in the chapter's own seconds (what ask-by-voice counts in)
     let t = 0;
@@ -201,7 +204,7 @@
     fold();
     F.mode = "done";
     report();
-    if (status.state === "ready") return release();
+    if (F.kept || status.state === "ready") return release();
     render();
   }
 
@@ -232,15 +235,20 @@
     if (!owned()) return;
     fold();
     if (F.mode !== "playing") return;
-    if (!active()) { F.i += 1; F.mode = "paused"; return render(); }  // the run stopped: keep the place
+    if (!active() && !F.kept) { F.i += 1; F.mode = "paused"; return render(); }  // the run stopped: keep the place
     next();
   });
   // Paused or played from outside the page (a headset button, the system's controls).
   audio.addEventListener("pause", () => {
     if (F.mode === "playing" && owned() && audio.paused && !audio.ended && !F.gap && !talking()) { F.mode = "paused"; report(); render(); }
   });
+  // Only a resume of the piece Fast paused on goes ahead. Anything else (in a wait, a check-in or an aside, the
+  // pause between sections, or a place already moved on past the loaded piece) would replay an old piece over
+  // the guide or skip one, so it is paused again.
   audio.addEventListener("play", () => {
-    if (F.mode === "paused" && owned() && active() && !audio.paused && !voiceConv && !talking()) { F.mode = "playing"; report(); render(); }
+    if (!owned() || audio.paused || (F.mode === "playing" && !F.gap && !talking())) return;
+    if (F.mode === "paused" && here() && (active() || heardOn()) && !voiceConv && !talking()) { F.mode = "playing"; report(); render(); }
+    else audio.pause();
   });
 
   // --- waiting, and the check-in ------------------------------------------------------------------
@@ -339,11 +347,15 @@
     let v = 0;
     try { v = a.conv.getInputVolume(); } catch (e) { v = 0; }
     const said = spoken(a);
-    if ((!ci.muted && v > Ask.VOICE_ON) || said > ci.said) {  // the listener is talking: nothing closes over them
+    // Nothing said and no turn taken for this long: the mic's level no longer counts as the listener talking
+    // (steady noise would hold the ready part, or the session, for as long as it lasts).
+    const stalled = now - a.heard >= S.stall_seconds * 1000;
+    if ((!ci.muted && v > Ask.VOICE_ON && !stalled) || said > ci.said) {  // the listener is talking: nothing closes over them
       ci.voiceAt = now;
       ci.said = said;
       ci.closing = null;
     }
+    if (!a.guideTurns && stalled) return Ask.back("timeout");  // the guide never answered its opening
     if (a.mode !== "listening" || !a.guideTurns) return;  // the guide has not finished speaking
     const quiet = now - Math.max(a.heard, ci.voiceAt);
     if (ci.closing) {  // the silence note is sent: the guide's word or two, then the session closes
@@ -404,6 +416,7 @@
   function onStatus(s) {  // called by the page for every status, before it acts on it
     if (s.mode !== "fast" || !s.run) return;
     if (s.run !== F.run) {
+      if (heardOn()) return;             // the chapter being heard plays on; the new one is taken up after it
       if (s.state !== "making") return;  // a fast chapter finished earlier: an ordinary chapter
       clearTimers();  // another chapter: start over (a check-in still open keeps its own timers and closes as usual)
       Object.assign(F, { run: s.run, secs: [], first: null, mode: "idle", n: 1, i: 0, ln: null, li: null, url: null,
@@ -440,7 +453,7 @@
       if (F.mode === "playing") return pause();
       const ended = !!voiceConv;
       if (ended) await endVoice();  // the mic would hear the chapter
-      if (!active()) return;
+      if (!active() && !heardOn()) return;
       if (F.mode === "waiting") { if (!ended && !F.beat) checkIn(true); return; }  // "Talk while you wait"
       if (F.mode === "idle") play(startAt(), 0);
       else if (F.mode === "done") play(F.secs.length ? F.secs[0].n : 1, 0);
@@ -451,6 +464,7 @@
   }
 
   function onTap() {  // true: the tap was ours
+    if (heardOn()) { tap(); return true; }
     if (!active() || (F.mode === "idle" && !F.first)) return false;  // nothing to play yet: the page's own tap
     tap();
     return true;
@@ -471,10 +485,10 @@
       // What skipping does: to the next marker only. It plays if it is ready; if not, the wait is for it.
       const atMarker = F.mode === "waiting" && F.i === 0;
       if (!F.started || F.mode === "done" || atMarker || F.n >= last()) return;
-      const to = F.n + 1;
-      return playable(to, 0) ? play(to, 0) : wait(to, 0, "skip");
+      n = F.n + 1;
+      if (!playable(n, 0)) return wait(n, 0, "skip");
     }
-    F.busy = true;
+    F.busy = true;  // it plays: a conversation still open ends first (the mic would hear the chapter)
     try {
       if (voiceConv) await endVoice();
       if (active()) play(n, 0);

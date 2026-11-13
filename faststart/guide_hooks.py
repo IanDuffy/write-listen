@@ -14,17 +14,25 @@ stages/guide.py stays the guide's conversation; the server hands each Session on
 
 Where a fast run's notes go, and why not to both files: the scout and the outline read the seed
 through common.seed_inputs, which appends 00_source/notes.md; the outline, every draft and every
-lock also read listener_notes.md. A note written to both would reach the outline twice. The
-scout's prompt is built within a second or two of start_chapter, before a note can be said, so
-00_source/notes.md could only ever feed the outline's second copy. A fast run's notes therefore
-go to listener_notes.md alone: the outline (if it has not run), and every section not yet
-locked, see each note once.
+lock also read listener_notes.md. A note written to both would reach the outline twice, so a
+fast run's notes go to listener_notes.md alone: the outline (if it has not run), and every
+section not yet locked, see each note once. The scout is the one stage a note can miss: it reads
+only the seed, and its prompt is usually built within seconds of start_chapter, but not always
+(the run first waits up to fast.scout_wait_seconds for an early scout still searching, and a
+retry scouts again later). Notes said in that window reach the outline and the sections, not the
+scout's searches.
+
+A conversation is opened with the run's state (`for_guide`, which also feeds get_status): while
+a fast run is being made and nothing can play yet, the wait rules (prompts/guide_wait_fast.md)
+go with it, so a guide that meets the listener mid-wait (a reload, a return) has them too; and a
+countdown the run can no longer back (past the earlier runs' median) is left out.
 """
 
 from __future__ import annotations
 
 import math
 import threading
+import time
 from pathlib import Path
 
 from stages.common import load_prompt
@@ -52,6 +60,31 @@ def section_now(run_root: Path) -> int:
         return max(0, int(report.get("section") or 0))
     except (TypeError, ValueError):
         return 0
+
+
+# The guide prompt's {{minutes}} ("about {{minutes}} minutes, or what start_chapter says") when no
+# fast run has been measured yet: words, not a figure, so the guide never names a guessed time.
+NO_FIGURE = "no known number of (give no time unless a tool result gives one)"
+
+
+def for_guide(out: dict, status: dict, cfg: dict, runs_dir: Path) -> dict:
+    """What the conversation adds to plain(), with the config and the run folder to hand: the wait
+    rules while a fast run is being made and nothing can play yet, and no countdown to the first
+    audio once the run is past the earlier runs' median (the run clamps its countdown at 1 minute,
+    a figure nothing measured)."""
+    if status.get("mode") != "fast" or status.get("state") != "making":
+        return out
+    out = dict(out)
+    if not status.get("first_audio"):
+        out["while_waiting"] = load_prompt("guide_wait_fast").strip()
+    if "starts_playing_in_minutes" in out:
+        name = str(status.get("run") or "")
+        mode = base.read_json(Path(runs_dir) / name / base.FILES["mode"]) if name and Path(name).name == name else None
+        seconds = timings.estimate(cfg)
+        set_at = mode.get("seed_set") if isinstance(mode, dict) else None
+        if seconds is None or not isinstance(set_at, (int, float)) or time.time() - set_at >= seconds:
+            out.pop("starts_playing_in_minutes")
+    return out
 
 
 def plain(out: dict, status: dict) -> dict:
@@ -107,6 +140,17 @@ class Hooks:
             self.early(self.cfg, self.runs_dir, topic)
         except BaseException as e:  # a scout that fails costs the chapter a minute, never the conversation
             print(f"  early scout of \"{topic}\" failed: {type(e).__name__}: {e}")
+
+    # --- the guide prompt's {{minutes}} ----------------------------------------------------
+
+    def minutes(self) -> str:
+        """The value of the guide prompt's {{minutes}} for a conversation that makes fast chapters:
+        the minutes to the first audio when earlier runs have measured it, else no figure at all
+        (never the overnight pipeline's status_minutes)."""
+        seconds = timings.estimate(self.cfg)
+        if seconds is None:
+            return NO_FIGURE
+        return f"{max(1, math.ceil(seconds / 60))} (until it starts playing, going by earlier chapters)"
 
     # --- start_chapter --------------------------------------------------------------------
 

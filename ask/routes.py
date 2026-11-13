@@ -153,7 +153,9 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
         A.append_aside(ch.run, record)
         if a.get("conversation_id"):
             threading.Thread(target=_save_cost, args=(cfg, ch.run, a["id"], a["conversation_id"]), daemon=True).start()
-        after(lambda: checkin.question_notes(ch.run, a["lines"], segment))  # a fast run still being made: a note
+        # A fast run still being made: a question becomes a note, and goes to the profile as a check-in does.
+        after(lambda: checkin.question_notes(ch.run, a["lines"], segment, how) and checkin.remember(
+            cfg, {**a, "run": ch.run, "section": segment}, ch.title, kind="ask"))
         return record
 
     def finish_check_in(a: dict, how: str, seconds: float, timings: dict) -> dict:
@@ -231,6 +233,7 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
         t = min(max(req.t, 0.0), ch.duration)
         i = ch.locate(t)
         values = ch.context(t, A.load_asides(ch.run))
+        values = {**values, **checkin.unfinished(ch, t, values)}  # a fast run being made: more sections to come
         # A fast run still being made: the listener may be past the timed transcript, in a section whose
         # narration is still running. The guide is then told that section from its pieces.
         past = checkin.beyond(ch, req.t)
