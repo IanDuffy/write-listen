@@ -249,6 +249,17 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   with the typed chat (`cli.py chat`: same model, effort, prompt and tools, Claude only).
   Without credits the page falls back to typing ("Voice couldn't start").
 
+**Stop and reset (Ian, 2026-11-13).** `POST /api/chapters/{run}/stop` (`Pipeline.stop`):
+SIGINT (new.py records the stop in decisions.md and the streaming call drops), then
+SIGTERM and SIGKILL to the run's process group after 5 s and 3 s (research threads can
+outlive Ctrl-C; a run started from a terminal is signalled alone, not the shell's group),
+then any `_batch_*.json` batches are cancelled. status.json becomes `stopped` (pid None);
+the page treats it as idle, the guide reads "stopped by the listener", retry still works.
+`POST /api/reset`: drops the conversation without a memory pass (that would write it
+back), joins passes in flight, stops a chapter being made (it would add itself to
+history.md), and moves `MEMORY_FILES` to `listener/_cleared_<time>/` (moved, not deleted:
+recoverable by hand; voice.json stays). The page asks before either.
+
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
   and on ready or problem: `state` (making, ready, problem), `stage`, `label`

@@ -306,3 +306,47 @@ def test_pressing_play_while_the_guide_is_reconnecting_never_talks_over_the_chap
         cls = page.get_attribute("body", "class")
         assert "voice" not in cls and "resting" not in cls
         browser.close()
+
+
+def test_the_stop_and_reset_buttons(site):
+    """Stop shows only while a chapter is being made and asks first; Reset asks, ends the
+    conversation without remembering it, and moves the memory aside."""
+    import subprocess
+    import sys
+
+    status = site.runs / "night-office" / "status.json"
+    status.parent.mkdir()
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], start_new_session=True)
+    status.write_text(json.dumps({"run": "night-office", "state": "making", "label": "Researching", "stages_done": 3,
+                                  "stages_total": 15, "minutes_left": 20, "pid": proc.pid}))
+    listener = guide.listener_dir(site.cfg)
+    try:
+        with sync_api.sync_playwright() as p:
+            browser, page = _open(p, site, _wav(site.tmp / "silence.wav", voiced=False))
+            page.wait_for_function("document.body.classList.contains('making')")
+            assert page.is_visible("#halt") and page.is_visible("#reset")
+            page.once("dialog", lambda d: d.dismiss())  # changed their mind: nothing happens
+            page.click("#halt")
+            page.wait_for_timeout(500)
+            assert proc.poll() is None and "making" in page.get_attribute("body", "class")
+            page.once("dialog", lambda d: (d.message.startswith("Stop making this chapter") and d.accept()))
+            page.click("#halt")
+            page.wait_for_function("document.body.classList.contains('idle')", timeout=15000)
+            assert proc.poll() is not None and not page.is_visible("#halt")
+            assert page.inner_text("#line") == "Tap to begin" and "You stopped this chapter." in page.inner_text("#transcript")
+
+            _begin(page)  # a conversation, resting
+            (listener / "profile.md").write_text("- Builds his own house.\n")
+            msgs = []
+            page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
+            page.click("#reset")
+            page.wait_for_function("document.getElementById('transcript').innerText.includes('Memory reset')")
+            assert "forgets everything it knows about you" in msgs[0]
+            cls = page.get_attribute("body", "class")
+            assert "resting" not in cls and "voice" not in cls and page.inner_text("#line") == "Tap to begin"
+            assert not (listener / "profile.md").exists() and any(x.name.startswith("_cleared_") for x in listener.iterdir())
+            assert _sessions(page)[0]["ended"]
+            browser.close()
+    finally:
+        if proc.poll() is None:
+            proc.kill()

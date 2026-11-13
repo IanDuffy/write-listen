@@ -205,6 +205,17 @@ such wakes in a row that nobody follows up (a television, music), only a tap
 brings it back. "Stop listening" under the circle, or `voice.rest_max_minutes`
 of rest, ends the conversation and releases the microphone.
 
+**Stop and reset.** While a chapter is being made, "Stop making this chapter"
+(it asks first) ends it at once: Ctrl-C to its process, so it records where it
+stopped and its Claude call is dropped, then terminate and kill if it lingers,
+with anything it started; queued batch requests are cancelled. What it made is
+kept (`python cli.py new <run> --unattended` continues it). "Reset memory" in
+the footer (it asks first) makes the guide forget the listener: the
+conversation ends without a memory pass, a chapter being made is stopped, and
+`profile.md`, `guide.md`, `history.md`, `seeds/` and `sessions/` move to
+`listener/_cleared_<time>/`, which nothing reads (delete it to be rid of it).
+Finished chapters stay, and so do ElevenLabs' own records of voice calls.
+
 **Memory (milestone 5).** Plain files in `listener/` (gitignored), readable and
 hand-editable: `profile.md` (what the listener has said about themselves, under a
 page), `guide.md` (the guide's name, how it chose it, when they met),

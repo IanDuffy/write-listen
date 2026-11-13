@@ -56,6 +56,12 @@
   #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
            border-radius: 999px; padding: 6px 16px; cursor: pointer; }
   body.problem #retry { display: inline-block; }
+  #halt { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
+          border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+  body.making #halt { display: inline-block; }
+  #halt:disabled { opacity: .5; cursor: default; }
+  #reset { margin-top: 10px; margin-left: 14px; font: inherit; font-size: 14px; color: var(--muted);
+           background: none; border: 0; padding: 0; cursor: pointer; }
   body.problem.final #retry { display: none; }
   #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
           cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
@@ -92,6 +98,7 @@
   <div id="line">Tap to begin</div>
   <div id="hint"><span id="how">Tap to talk</span> · <button id="stop">Stop listening</button></div>
   <button id="retry">Try again</button>
+  <button id="halt">Stop making this chapter</button>
   <button id="last"></button>
   <audio id="audio" preload="none"></audio>
 </main>
@@ -100,7 +107,7 @@
     <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
     <button id="send">Send</button>
   </form>
-  <button id="toggle" aria-expanded="false">Show transcript</button>
+  <button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Reset memory</button>
   <div id="transcript" aria-live="polite"></div>
 </footer>
 <script src="__VOICE_CLIENT_JS__" async></script>
@@ -160,7 +167,7 @@ function render() {
   }
   // A chapter from an earlier visit doesn't take over the circle: tap to begin, and play it from the link.
   const past = s.state === "ready" && !fresh && $("audio").paused;
-  const shown = past ? "idle" : s.state;
+  const shown = past || s.state === "stopped" ? "idle" : s.state;  // a stopped chapter leaves the page as it was
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
     + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
     + (voiceConv ? " voice " + (voiceMode || "") : "") + (resting ? " resting" : "");
@@ -199,6 +206,8 @@ function onStatus(s) {
     }
   }
   if (s.state === "problem" && lastState !== "problem") note(s.message || "Something went wrong.");
+  if (s.state === "stopped" && lastState === "making") note(s.message || "Stopped.");
+  if (s.state !== "making") $("halt").disabled = false;
   lastState = s.state; lastLabel = s.label;
   render();
 }
@@ -605,6 +614,33 @@ $("form").addEventListener("submit", async (e) => {
   note("You: " + text, "you");
   $("say").value = "";
   if (!(await converse(text))) $("say").value = text;  // keep what they typed if it didn't go through
+});
+
+// Stop: the chapter's process and every Claude call it was making end now. What it had made is kept,
+// so it could be continued later, but the page goes back to the start.
+$("halt").addEventListener("click", async () => {
+  if (!status.run || !confirm("Stop making this chapter?")) return;
+  $("halt").disabled = true;
+  try { await post(`/api/chapters/${encodeURIComponent(status.run)}/stop`); }
+  catch (err) { note(err.message); $("halt").disabled = false; }
+});
+
+// Reset: the guide forgets this listener and the next conversation is a first meeting.
+$("reset").addEventListener("click", async () => {
+  const making = status.state === "making";
+  if (!confirm("Reset the guide's memory? It forgets everything it knows about you and your conversations"
+               + (making ? ", and the chapter being made is stopped" : "")
+               + ". Your finished chapters stay.")) return;
+  let out;
+  try { out = await post("/api/reset"); }
+  catch (err) { note(err.message); return; }
+  sessionId = null;  // the server has already ended the conversation, without remembering it
+  await endConversation();
+  fresh = false;
+  $("transcript").textContent = "";
+  note(out.forgotten && out.forgotten.length ? "Memory reset. The next conversation is a first meeting."
+                                             : "There was nothing to forget.");
+  render();
 });
 
 $("retry").addEventListener("click", async () => {

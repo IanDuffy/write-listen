@@ -11,6 +11,9 @@ exposed to the network. One listener, one run at a time.
     GET  /api/status                the current run's status.json (or idle)
     GET  /api/events                the same, as server-sent events, whenever it changes
     POST /api/chapters/{run}/retry  continue a run that stopped
+    POST /api/chapters/{run}/stop   stop the run being made: its process and anything it started
+    POST /api/reset                 forget the listener: end the conversation without remembering it,
+                                    stop any chapter being made, move listener memory aside
     POST /api/chat/start            a new conversation with the guide; it speaks first
     POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
     POST /api/chat/end              the page is closing: run the memory pass for the conversation
@@ -34,9 +37,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -45,7 +50,12 @@ from pydantic import BaseModel
 
 from stages import guide, memory, voice
 from stages import seed as seed_stage
+from stages import new as new_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
+
+# What reset moves out of listener/ (the guide's memory). voice.json, the agent's ids, stays: it holds
+# nothing about the listener.
+MEMORY_FILES = ("profile.md", "guide.md", "history.md", "seeds", "sessions")
 
 PAGE = ROOT / "page" / "index.html"
 WAKE_JS = ROOT / "page" / "wake.js"
@@ -107,6 +117,38 @@ class Pipeline:
             self.start(["new", name, "--unattended"], name)
         return name
 
+    def stop(self, run: str, cfg: dict) -> dict:
+        """Stop the run being made. Ctrl-C first, so the pipeline records where it stopped
+        (decisions.md) and its streaming Claude call is dropped; then, if it has not ended within a
+        few seconds (research agents run in threads), terminate and kill its process group, which
+        takes ffmpeg and anything else it started. Queued batch requests are cancelled. The status
+        becomes "stopped"; the run can be continued later (python cli.py new <run> --unattended)."""
+        with self.lock:
+            r = Run.open(run, runs_dir=self.runs_dir)
+            r.unattended = True  # so decide() writes to decisions.md, as the run itself does
+            status = self._read(run) or {}
+            own = self.proc is not None and self.proc.poll() is None and self.run == run
+            pid = self.proc.pid if own else status.get("pid")
+            was_running = own or (status.get("state") == "making" and alive(pid))
+            if was_running:
+                group = own or _leads_group(pid)  # a run started from a terminal shares the shell's group
+                for sig, wait in ((signal.SIGINT, 5.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 2.0)):
+                    _signal(pid, sig, group)
+                    if _wait_gone(pid, self.proc if own else None, wait):
+                        break
+                if group:  # anything left in its group (an ffmpeg it started) goes too
+                    _signal(pid, signal.SIGKILL, True)
+            cancelled = _cancel_batches(r.root)
+            if was_running or status.get("state") == "making":
+                new_stage.write_status(r, cfg, "stopped", stage=status.get("stage"), label=status.get("label"),
+                                       message="You stopped this chapter.", pid=None,
+                                       history=status.get("history", []))
+                r.decide("stopped", "Stopped from the page." + (f" Cancelled batches: {', '.join(cancelled)}."
+                                                                 if cancelled else ""))
+            if own:
+                self.proc = None
+        return {"run": run, "stopped": bool(was_running), "batches_cancelled": cancelled}
+
     def _own_child_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
@@ -149,6 +191,52 @@ class Pipeline:
         found += sorted(self.runs_dir.glob("*/run.log"), key=lambda p: p.stat().st_mtime)  # started, no status yet
         found.sort(key=lambda p: p.stat().st_mtime)
         return found[-1].parent.name if found else None
+
+
+def _leads_group(pid) -> bool:
+    try:
+        return os.getpgid(pid) == pid
+    except (ProcessLookupError, PermissionError, TypeError):
+        return False
+
+
+def _signal(pid, sig, group: bool) -> None:
+    try:
+        os.killpg(pid, sig) if group else os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError, TypeError):
+        pass
+
+
+def _wait_gone(pid, proc, seconds: float) -> bool:
+    """Whether the process has ended within `seconds` (reaped, if it is the server's own child)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if proc is not None:
+            if proc.poll() is not None:
+                return True
+        elif not alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _cancel_batches(root: Path) -> list[str]:
+    """Cancel the Message Batches a stopped run left queued (stages/llm.py saves each id in
+    _batch_<label>.json before it waits). A later run then finds the batch cancelled and sends the
+    request again, streamed. Seed runs stream every stage, so there are usually none."""
+    markers = sorted(root.glob("_batch_*.json"))
+    if not markers:
+        return []
+    from stages import llm
+    done = []
+    for m in markers:
+        try:
+            batch_id = json.loads(m.read_text(encoding="utf-8"))["batch_id"]
+            llm.get_client().messages.batches.cancel(batch_id)
+            done.append(batch_id)
+        except Exception as e:  # already ended, or no network: the run's next start sorts it out
+            print(f"  could not cancel the batch in {m.name}: {e}")
+    return done
 
 
 class ChapterRequest(BaseModel):
@@ -345,6 +433,45 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         if not req.message.strip():
             raise HTTPException(400, "Say something first.")
         return talk(req.message, fresh=False, session_id=req.session)
+
+    @app.post("/api/chapters/{run}/stop")
+    def stop(run: str) -> dict:
+        try:
+            return pipe.stop(run, cfg)
+        except StageError:
+            raise HTTPException(404, "No such chapter.") from None
+
+    @app.post("/api/reset")
+    def reset() -> dict:
+        """Forget the listener and start fresh. The conversation in progress ends without a memory
+        pass (that would write some of it back), a chapter being made is stopped (it would add
+        itself to history.md when done), and listener memory is moved to listener/_cleared_<time>/,
+        which nothing reads. The finished chapters in runs/ stay, and so do ElevenLabs' own records
+        of past voice calls."""
+        with chat["lock"]:
+            chat["session"] = None
+            for t in chat["passes"]:  # a pass in flight would write profile.md after the move
+                t.join()
+            chat["passes"] = []
+            stopped = None
+            if pipe.busy():
+                status = pipe.status()
+                if status.get("run"):
+                    stopped = pipe.stop(status["run"], cfg)["run"]
+            with memory.LOCK:
+                d = guide.listener_dir(cfg)
+                found = [n for n in MEMORY_FILES if (d / n).exists()]
+                moved_to = None
+                if found:
+                    moved_to = d / f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}"
+                    n = 1
+                    while moved_to.exists():
+                        n += 1
+                        moved_to = moved_to.with_name(f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}-{n}")
+                    moved_to.mkdir(parents=True)
+                    for name in found:
+                        (d / name).rename(moved_to / name)
+        return {"forgotten": found, "moved_to": moved_to.name if moved_to else None, "stopped": stopped}
 
     @app.post("/api/chapters/{run}/retry")
     def retry(run: str) -> dict:

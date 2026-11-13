@@ -70,7 +70,7 @@ def plain_status(status: dict) -> dict:
     """What get_status tells the guide: the state, the stage in plain words, minutes left, title."""
     state = status.get("state", "idle")
     out = {"state": {"idle": "no chapter yet", "making": "being made", "ready": "ready",
-                     "problem": "stopped"}.get(state, state)}
+                     "problem": "stopped", "stopped": "stopped by the listener"}.get(state, state)}
     if state == "making":
         out["stage"] = status.get("label") or "starting"
         if status.get("minutes_left") is not None:
@@ -92,7 +92,7 @@ def day_part(t: time.struct_time | None = None) -> str:
 
 def chapter_now(status: dict) -> str:
     """The chapter being made or just finished, for the prompt's <chapter_now>."""
-    if status.get("state") in ("making", "ready", "problem"):
+    if status.get("state") in ("making", "ready", "problem", "stopped"):
         return json.dumps({"run": status.get("run"), **plain_status(status)}, ensure_ascii=False)
     return "(none)"
 

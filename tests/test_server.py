@@ -142,3 +142,138 @@ def test_status_helpers(run, cfg):
     assert new.plain_problem("Researching", "Stopped by the search cap: ...")[1] is False
     assert new.plain_problem("Writing", "API error 500") == ("Something went wrong while writing.", True)
     assert "+00:00" in s["updated"] or "-" in s["updated"][19:]  # an offset with a colon: Safari parses it
+
+
+# --- stop and reset (Ian, 2026-11-13) ----------------------------------------------------------
+
+STUBBORN = """
+import signal, subprocess, sys, time
+signal.signal(signal.SIGINT, signal.SIG_IGN)   # a run whose worker threads keep it alive after Ctrl-C
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])  # an ffmpeg it started
+open(sys.argv[1], "w").write(str(child.pid))
+time.sleep(120)
+"""
+
+POLITE = """
+import sys, time
+try:
+    time.sleep(120)
+except KeyboardInterrupt:  # what stages/new.py does: record the stop, then end
+    open(sys.argv[1], "w").write("interrupted")
+"""
+
+
+def _real_run(tmp_path, runs, name, code):
+    import subprocess
+    import time
+    (runs / name).mkdir()
+    flag = tmp_path / f"{name}.flag"
+    proc = subprocess.Popen([sys.executable, "-c", code, str(flag)], start_new_session=True)
+    deadline = time.monotonic() + 10
+    while proc.poll() is None and time.monotonic() < deadline:
+        if code is POLITE and proc.poll() is None:
+            time.sleep(0.5)  # time to install the handler
+            break
+        if flag.exists() and flag.read_text().strip():
+            break
+        time.sleep(0.05)
+    write_status(runs, name, state="making", stage="research", label="Researching", pid=proc.pid,
+                 stages_done=3, stages_total=15, history=[{"stage": "scout", "seconds": 60}])
+    return proc, flag
+
+
+def test_stop_interrupts_a_run_first(client, tmp_path):
+    c, pipe, _, runs = client
+    proc, flag = _real_run(tmp_path, runs, "lesson", POLITE)
+    pipe.proc, pipe.run = proc, "lesson"
+    out = c.post("/api/chapters/lesson/stop").json()
+    assert out["stopped"] is True and proc.poll() is not None
+    assert flag.read_text() == "interrupted"  # Ctrl-C was enough: the pipeline got to record where it stopped
+    s = c.get("/api/status").json()
+    assert s["state"] == "stopped" and s["message"] == "You stopped this chapter." and s["pid"] is None
+    assert s["history"] == [{"stage": "scout", "seconds": 60}]
+    assert "Stopped from the page." in (runs / "lesson" / "decisions.md").read_text()
+    assert not pipe.busy()
+    assert c.post("/api/chapters", json={"seed": "Something new"}).status_code == 200  # free for the next one
+
+
+def test_stop_escalates_and_takes_what_the_run_started(client, tmp_path):
+    c, pipe, _, runs = client
+    proc, flag = _real_run(tmp_path, runs, "stubborn", STUBBORN)
+    grandchild = int(flag.read_text())
+    assert server.alive(grandchild)
+    out = c.post("/api/chapters/stubborn/stop").json()  # started elsewhere: found by the pid in status.json
+    assert out["stopped"] is True
+    proc.wait(5)
+    import time
+    for _ in range(50):  # the grandchild's parent is gone, so init reaps it
+        if not server.alive(grandchild):
+            break
+        time.sleep(0.1)
+    assert not server.alive(grandchild)  # its process group went with it
+    assert c.get("/api/status").json()["state"] == "stopped"
+
+
+def test_stop_with_nothing_running_and_unknown_runs(client):
+    c, pipe, _, runs = client
+    write_status(runs, "done", state="ready", title="T")
+    out = c.post("/api/chapters/done/stop").json()
+    assert out["stopped"] is False and c.get("/api/status").json()["state"] == "ready"  # left as it was
+    assert c.post("/api/chapters/nope/stop").status_code == 404
+
+
+def test_stop_cancels_queued_batches(client, monkeypatch):
+    from stages import llm
+    c, pipe, _, runs = client
+    write_status(runs, "batched", state="making", label="Planning", pid=2**22 + 999)
+    (runs / "batched" / "_batch_edit.json").write_text(json.dumps({"batch_id": "msgbatch_1", "label": "edit"}))
+    cancelled = []
+    fake = NS(messages=NS(batches=NS(cancel=lambda bid: cancelled.append(bid))))
+    monkeypatch.setattr(llm, "get_client", lambda: fake)
+    out = c.post("/api/chapters/batched/stop").json()
+    assert cancelled == ["msgbatch_1"] and out["batches_cancelled"] == ["msgbatch_1"]
+    assert c.get("/api/status").json()["state"] == "stopped"  # a dead run that still said making
+
+
+def test_a_stopped_chapter_reads_plainly_to_the_guide():
+    from stages import guide
+    assert guide.plain_status({"state": "stopped", "title": "T"}) == {"state": "stopped by the listener", "title": "T"}
+    assert "stopped by the listener" in guide.chapter_now({"run": "r", "state": "stopped"})
+
+
+def test_reset_forgets_the_listener(tmp_path, monkeypatch, cfg):
+    from fakes import FakeAnthropic, Responder
+
+    from stages import guide, llm, memory
+    listener = tmp_path / "listener"
+    cfg["listener_dir"] = str(listener)
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(Responder()))
+    passes = []
+    monkeypatch.setattr(memory, "after_session", lambda cfg, t: passes.append(t) or False)
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    pipe = server.Pipeline(runs_dir=runs)
+    c = TestClient(server.create_app(pipe, cfg, remember_on_start=False))
+    first = c.post("/api/chat/start").json()["session"]
+    (listener / "profile.md").write_text("- Builds his own house.\n")
+    (listener / "guide.md").write_text("# The guide\n- Name: Wren.\n")
+    (listener / "history.md").write_text("# Chapters made so far\n")
+    (listener / "seeds").mkdir()
+    (listener / "seeds" / "r.md").write_text("seed")
+    (listener / "voice.json").write_text("{}")
+
+    out = c.post("/api/reset").json()
+    assert sorted(out["forgotten"]) == ["guide.md", "history.md", "profile.md", "seeds", "sessions"]
+    moved = [p for p in listener.iterdir() if p.name.startswith("_cleared_")]
+    assert len(moved) == 1 and (moved[0] / "profile.md").exists() and (moved[0] / "sessions" / f"{first}.jsonl").exists()
+    assert sorted(p.name for p in listener.iterdir()) == [moved[0].name, "voice.json"]  # the agent's ids stay
+    assert passes == []  # the conversation was not remembered on its way out
+    assert c.post("/api/chat/end", json={"session": first}).json()["ended"] is False  # it is already over
+    assert c.post("/api/chat", json={"message": "hi", "session": first}).status_code == 409
+
+    second = c.post("/api/chat/start").json()["session"]  # a first meeting again
+    head = json.loads((listener / "sessions" / f"{second}.jsonl").read_text().splitlines()[0])
+    assert head["returning"] is False and len(head["names"]) == cfg["guide"]["name_draw"]
+    assert passes == []  # starting afresh did not fold the dropped conversation in either
+    assert c.post("/api/reset").json()["forgotten"] == ["sessions"]  # only the new conversation's file
