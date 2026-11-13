@@ -8,6 +8,9 @@
   The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
   One element in the middle and a line of text under it; a text box as a fallback for typing; a
   toggle for the transcript. No framework, system font, one accent color.
+  Voice first (Ian, 2026-11-12: a tester typed instead of talking): the text box stays hidden until
+  a tap finds that voice can't start here (no microphone, refused, or no connection to the agent),
+  or the listener taps the keyboard across from the transcript toggle.
   Milestones 2-4: idle, thinking (the guide is composing a reply), listening and speaking (voice:
   the circle follows the mic and the guide's voice), making the chapter, ready, problem. Tapping
   the circle starts a voice conversation with the guide (the ElevenLabs agent, milestone 4); tap
@@ -62,14 +65,20 @@
           cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
-  form { display: flex; gap: 8px; }
+  form { display: none; gap: 8px; }
+  body.typing form { display: flex; }  /* voice couldn't start, or they asked to type */
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  #type { width: 36px; height: 36px; margin-right: -8px; padding: 8px; border: 0; border-radius: 999px;
+          background: none; color: var(--muted); cursor: pointer; }  /* the icon's edge lines up with the box's */
+  #type:hover, body.typing #type { color: var(--accent); }
+  #type svg { width: 100%; height: 100%; display: block; }
   #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
          border-radius: 999px; padding: 10px 16px; }
   #say:focus { outline: none; border-color: var(--accent); }
   #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: #fff;
           cursor: pointer; }
   #send:disabled, #say:disabled { opacity: .5; cursor: default; }
-  #toggle { margin-top: 10px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+  #toggle { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
             padding: 0; cursor: pointer; }
   #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 42vh; overflow: auto; }
   #transcript.open { display: block; }
@@ -101,7 +110,15 @@
     <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
     <button id="send">Send</button>
   </form>
-  <button id="toggle" aria-expanded="false">Show transcript</button>
+  <div class="row">
+    <button id="toggle" aria-expanded="false">Show transcript</button>
+    <button id="type" aria-label="Type instead" aria-pressed="false" title="Type instead">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="12" rx="2"/>
+        <path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/>
+      </svg>
+    </button>
+  </div>
   <div id="transcript" aria-live="polite"></div>
 </footer>
 <script src="__VOICE_CLIENT_JS__" async></script>
@@ -120,6 +137,7 @@ let voiceConv = null, voiceMode = null; // the live voice conversation; "listeni
 let readyNote = "";                     // what to tell the voice guide when the chapter is ready
 let pendingReady = "";                  // told once the guide is listening (a contextual update wouldn't make it speak)
 let starting = false;                   // a tap is setting up a conversation: further taps wait
+let typing = false;                     // voice couldn't start, so the text box is shown
 const core = document.querySelector("#orb .core");
 
 function note(text, kind = "stage") {
@@ -148,7 +166,7 @@ function render() {
   const shown = past ? "idle" : s.state;
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
     + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
-    + (voiceConv ? " voice " + (voiceMode || "") : "") + (window.Ask ? Ask.classes() : "");
+    + (voiceConv ? " voice " + (voiceMode || "") : "") + (typing ? " typing" : "") + (window.Ask ? Ask.classes() : "");
   $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
@@ -379,7 +397,12 @@ $("orb").addEventListener("click", async () => {
   if (talking || thinking || starting) return;  // one conversation at a time, even on a double tap
   starting = true;
   try {
-    if (!(await startVoice())) await converse(null);
+    if (!(await startVoice())) {
+      typing = true;  // from now on this visit types; the box shows with the guide's first reply
+      $("type").setAttribute("aria-pressed", true);
+      await converse(null);
+      $("say").focus();
+    }
   } finally {
     starting = false;
   }
@@ -395,6 +418,13 @@ addEventListener("pagehide", () => {
     navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: sessionId })],
                                                     { type: "application/json" }));
   }
+});
+
+$("type").addEventListener("click", () => {  // the keyboard in the corner: show or hide the text box
+  typing = !typing;
+  $("type").setAttribute("aria-pressed", typing);
+  render();
+  if (typing) $("say").focus();
 });
 
 $("toggle").addEventListener("click", () => {
