@@ -69,3 +69,21 @@ def test_text_box_appears_when_voice_cannot_start(cfg, tmp_path):
         assert "Hello, I'm Wren." in page.inner_text("#transcript")
     finally:
         browser.close(), pw.stop()
+
+
+def test_keyboard_button_shows_and_hides_the_text_box(cfg, tmp_path):
+    pw, browser, page = _open(cfg, tmp_path, mic=True)
+    try:
+        assert page.is_visible("#type") and not page.is_visible("#say")
+        page.click("#type")
+        page.wait_for_selector("#say", state="visible")
+        assert page.evaluate("document.activeElement.id") == "say"
+        assert page.get_attribute("#type", "aria-pressed") == "true"
+        page.click("#orb")  # a voice conversation keeps the box they asked for
+        page.wait_for_selector("body.voice")
+        assert page.is_visible("#say")
+        page.click("#type")
+        page.wait_for_selector("#say", state="hidden")
+        assert page.get_attribute("#type", "aria-pressed") == "false"
+    finally:
+        browser.close(), pw.stop()
