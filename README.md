@@ -156,9 +156,12 @@ guesses; each `status.json` records every stage's real duration (`history`)
 to calibrate them.
 
 **The guide (milestone 3, typed).** Tap the circle and the guide speaks first;
-the text box talks to it. Its persona is `prompts/guide.md` (the doc's rules for
-finding a seed without an interview: share first, never two questions in a row,
-ordinary answers are doors, offer tastes, decide), its tools
+the text box talks to it. Its persona is `prompts/guide.md`: after a bare hello
+it gets to know the listener with easy questions and very little of its own (no
+facts, and never an explanation of their own work); after three or four it says
+in a sentence or two what it does and asks what they would like a chapter
+about, offering to pick if nothing comes to mind; small delights wait until the
+chapter is under way. Its tools are
 `prompts/guide_tools.json`: `start_chapter` starts the unattended run,
 `add_note` passes on something said afterwards (stages still to come read
 `00_source/notes.md` with the seed), `get_status` reads `status.json`. A first
@@ -173,7 +176,7 @@ the terminal, the cheapest way to tune its tone.
 **Voice (milestone 4).** Tapping the circle starts a voice conversation with the
 same guide: an ElevenLabs agent whose prompt is `prompts/guide.md` and whose
 client tools are `prompts/guide_tools.json`, on Claude Sonnet 5.5 at reasoning
-effort `none`, speaking with the chapters' voice on `eleven_v4_turbo`.
+effort `low`, speaking with the chapters' voice on `eleven_v4_turbo`.
 `python cli.py voice-agent` creates it (the server also re-syncs it whenever the
 prompt, tools or `voice` settings change; its id is in `listener/voice.json`).
 The agent is private: the server mints a signed URL per conversation, the page
@@ -184,6 +187,34 @@ falls back to typing. `python cli.py voice-compare` sends the same scripted
 turns (`prompts/voice_compare_turns.md`) to the voice agent, text-only with its
 tools mocked, and to the typed chat, and writes them side by side to
 `listener/voice_compare/`.
+
+**Stepping back and coming back.** The guide says little (a bare hello, one
+move a turn) and never talks into a wait. When the listener says they will wait,
+or nobody has spoken for `voice.rest_after_silence_secs`, it steps back (its
+`step_back` tool, or the page on its own): the page ends the voice connection,
+so no model runs and nothing is billed, and rests. While it rests,
+`page/wake.js` listens on the laptop only (a sound in the voice band, well above
+the room, for a quarter of a second) and nothing it hears leaves the page.
+Speaking, tapping the circle or typing brings the guide back into the same
+conversation, and so does the chapter being ready, which it says in a sentence.
+Coming back is a new connection (`POST /api/voice/resume`): the agent is told
+the conversation so far with its prompt. A sound may not be the listener, so
+when one wakes it the guide says nothing: the page plays two soft notes and it
+listens (it did not hear the words that woke it; say them again). After two
+such wakes in a row that nobody follows up (a television, music), only a tap
+brings it back. "Stop listening" under the circle, or `voice.rest_max_minutes`
+of rest, ends the conversation and releases the microphone.
+
+**Stop and reset.** While a chapter is being made, "Stop making this chapter"
+(it asks first) ends it at once: Ctrl-C to its process, so it records where it
+stopped and its Claude call is dropped, then terminate and kill if it lingers,
+with anything it started; queued batch requests are cancelled. What it made is
+kept (`python cli.py new <run> --unattended` continues it). "Reset memory" in
+the footer (it asks first) makes the guide forget the listener: the
+conversation ends without a memory pass, a chapter being made is stopped, and
+`profile.md`, `guide.md`, `history.md`, `seeds/` and `sessions/` move to
+`listener/_cleared_<time>/`, which nothing reads (delete it to be rid of it).
+Finished chapters stay, and so do ElevenLabs' own records of voice calls.
 
 **Memory (milestone 5).** Plain files in `listener/` (gitignored), readable and
 hand-editable: `profile.md` (what the listener has said about themselves, under a

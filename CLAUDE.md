@@ -58,7 +58,7 @@ the first is the gate for the rest:
 | 1. Seed to chapter, typed (`new --seed "..." --unattended`) | Done. Ian ran it locally (2026-11-12): "just as good as the article... tons of info, nice cadence". |
 | 2. Status and page (`status.json`, FastAPI server, page) | Built, tested offline and in headless Chromium (idle, making, ready, problem; a typed topic starts a real run). Not yet used by Ian. |
 | 3. The conversation in text (persona prompt, three tools) | Built, tested offline and in headless Chromium with a fake model. Not yet talked to live (no Anthropic key in the cloud). |
-| 4. Voice (ElevenLabs Agents) | Built (2026-11-12, local): agent `write-listen guide` on Ian's account, page voice, voice-compare. Checked live: agent create/update, signed URL, text-only sessions from Python and from the page (client tool round trip). Not yet spoken to with a microphone (Ian's test). |
+| 4. Voice (ElevenLabs Agents) | Built (2026-11-12, local): agent `write-listen guide` on Ian's account, page voice, voice-compare. Ian spoke with it twice (2026-11-12): "fantastic so far", the chapter started from his spoken yes. His notes (too talkative, a natural hello, it kept talking while he waited, a low-cost way to wake it) are built on branch `voice/quiet-guide` (below), tested offline, in headless Chromium and as typed conversations; not yet spoken to (the ElevenLabs credits ran out). |
 | 5. Memory (`listener/` files, profile update pass) | Built ahead of 4 (it needs no ElevenLabs account), tested offline with a fake model. |
 | 6. End to end with a second person | Not started |
 
@@ -144,8 +144,8 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   objects; `input_schema` -> `parameters`, no `additionalProperties`).
 - `voice.sync_agent` creates or updates tools and agent so the repo stays the
   source of truth, keyed by a hash of prompt, tools and config (`listener/voice.json`).
-  Config `voice`: `claude-sonnet-5-5`, effort `none` (Ian's pick; `llm.list` shows
-  Sonnet 5.5 offers none..max, and Haiku 5.5 is listed too, despite the docs),
+  Config `voice`: `claude-sonnet-5-5`, effort `none` at first (Ian's pick; now `low`, see
+  below; `llm.list` shows Sonnet 5.5 offers none..max, and Haiku 5.5 is listed too),
   `eleven_v4_turbo` (~100 ms; `eleven_v4` is not offered for agents), the
   narration voice, turn eagerness patient, 40-minute maximum.
 - Private agent: `/api/voice/start` mints a signed URL (15 minutes, WebSocket).
@@ -168,6 +168,99 @@ The episode entry in the dossier is for episode runs only. Checked live locally:
   ~0.99 s at `none` and ~0.87 s at `low` (3 conversations each); a blind panel
   scored voice-none 8.0, voice-low 6.3, typed-low 6.0 (a lean). `none` stays.
   Reports in `listener/voice_compare/`; my test memory is in `listener/_tests_20261112/`.
+
+**After Ian's first voice conversations (2026-11-12; branch `voice/quiet-guide`).**
+- What went wrong, from the transcripts (`listener/_cleared_20261112*/sessions/`): the
+  guide opened with a 60-word introduction and spoke 40-70 words a turn; and after "let me
+  know when it's ready" it spoke 11 more times in 2.5 minutes, because ElevenLabs'
+  `turn_timeout` (default 7 s) sends the agent an empty turn ("...") after each silence and
+  it answered every one. A connection also bills about $0.08 a minute while silent.
+- **Says little** (`prompts/guide.md`): a hello of two to five words and nothing else; no
+  introduction (the name comes up in passing, at the latest when the chapter starts; what
+  it makes, a few exchanges in); a turn is usually under fifteen words, one move a
+  turn; never reasons aloud or talks about the listener as "they" (every word is spoken).
+  `{{now}}` is the day and part of day. `{{sparks}}`: three subjects drawn from
+  `prompts/guide_sparks.md` for the small delight it offers, as names are drawn: left
+  alone it offered an octopus's hearts in 7 of 11 conversations.
+- **The shape of a first conversation** (Ian, after his next test the same night; this
+  replaces the Phase 1 doc's "share first, then ask" and "it decides"). After "Hi there"
+  the guide had offered a fact about elevator buttons ("interesting but random") and
+  explained plywood to a man building his own cabinets (a lecture); and his wife, asked
+  cold what to talk about, felt put on the spot. Now, in order: **them first**: easy,
+  concrete questions about their day, most turns only the next question, no facts and
+  never an explanation of their own life or work, three questions or four at the most
+  (fewer if they answer in a word or two); **then what it does**, in a sentence or two,
+  **and the ask**: what would they like a chapter about, with edges (something from what
+  they said, or something else, or the guide will pick) and never "anything"; if they
+  hesitate it offers one or two ideas from what they told it, or to surprise them, and
+  never asks twice; a choice they made or handed over is not confirmed again. **Small
+  delights later**: once the chapter is under way and they want company (`{{sparks}}`).
+  Tuned with simulated listeners talking to the typed guide (a builder, a reserved
+  listener, a terse one, an eager one, a returning one; scratch script, Claude only) and
+  a blind panel against the previous prompt: preferred in four of five pairs, and the
+  panel's six edits (each checked by a skeptic) are in. What reads as lecturing, from the
+  panel: a remark triggered by a noun rather than by what the person meant, about
+  something they know better, that cannot be answered, before the guide knows them.
+- **Effort `low`, not `none`** (`voice.reasoning_effort`). At `none` the model has nowhere
+  to think: in 2 of 6 text-only test conversations it reasoned aloud ("They haven't
+  picked, so I'll decide..."), which the voice would speak. At `low`: 0 of 3, shorter
+  turns, and the earlier latency check had found no gain from `none`. This reverses
+  Ian's pick; one line to put back.
+- **Stepping back.** A fourth tool, `step_back` (when they'll wait, want quiet, or a turn is
+  empty). By voice the page then ends the ElevenLabs connection and rests: no model, no
+  cost. The server's `guide.Session` stays (the conversation is not over, so no memory pass
+  yet). The page also rests on its own after `voice.rest_after_silence_secs` (25) without
+  speech, and `turn_timeout` is -1 (accepted by the API; the docs give 1-30 s).
+  The step_back call is answered only after the page has rested when the guide had
+  already said its parting words (an answer has the model speak again: "Saying nothing
+  more for now"); when the tool came before any words it is answered at once so it can
+  say them (the tool's note asks). Typed, words then `step_back` end the turn.
+- **Coming back.** While resting, `page/wake.js` (an AudioWorklet; also the pure
+  `WakeDetector`, tested under Node) listens locally: voice-band energy at 4x the room's
+  noise floor and above `min_rms`, 240 ms within 600 ms (`voice.wake`). A voice, a tap on
+  the circle, typed text, or the chapter becoming ready calls `POST /api/voice/resume`:
+  a new signed URL, the prompt's values with `{{earlier}}` (the transcript so far,
+  `guide.earlier_text`, last 6,000 characters) and a fresh `chapter_now`, and a page note
+  as the first turn for a tap (`prompts/guide_back.md`) or the chapter (`guide_ready.md`).
+  A sound gets no note: it may not be the listener, so the guide only listens and the page
+  plays two soft notes (speaking on every sound was the lingering voice again); it waits
+  `rest_after_ready_secs` for words. Two sound wakes in a row with no listener turn, or
+  `wake.max_sound_wakes` between taps, and the page stops listening for sounds (tap only).
+  Not bounded: a television whose speech the platform transcribes as the listener's turns
+  keeps a connection open, as with any open microphone; a tap-only mode or a wake word
+  would be the fix, and is Ian's call. Each connection's ElevenLabs record is
+  saved (`<id>.voice.json`, then `<id>.voice.2.json`...). A dropped connection is a rest,
+  not an ending. "Stop listening", playing the chapter, closing the page, or
+  `rest_max_minutes` (90, counted from the listener's last turn, tap or typed line) ends
+  the conversation. Tapping the circle mid-conversation still ends it. If voice cannot
+  come back (no credits, no network) the page says so under the circle and typed text
+  goes to the typed chat.
+- **Review** (five lenses, each finding checked by a skeptic): 18 confirmed, all fixed with
+  tests. Besides the wake damper: a start in flight is abandoned when the conversation
+  ends (pressing play while it reconnects), a chapter that becomes ready during a step
+  back is still announced, the name the guide chose survives the 6,000-character cut,
+  session ids are unique within a second, and the test fixtures no longer leave a memory
+  thread that could reach the real API.
+- **ElevenLabs credits.** A voice conversation costs about 480 credits a minute on the
+  starter plan (tonight: 2,361 for 4.9 minutes), a text-only test conversation 75-370
+  (971 when a mocked tool looped). The 40,000 a month ran out on 2026-11-12 (reset
+  2026-12-10): Ian's two conversations used 3,639 and my 13 text-only test conversations
+  4,181. Check `client.user.subscription.get()` before any live test; tune the persona
+  with the typed chat (`cli.py chat`: same model, effort, prompt and tools, Claude only).
+  Without credits the page falls back to typing ("Voice couldn't start"). Later the same night the
+  account was on the `creator` plan (121,074 a month), with about 74,000 left on 2026-11-13: check
+  the balance rather than trust either figure.
+
+**Stop and reset (Ian, 2026-11-13).** `POST /api/chapters/{run}/stop` (`Pipeline.stop`):
+SIGINT (new.py records the stop in decisions.md and the streaming call drops), then
+SIGTERM and SIGKILL to the run's process group after 5 s and 3 s (research threads can
+outlive Ctrl-C; a run started from a terminal is signalled alone, not the shell's group),
+then any `_batch_*.json` batches are cancelled. status.json becomes `stopped` (pid None);
+the page treats it as idle, the guide reads "stopped by the listener", retry still works.
+`POST /api/reset`: drops the conversation without a memory pass (that would write it
+back), joins passes in flight, stops a chapter being made (it would add itself to
+history.md), and moves `MEMORY_FILES` to `listener/_cleared_<time>/` (moved, not deleted:
+recoverable by hand; voice.json stays). The page asks before either.
 
 **Milestone 2 decisions.**
 - `stages/new.py` writes `runs/<run>/status.json` atomically before each stage
@@ -212,6 +305,16 @@ results, costs and Ian's test script: `ask/REPORT.md`. Open a finished chapter w
   giving up; the agent's `turn_timeout` is 30 s so the platform never nudges first.
 - `python -m ask.scenarios <run>` (checks 6-19, text-only, graded by Opus in a fresh context),
   `python -m ask.live <run>` (check 20, real page in headless Chromium).
+
+**Merged with `voice/quiet-guide` (2026-11-13).** Where the two meet: the guide never rests (which
+opens the local listener, `wake.js`) while a chapter plays or an aside is live, and waking refuses
+during an aside; Reset memory also moves every chapter's aside transcripts and saved topics
+(`runs/<run>/12_asks/`) into `listener/_cleared_<time>/asides/`, since the aside agent reads earlier
+asides back; on a `?chapter=` page reset asks the server what is being made and keeps the chapter
+shown; when voice can't come back after a rest the text box comes out (voice first, not voice
+only); `tts.join_to_mp3` encodes to `chapter.part.mp3` and renames it, so a stop mid-encode never
+leaves a short chapter that counts as narrated. Found by a three-lens review of the merge, each
+finding checked by three skeptics; regression tests for each.
 
 **The timed transcript for new chapters** (episode/INTEGRATION.md sections 1 and 3, 2026-11-12):
 - Narration asks ElevenLabs for timings (`narration.timestamps: true`): `tts.synthesize` calls
@@ -434,6 +537,7 @@ real key), so locally it must be in `.env`.
 - Seed runs: `new.py` (the unattended runner, writes status.json), `seed.py`, `scout.py`.
 - `server.py` (the local server) and `page/index.html` (the page): Phase 1 milestones 2-3.
 - `guide.py`: the guide's conversation (milestone 3); `memory.py`: the listener's memory (milestone 5).
+- `voice.py`: the ElevenLabs agent (milestone 4); `page/wake.js`: the page's local listener while the guide rests.
 - `ask/` and `page/ask.js`: asking mid-chapter by voice; `episode/`: the episode page (timed transcript, references).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`

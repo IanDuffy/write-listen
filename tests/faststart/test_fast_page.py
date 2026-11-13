@@ -579,6 +579,23 @@ def test_first_audio_tells_the_live_guide_and_the_tap_ends_the_conversation_and_
     assert len(b.js("window.__notes")) == 1  # once, not again with each status
 
 
+def test_first_audio_while_the_guide_rests_wakes_it_and_the_tap_ends_it_before_playing(world):
+    """Merge with voice/quiet-guide: the guide may be resting (it stepped back; the page listens locally)
+    when the first audio is ready. It is woken to say so, as at ready, never given the note while it
+    rests; and the tap that plays ends the conversation first, so no microphone hears the chapter."""
+    r = world.run
+    r.status()
+    b = world.open()
+    b.js("window.__woke = []; wake = (why) => { window.__woke.push(why); return Promise.resolve(false); };"
+         "resting = true;")
+    r.add(1, 2.0).status()
+    b.wait("window.__woke.length === 1")
+    assert b.js("window.__woke") == ["ready"] and b.js("pendingReady") == ""
+    b.page.click("#orb")
+    b.wait("window.__a.plays.length === 1 && !document.getElementById('audio').paused")
+    assert b.js("resting") is False and b.plays() == [piece(1, 0)]
+
+
 def test_an_awaited_part_never_starts_over_a_conversation_begun_meanwhile(world):
     """The run stops while the listener waits, they tap and talk with the guide, the run is continued and the
     part arrives: the chapter and the guide are never heard at once. The place is kept for the next tap."""

@@ -8,11 +8,18 @@
   The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
   One element in the middle and a line of text under it; a text box as a fallback for typing; a
   toggle for the transcript. No framework, system font, one accent color.
+  Voice first (Ian, 2026-11-12: a tester typed instead of talking): the text box stays hidden until
+  a tap finds that voice can't start here (no microphone, refused, or no connection to the agent),
+  or the listener taps the keyboard across from the transcript toggle.
   Milestones 2-4: idle, thinking (the guide is composing a reply), listening and speaking (voice:
   the circle follows the mic and the guide's voice), making the chapter, ready, problem. Tapping
   the circle starts a voice conversation with the guide (the ElevenLabs agent, milestone 4); tap
   again to finish. Without a microphone or voice, it falls back to the typed conversation. The text
   box talks to the guide either way, and the guide starts the chapter.
+  Resting (Ian's notes on the first voice conversation, 2026-11-12): when the listener says they
+  will wait, or nobody has spoken for a while, the guide steps back. The voice connection ends (no
+  model, no per-minute cost) and wake.js listens on this machine only; speaking or tapping the
+  circle brings the guide back into the same conversation, and so does the chapter being ready.
   Asking mid-chapter (docs/ask-voice.md, page/ask.js): while a chapter plays, the circle reads "Ask
   a question"; a tap pauses it and the guide answers; ?chapter=<run> opens a finished chapter.
 -->
@@ -41,7 +48,12 @@
   body.ready.playing #orb .icon.play { opacity: 0; }
   body.problem #orb .core { opacity: .28; }
   body.thinking #orb .core { animation: breathe 2.4s ease-in-out infinite; }
-  body.idle:not(.talking) #orb, body.voice #orb { cursor: pointer; }
+  body.idle:not(.talking) #orb, body.voice #orb, body.resting #orb { cursor: pointer; }
+  body.resting:not(.ready) #orb .core { opacity: .5; }
+  #hint { display: none; font-size: 14px; color: var(--muted); text-align: center; }
+  body.resting #hint { display: block; }
+  #stop { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+          text-decoration: underline; text-underline-offset: 3px; }
   body.voice #orb .core { transition: opacity .6s; animation: none; }  /* follows the sound, not a timer */
   @keyframes breathe { 50% { opacity: .75; } }
   #orb .blob { fill: var(--accent); opacity: 0; }  /* an aside: the circle as a membrane (page/ask.js) */
@@ -57,19 +69,31 @@
   #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
            border-radius: 999px; padding: 6px 16px; cursor: pointer; }
   body.problem #retry { display: inline-block; }
+  #halt { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
+          border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+  body.making #halt { display: inline-block; }
+  #halt:disabled { opacity: .5; cursor: default; }
+  #reset { margin-left: 14px; font: inherit; font-size: 14px; color: var(--muted);
+           background: none; border: 0; padding: 0; cursor: pointer; }
   body.problem.final #retry { display: none; }
   #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
           cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
-  form { display: flex; gap: 8px; }
+  form { display: none; gap: 8px; }
+  body.typing form { display: flex; }  /* voice couldn't start, or they asked to type */
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  #type { width: 36px; height: 36px; margin-right: -8px; padding: 8px; border: 0; border-radius: 999px;
+          background: none; color: var(--muted); cursor: pointer; }  /* the icon's edge lines up with the box's */
+  #type:hover, body.typing #type { color: var(--accent); }
+  #type svg { width: 100%; height: 100%; display: block; }
   #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
          border-radius: 999px; padding: 10px 16px; }
   #say:focus { outline: none; border-color: var(--accent); }
   #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: #fff;
           cursor: pointer; }
   #send:disabled, #say:disabled { opacity: .5; cursor: default; }
-  #toggle { margin-top: 10px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+  #toggle { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
             padding: 0; cursor: pointer; }
   #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 42vh; overflow: auto; }
   #transcript.open { display: block; }
@@ -92,7 +116,9 @@
     </svg>
   </button>
   <div id="line">Tap to begin</div>
+  <div id="hint"><span id="how">Tap to talk</span> · <button id="stop">Stop listening</button></div>
   <button id="retry">Try again</button>
+  <button id="halt">Stop making this chapter</button>
   <button id="last"></button>
   <audio id="audio" preload="none"></audio>
 </main>
@@ -101,11 +127,21 @@
     <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
     <button id="send">Send</button>
   </form>
-  <button id="toggle" aria-expanded="false">Show transcript</button>
+  <div class="row">
+    <span><button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Reset memory</button></span>
+    <button id="type" aria-label="Type instead" aria-pressed="false" title="Type instead">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="12" rx="2"/>
+        <path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/>
+      </svg>
+    </button>
+  </div>
   <div id="transcript" aria-live="polite"></div>
 </footer>
 <script src="__VOICE_CLIENT_JS__" async></script>
+<script src="/wake.js"></script>
 <script>
+const VOICE = __VOICE_SETTINGS__;  // config.yaml voice: when the guide steps back, and what brings it back
 const $ = (id) => document.getElementById(id);
 const R = 88, CIRC = 2 * Math.PI * R;
 const ring = document.querySelector("#orb .ring");
@@ -120,9 +156,25 @@ let voiceConv = null, voiceMode = null; // the live voice conversation; "listeni
 let readyNote = "";                     // what to tell the voice guide when the chapter is ready
 let pendingReady = "";                  // told once the guide is listening (a contextual update wouldn't make it speak)
 let starting = false;                   // a tap is setting up a conversation: further taps wait
+let typing = false;                     // voice couldn't start, so the text box is shown
+// Resting: the conversation goes on (the server keeps it), but the guide has stepped back: no voice
+// connection, only the local listener (wake.js) and the circle, either of which brings it back.
+let resting = false, restTimer = null;
+let wakeStream = null, wakeCtx = null, wakeToken = 0;
+let stepBack = false, stepAt = 0;       // the guide called step_back: rest once it has finished speaking
+let stepDone = null;                    // answers that tool call, which waits so nothing is said after it
+let stepSpoke = false;                  // it has been speaking since it asked to step back
+let guideSpoke = false;                 // the guide has said something since the listener's last turn
+let lastHeard = 0, quietMs = 0;         // nobody has spoken for quietMs: the guide steps back unasked
+let lastWords = 0;                      // the last time either of them said anything (a transcript line)
+let epoch = 0;                          // bumped when a conversation ends, so a connection in flight gives up
+let soundWakes = 0, soundWakesTotal = 0;  // sounds that woke the guide: with no answer since, and since a tap
+let restUntil = 0;                      // when resting ends the conversation (moved only by the listener)
+let activity = null;                    // Wake.Activity: is the mic above the room's own level?
 const core = document.querySelector("#orb .core");
 
 function note(text, kind = "stage") {
+  if (!text) return;
   const p = document.createElement("p");
   p.className = kind;
   p.textContent = text;
@@ -145,10 +197,10 @@ function render() {
   }
   // A chapter from an earlier visit doesn't take over the circle: tap to begin, and play it from the link.
   const past = s.state === "ready" && !fresh && $("audio").paused;
-  const shown = past ? "idle" : s.state;
+  const shown = past || s.state === "stopped" ? "idle" : s.state;  // a stopped chapter leaves the page as it was
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
     + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
-    + (voiceConv ? " voice " + (voiceMode || "") : "") + (window.Ask ? Ask.classes() : "");
+    + (voiceConv ? " voice " + (voiceMode || "") : "") + (typing ? " typing" : "") + (resting ? " resting" : "") + (window.Ask ? Ask.classes() : "");
   $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
@@ -174,13 +226,21 @@ function onStatus(s) {
   if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
   if (s.state === "ready" && lastState === "making" && !(window.Fast && Fast.active())) {  // already being listened to
     fresh = true;
-    if (voiceConv && readyNote) { pendingReady = readyNote.replace("{title}", s.title || "your chapter"); flushReady(); }
+    if (resting && !starting) {
+      wake("ready");  // it said it would tell them
+    } else if (sessionId && readyNote && (voiceConv || starting || !resting)) {
+      // Live, connecting, or on its way out (rested() then brings it back to say so).
+      pendingReady = readyNote.replace("{title}", s.title || "your chapter");
+      flushReady();
+    }
     note("Ready: " + (s.title || "your chapter"));
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification("Your chapter is ready", { body: s.title || "" });
     }
   }
   if (s.state === "problem" && lastState !== "problem") note(s.message || "Something went wrong.");
+  if (s.state === "stopped" && lastState === "making") note(s.message || "Stopped.");
+  if (s.state !== "making") $("halt").disabled = false;
   lastState = s.state; lastLabel = s.label;
   render();
 }
@@ -247,18 +307,34 @@ async function converse(message) {
 
 // --- voice (milestone 4) -------------------------------------------------------------------
 function voiceLost() {  // the server no longer knows this conversation (it restarted, or another tab took over)
-  if (!voiceConv) return;
+  if (!sessionId) return;
   note("The guide lost the thread. Tap to start again.");
-  setTimeout(endVoice, 0);  // not from inside the SDK's own callback
+  setTimeout(endConversation, 0);  // not from inside the SDK's own callback
 }
 
 async function voiceTool(name, params) {  // a client tool the agent called: the server runs it
+  let out;
   try {
-    return JSON.stringify(await post("/api/voice/tool", { session: sessionId, name, args: params || {} }));
+    out = await post("/api/voice/tool", { session: sessionId, name, args: params || {} });
   } catch (err) {  // a plain result the guide can say, not a thrown SDK error
     if (err.conflict) voiceLost();
     return JSON.stringify({ error: err.conflict ? "This conversation has ended." : err.message });
   }
+  if (name === "step_back" && !stepBack) {
+    // Rest once its parting words have been heard (tick), never mid-sentence.
+    stepBack = true;
+    stepSpoke = voiceMode === "speaking";
+    if (guideSpoke) {
+      // It has said them. Answer the call only once the page has rested: an answer now would have
+      // the model speak again ("I'll say nothing more now").
+      stepAt = Date.now() + 1500;  // its words may not have reached the speaker yet
+      await new Promise((done) => { stepDone = done; });
+    } else {
+      // The tool came first: answer, so it can say its few words (the tool's note asks for them), then rest.
+      stepAt = Date.now() + 4000;
+    }
+  }
+  return JSON.stringify(out);
 }
 
 function voiceLine(who, text, extra = {}) {  // the transcript the memory pass reads
@@ -266,9 +342,11 @@ function voiceLine(who, text, extra = {}) {  // the transcript the memory pass r
 }
 
 function flushReady() {  // the chapter is ready: tell the guide as a turn, once it is listening
+  if (stepBack) return;  // it is on its way out: it comes back to say so once it has rested (rested)
   if (voiceConv && voiceMode === "listening" && pendingReady) {
     voiceConv.sendUserMessage(pendingReady);
     pendingReady = "";
+    lastHeard = lastWords = Date.now();
   }
 }
 
@@ -280,72 +358,274 @@ function animate() {  // the circle follows the mic while listening and the guid
   requestAnimationFrame(animate);
 }
 
-async function startVoice() {  // false: voice can't start here, so the caller types instead
+// Every quarter second of a live conversation: has the guide asked to step back, or has nobody
+// spoken for a while? Either way the connection ends and the page rests. A timer, not the
+// animation frame: frames stop when the tab is in the background.
+function tick() {
+  if (!voiceConv) return;
+  const now = Date.now();
+  if (voiceMode === "speaking") { lastHeard = now; return; }
+  const heard = activity && activity.heard(voiceConv.getInputVolume());
+  if (heard) lastHeard = now;
+  if (stepBack) {
+    if (heard) stepAt = Math.max(stepAt, now + 1500);  // they are speaking over its parting words: don't cut them off
+    if (now >= stepAt) rest("asked");
+    return;
+  }
+  if (pendingReady) return;
+  // Quiet at the microphone; or a long time with no words from either side, whatever the microphone
+  // hears (typing, a fan and music are loud but are not the listener talking).
+  if (now - lastHeard > quietMs || now - lastWords > VOICE.rest_after_no_words_secs * 1000) rest("quiet");
+}
+setInterval(tick, 250);
+
+function chime() {  // two soft notes: the guide is back and listening (it does not speak when a sound wakes it)
+  try {
+    const ctx = new AudioContext(), gain = ctx.createGain(), t = ctx.currentTime;
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(0.0001, t);
+    [[660, 0], [880, 0.13]].forEach(([hz, at]) => {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      osc.connect(gain);
+      gain.gain.exponentialRampToValueAtTime(0.06, t + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.12);
+      osc.start(t + at);
+      osc.stop(t + at + 0.13);
+    });
+    setTimeout(() => ctx.close().catch(() => {}), 600);
+  } catch (e) { /* no sound, then: the circle shows it */ }
+}
+
+// Starts a voice connection: a new conversation (reason null), or the same one coming back after a
+// rest ("spoke", "tap", "typed", "ready"). False: voice can't start here, so the caller types
+// instead (a new conversation) or goes back to resting. True also when the conversation was ended
+// while this was connecting (the listener pressed play): there is nothing more to do.
+async function startVoice(reason = null) {
   const EL = window.ElevenLabsClient;
   if (!EL || !navigator.mediaDevices) return false;
-  try {  // ask for the mic from the tap itself, so a refusal is ours to handle
-    (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
-  } catch (e) {
-    note("No microphone, so let's type instead.");
-    return false;
+  const mine = epoch;
+  if (!reason) {
+    try {  // ask for the mic from the tap itself, so a refusal is ours to handle
+      (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((t) => t.stop());
+    } catch (e) {
+      note("No microphone, so let's type instead.");
+      return false;
+    }
+    if (mine !== epoch) return true;
   }
   talking = thinking = true;
   render();
   let start;
   try {
-    start = await post("/api/voice/start");
+    start = reason ? await post("/api/voice/resume", { session: sessionId, reason }) : await post("/api/voice/start");
   } catch (err) {
+    if (mine !== epoch) return true;
+    if (reason && err.conflict) { voiceLost(); return true; }  // handled: the conversation is over
     note(err.message);
-    talking = thinking = false;
+    thinking = false;
+    if (!reason) talking = false;
     render();
     return false;
   }
+  const ended = () => {  // the conversation was ended while this was connecting: undo what this did
+    if (!reason) post("/api/chat/end", { session: start.session }).catch(() => {});  // it was never the page's
+    talking = !!sessionId; thinking = false;
+    render();
+    return true;
+  };
+  if (mine !== epoch) return ended();
   sessionId = start.session;
-  readyNote = start.ready_note || "";
+  if (start.ready_note) readyNote = start.ready_note;
   let conv = null;
   try {
-    conv = voiceConv = await EL.Conversation.startSession({
+    conv = await EL.Conversation.startSession({
       signedUrl: start.signed_url, connectionType: "websocket", dynamicVariables: start.dynamic_variables,
       clientTools: {
         start_chapter: (p) => voiceTool("start_chapter", p),
         add_note: (p) => voiceTool("add_note", p),
         get_status: (p) => voiceTool("get_status", p),
         scout_topic: (p) => voiceTool("scout_topic", p),
+        step_back: (p) => voiceTool("step_back", p),
       },
       onConnect: ({ conversationId }) => voiceLine("", "", { conversation_id: conversationId }),
       onMessage: ({ role, message }) => {
         const who = role === "agent" ? "guide" : "listener";
         note(who === "guide" ? message : "You: " + message, who === "guide" ? "guide" : "you");
         voiceLine(who, message);
+        lastHeard = lastWords = Date.now();
+        if (who === "guide") guideSpoke = true;
+        else if (message.replace(/[.\s…]/g, "")) {  // they are talking: stay
+          guideSpoke = false;
+          stayAwake();
+          quietMs = VOICE.rest_after_silence_secs * 1000;
+          soundWakes = 0;  // that wake was answered
+          restUntil = 0;
+        }
       },
-      onModeChange: ({ mode }) => { voiceMode = mode; thinking = false; render(); flushReady(); },
-      onDisconnect: () => { if (!voiceConv || voiceConv === conv) voiceEnded(); },  // only the live one
+      onModeChange: ({ mode }) => {
+        voiceMode = mode; thinking = false; lastHeard = Date.now();
+        if (stepBack && mode === "speaking") stepSpoke = true;
+        if (stepBack && stepSpoke && mode === "listening") stepAt = Date.now() + 500;  // a breath after its last word
+        render(); flushReady();
+      },
+      // Only the live one. A connection that drops on its own (the network, the platform's time
+      // limit) is a rest, not an ending: the listener can still bring the guide back.
+      onDisconnect: () => { if (conv && voiceConv === conv) { voiceConv = null; rested("the connection closed"); } },
       onError: (m) => note(typeof m === "string" ? m : "The voice connection had a problem."),
     });
   } catch (err) {
-    note("Voice couldn't start, so let's type.");
-    talking = thinking = false;
+    if (mine !== epoch) return true;
+    note(reason ? "Voice couldn't start again." : "Voice couldn't start, so let's type.");
+    thinking = false;
+    if (!reason) talking = false;
     render();
     return false;
   }
-  voiceConv.sendUserMessage(start.opened);  // the guide speaks first, as in the typed chat
+  if (mine !== epoch) {  // e.g. they pressed play while this connected: never talk over the chapter
+    conv.endSession().catch(() => {});
+    return true;
+  }
+  voiceConv = conv;
+  stayAwake();
+  lastHeard = lastWords = Date.now();
+  // Back for the chapter, or because of a sound: a short wait for the listener, the full one once they speak.
+  quietMs = (reason === "ready" || reason === "spoke" ? VOICE.rest_after_ready_secs : VOICE.rest_after_silence_secs) * 1000;
+  activity = new Wake.Activity();
+  guideSpoke = false;
+  if (start.opened) voiceConv.sendUserMessage(start.opened);  // the guide speaks first, as in the typed chat
+  else thinking = false;  // nothing for it to answer yet: it is listening
+  if (reason === "spoke") chime();
   animate();
   render();
   return true;
 }
 
-async function endVoice() {  // tap again to finish talking
-  const c = voiceConv;
-  if (!c) return;
-  try { await c.endSession(); } catch (e) { /* already closed */ }
-  voiceEnded();
+function stayAwake() {  // no step back after all (they spoke), or it has happened: answer the waiting tool call
+  stepBack = stepSpoke = false;
+  if (stepDone) stepDone();
+  stepDone = null;
 }
 
-function voiceEnded() {  // the conversation is over: the server updates what the guide remembers
-  if (!voiceConv && !talking) return;
+// --- resting, and coming back ------------------------------------------------------------------
+async function rest(why) {  // the guide steps back: end the connection, keep the conversation
+  const c = voiceConv;
+  if (!c) return;
+  voiceConv = null;  // before the await, so its onDisconnect is not taken for a dropped connection
+  try { await c.endSession(); } catch (e) { /* already closed */ }
+  rested(why === "asked" ? "it was asked to" : "nobody had spoken for a while", why === "asked");
+}
+
+function rested(why, asked = false) {
+  const owed = pendingReady;  // the chapter became ready as it was stepping back: it still has to say so
+  voiceMode = null; thinking = false; pendingReady = "";
+  stayAwake();
+  if (!sessionId) return endConversation();
+  // The chapter started (play was pressed while the connection was closing) or an aside is live: the
+  // guide does not rest, since resting opens the microphone (wake.js) beside them. The conversation ends.
+  if (!$("audio").paused || (window.Ask && Ask.state())) return endConversation();
+  resting = true;
+  voiceLine("page", `[The guide stepped back: ${why}.]`);
+  // The limit on resting runs from the listener's last real turn, tap or typed line: sounds that
+  // wake the guide do not push it back.
+  if (!restUntil) restUntil = Date.now() + VOICE.rest_max_minutes * 60000;
+  clearTimeout(restTimer);
+  restTimer = setTimeout(endConversation, Math.max(0, restUntil - Date.now()));
+  // A sound woke it and nobody then spoke, twice running (a television, music, someone else in the
+  // room), or sounds have woken it many times: stop listening for sounds. A tap still brings it back.
+  if (soundWakes >= 2 || soundWakesTotal >= VOICE.wake.max_sound_wakes) stopListening();
+  else listenForWake(asked ? 4000 : 700);  // their answer to its parting words ("thanks!") is not a call back
+  render();
+  if (owed) wake("ready");
+}
+
+async function listenForWake(delay) {  // the local listener; without it (no worklet, no mic) a tap still wakes
+  stopListening();
+  const token = ++wakeToken;
+  await new Promise((r) => setTimeout(r, delay));  // let the guide's last word, and their reply to it, leave the room
+  if (token !== wakeToken || !resting) return;
+  let stream = null, ctx = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(
+      { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false } });
+    ctx = new AudioContext();
+    await ctx.audioWorklet.addModule("/wake.js");
+    if (ctx.state === "suspended") await ctx.resume();
+    if (token !== wakeToken || !resting) throw new Error("no longer resting");
+    const node = new AudioWorkletNode(ctx, "wake", { numberOfOutputs: 0, processorOptions: VOICE.wake });
+    node.port.onmessage = () => { if (token === wakeToken) wake("spoke"); };
+    ctx.createMediaStreamSource(stream).connect(node);
+    wakeStream = stream; wakeCtx = ctx;
+    $("how").textContent = "Say something, or tap, to talk";
+  } catch (e) {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    if (ctx) ctx.close().catch(() => {});
+  }
+}
+
+function stopListening() {  // release the microphone
+  wakeToken++;
+  if (wakeStream) wakeStream.getTracks().forEach((t) => t.stop());
+  if (wakeCtx) wakeCtx.close().catch(() => {});
+  wakeStream = wakeCtx = null;
+  $("how").textContent = "Tap to talk";
+}
+
+// Bring the guide back into the same conversation: a sound at the microphone ("spoke"), a tap,
+// typed text, or the chapter being ready. `typed` is what they typed, sent as their turn once the
+// guide is connected.
+async function wake(reason, typed = "") {
+  if (!resting || starting) return false;
+  if (!$("audio").paused) return false;  // the chapter is playing: that sound is not the listener
+  if (window.Ask && Ask.state()) return false;  // an aside is live: the listener is talking to it
+  starting = true;
+  resting = false;
+  clearTimeout(restTimer);
+  stopListening();
+  if (reason === "spoke") { soundWakes++; soundWakesTotal++; }
+  if (reason === "tap" || reason === "typed") { soundWakes = soundWakesTotal = 0; restUntil = 0; }  // they are here
+  try {
+    const ok = await startVoice(reason);
+    if (ok && typed && voiceConv) {
+      voiceConv.sendUserMessage(typed);
+      voiceLine("listener", typed);
+      thinking = true;
+      render();
+    }
+    if (!ok && sessionId) {
+      if (typed) {  // voice is not to be had: what they typed goes to the typed chat, as a new conversation
+        await endConversation();
+        return await converse(typed);
+      }
+      // Rest again, saying so where it can be seen, and listen for taps only: a sound must not retry forever.
+      resting = true;
+      restTimer = setTimeout(endConversation, Math.max(0, (restUntil || Date.now() + VOICE.rest_max_minutes * 60000) - Date.now()));
+      $("how").textContent = "Voice couldn't start. Tap to try again";
+      typing = true;  // voice first, but not voice only: the text box comes out when voice can't
+      $("type").setAttribute("aria-pressed", true);
+      render();
+    }
+    return ok;
+  } finally {
+    starting = false;
+    flushReady();
+  }
+}
+
+async function endConversation() {  // over: the server updates what the guide remembers
+  epoch++;  // a connection still being made is abandoned when it arrives (startVoice)
+  const c = voiceConv;
   voiceConv = null;
+  clearTimeout(restTimer);
+  stopListening();
+  resting = false;
+  soundWakes = soundWakesTotal = 0; restUntil = 0;
+  if (c) { try { await c.endSession(); } catch (e) { /* already closed */ } }
   voiceMode = null;
   talking = thinking = false;
+  stayAwake();
+  pendingReady = "";
   if (sessionId) post("/api/chat/end", { session: sessionId }).catch(() => {});
   sessionId = null;
   render();
@@ -358,13 +638,53 @@ $("form").addEventListener("submit", async (e) => {
     note("You: " + text, "you");
     voiceConv.sendUserMessage(text);
     voiceLine("listener", text);
+    lastHeard = lastWords = Date.now();
+    guideSpoke = false;
+    stayAwake();
     $("say").value = "";
+    return;
+  }
+  if (resting && text) {  // typing to a resting guide brings it back to answer
+    note("You: " + text, "you");
+    $("say").value = "";
+    if (!(await wake("typed", text))) $("say").value = text;
     return;
   }
   if (!text || thinking) return;
   note("You: " + text, "you");
   $("say").value = "";
   if (!(await converse(text))) $("say").value = text;  // keep what they typed if it didn't go through
+});
+
+// Stop: the chapter's process and every Claude call it was making end now. What it had made is kept,
+// so it could be continued later, but the page goes back to the start.
+$("halt").addEventListener("click", async () => {
+  if (!status.run || !confirm("Stop making this chapter?")) return;
+  $("halt").disabled = true;
+  try { await post(`/api/chapters/${encodeURIComponent(status.run)}/stop`); }
+  catch (err) { note(err.message); $("halt").disabled = false; }
+});
+
+// Reset: the guide forgets this listener and the next conversation is a first meeting.
+$("reset").addEventListener("click", async () => {
+  // On a ?chapter= page the status shown is that chapter's, not the run being made: ask the server.
+  let current = status;
+  if (pinned) { try { current = await (await fetch("/api/status")).json(); } catch (e) { current = {}; } }
+  const making = current.state === "making";
+  if (!confirm("Reset the guide's memory? It forgets everything it knows about you and your conversations"
+               + (making ? ", and the chapter being made is stopped" : "")
+               + ". Your finished chapters stay.")) return;
+  let out;
+  try { out = await post("/api/reset"); }
+  catch (err) { note(err.message); return; }
+  sessionId = null;  // the server has already ended the conversation, without remembering it
+  await endConversation();
+  if (!pinned) fresh = false;  // the chapter the address names stays the one this page plays
+  $("transcript").textContent = "";
+  note(out.forgotten && out.forgotten.length ? "Memory reset. The next conversation is a first meeting."
+                                             : "There was nothing to forget.");
+  if (out.stopped) note("The chapter being made was stopped.");
+  render();
 });
 
 $("retry").addEventListener("click", async () => {
@@ -377,28 +697,49 @@ $("orb").addEventListener("click", async () => {
   if (window.Fast && Fast.onTap()) return;  // a fast run: play what is ready, pause, or talk while waiting
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
-  if (status.state === "ready" && fresh) { await endVoice(); return a.play(); }  // the mic would hear it
-  if (voiceConv) return endVoice();
+  if (status.state === "ready" && fresh) {
+    if (voiceConv || resting || starting) await endConversation();  // the mic would hear it; a typed chat goes on
+    return a.play();
+  }
+  if (voiceConv) return endConversation();  // tap again to finish talking
+  if (resting) return wake("tap");
   // Tap to begin, whatever an earlier visit left behind: by voice, or typed if voice can't start.
   if (talking || thinking || starting) return;  // one conversation at a time, even on a double tap
   starting = true;
   try {
-    if (!(await startVoice())) await converse(null);
+    if (!(await startVoice())) {
+      typing = true;  // from now on this visit types; the box shows with the guide's first reply
+      $("type").setAttribute("aria-pressed", true);
+      await converse(null);
+      $("say").focus();
+    }
   } finally {
     starting = false;
   }
 });
-$("last").addEventListener("click", async () => { await endVoice(); $("audio").play(); });  // the mic would hear it
+$("last").addEventListener("click", async () => {
+  if (voiceConv || resting || starting) await endConversation();  // the mic would hear it; a typed chat goes on
+  $("audio").play();
+});
+$("stop").addEventListener("click", endConversation);  // resting no more: the microphone is released
 $("audio").addEventListener("play", render);
 $("audio").addEventListener("pause", render);
 
 // The conversation ends when the page goes away: the server updates what the guide remembers.
 addEventListener("pagehide", () => {
   if (voiceConv) voiceConv.endSession();
+  stopListening();
   if (talking && sessionId) {
     navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: sessionId })],
                                                     { type: "application/json" }));
   }
+});
+
+$("type").addEventListener("click", () => {  // the keyboard in the corner: show or hide the text box
+  typing = !typing;
+  $("type").setAttribute("aria-pressed", typing);
+  render();
+  if (typing) $("say").focus();
 });
 
 $("toggle").addEventListener("click", () => {

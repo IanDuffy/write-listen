@@ -107,17 +107,18 @@ def test_the_typed_chat_sends_only_the_keys_the_messages_api_takes(chat, cfg):
     s = chat.session()
     s.say(None)
     tools = guide_calls(chat.resp)[-1]["tools"]
-    assert [t["name"] for t in tools] == ["scout_topic", "start_chapter", "add_note", "get_status"]
+    assert [t["name"] for t in tools] == ["scout_topic", "start_chapter", "add_note", "get_status", "step_back"]
     assert all(set(t) == {"name", "description", "input_schema"} for t in tools)  # no expects_response
     # the voice agent's copy keeps it: scout_topic is the one tool it does not wait for
-    assert [t.get("expects_response", True) for t in guide.TOOLS] == [False, True, True, True]
+    assert [t.get("expects_response", True) for t in guide.TOOLS] == [False, True, True, True, True]
     kind = tools[2]["input_schema"]["properties"]["kind"]
     assert kind["enum"] == list(notes.KINDS) and tools[2]["input_schema"]["required"] == ["note"]
 
     # a conversation without the fast hooks (cli.py chat) is offered what it was before
     plain = guide.Session(cfg, lambda *a: "run", lambda: {"state": "idle"}, chat.runs, rng=random.Random(1))
     plain.say(None)
-    assert [t["name"] for t in guide_calls(chat.resp)[-1]["tools"]] == ["start_chapter", "add_note", "get_status"]
+    assert [t["name"] for t in guide_calls(chat.resp)[-1]["tools"]] == ["start_chapter", "add_note", "get_status",
+                                                                        "step_back"]
     assert plain.tool("scout_topic", {"topic": "Roman concrete"}) == {"scouting": False}
 
 

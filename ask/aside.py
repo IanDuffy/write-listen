@@ -295,6 +295,26 @@ def update_aside(run: Path, aside_id: str, **fields) -> bool:
         return hit
 
 
+ASIDE_FILES = ("asides.jsonl", "seeds.md")  # with <id>.voice.json: what was said in asides
+
+
+def clear_asides(runs_dir: Path, dest: Path) -> list[str]:
+    """Move every chapter's aside transcripts and saved topics to dest/asides/<run>/ (Reset memory:
+    the guide forgets what was said to it, in asides too). Returns the runs touched."""
+    touched = []
+    with LOG_LOCK:
+        for d in sorted(runs_dir.glob(f"*/{ASKS_DIR}")):
+            files = [d / n for n in ASIDE_FILES if (d / n).exists()] + sorted(d.glob("*.voice.json"))
+            if not files:
+                continue
+            out = dest / "asides" / d.parent.name
+            out.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                f.rename(out / f.name)
+            touched.append(d.parent.name)
+    return touched
+
+
 def save_seed(run: Path, topic: str, why: str, t: float, sentence_id: str) -> dict:
     d = asks_dir(run)
     d.mkdir(exist_ok=True)

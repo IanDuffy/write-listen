@@ -1,6 +1,8 @@
 // A fast run on the page (docs/fast-start.md, "On the page" and "When a section isn't ready").
 // Loaded by page/index.html after ask.js; it uses the page's globals ($, status, note, post, render,
-// endVoice, voiceConv, readyNote, pendingReady, flushReady, fresh, starting) and window.Ask.
+// endConversation, voiceConv, resting, wake, readyNote, pendingReady, flushReady, fresh, starting) and
+// window.Ask. (Before the voice-first page and the quiet guide, endConversation was endVoice and there
+// was no resting: guide() and endGuide() take either page.)
 //
 // A fast run is listened to while it is made. Its status (faststart/status.py) lists the sections
 // and, for each, the pieces narrated so far; a piece is its own file that never changes, and the
@@ -132,6 +134,11 @@
 
   // auto: nobody tapped (the next piece, an awaited part arriving). Never over a conversation: the
   // place is kept, paused, and the tap that ends the conversation plays it.
+  // The onboarding guide, in any of its states the chapter must not play over: live, or resting (it
+  // stepped back and the page listens locally for the listener to speak: voice/quiet-guide).
+  function guide() { return !!voiceConv || (typeof resting !== "undefined" && !!resting); }
+  function endGuide() { return (typeof endConversation === "function" ? endConversation : endVoice)(); }
+
   function play(n, i, off = 0, auto = false) {
     clearTimers();
     if (!playable(n, i)) { F.n = n; F.i = i; return settle(); }
@@ -139,7 +146,7 @@
     F.started = true;
     F.talk = false;
     F.since = F.reason = null;
-    if (auto && (voiceConv || starting || talking())) {
+    if (auto && (guide() || starting || talking())) {
       fold();
       F.mode = "paused";
       report();
@@ -247,7 +254,7 @@
   // the guide or skip one, so it is paused again.
   audio.addEventListener("play", () => {
     if (!owned() || audio.paused || (F.mode === "playing" && !F.gap && !talking())) return;
-    if (F.mode === "paused" && here() && (active() || heardOn()) && !voiceConv && !talking()) { F.mode = "playing"; report(); render(); }
+    if (F.mode === "paused" && here() && (active() || heardOn()) && !guide() && !talking()) { F.mode = "playing"; report(); render(); }
     else audio.pause();
   });
 
@@ -304,7 +311,7 @@
 
   function checkIn(reopened) {
     if (F.ci || F.mode !== "waiting" || !active() || status.state !== "making" || playable(F.n, F.i)) return;
-    if (voiceConv || starting || talking() || !window.Ask || !Ask.begin) return;  // one conversation at a time
+    if (guide() || starting || talking() || !window.Ask || !Ask.begin) return;  // one conversation at a time
     if (!reopened && F.asked) return;  // once per wait, unless the listener asks for it
     clearTimers();
     F.asked = true;
@@ -407,7 +414,8 @@
   function announce() {  // first audio: the same signals as a chapter becoming ready
     const title = status.title || "your chapter";
     note("Ready to play: " + title);
-    if (voiceConv && readyNote) { pendingReady = readyNote.replace("{title}", title); flushReady(); }
+    if (typeof resting !== "undefined" && resting && !starting && typeof wake === "function") wake("ready");  // it said it would tell them
+    else if (voiceConv && readyNote) { pendingReady = readyNote.replace("{title}", title); flushReady(); }
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification("Your chapter is starting", { body: status.title || "" });
     }
@@ -451,8 +459,8 @@
     F.busy = true;
     try {
       if (F.mode === "playing") return pause();
-      const ended = !!voiceConv;
-      if (ended) await endVoice();  // the mic would hear the chapter
+      const ended = guide();
+      if (ended) await endGuide();  // the mic would hear the chapter
       if (!active() && !heardOn()) return;
       if (F.mode === "waiting") { if (!ended && !F.beat) checkIn(true); return; }  // "Talk while you wait"
       if (F.mode === "idle") play(startAt(), 0);
@@ -490,7 +498,7 @@
     }
     F.busy = true;  // it plays: a conversation still open ends first (the mic would hear the chapter)
     try {
-      if (voiceConv) await endVoice();
+      if (guide()) await endGuide();
       if (active()) play(n, 0);
     } finally {
       F.busy = false;

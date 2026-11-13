@@ -11,13 +11,19 @@ exposed to the network. One listener, one run at a time.
     GET  /api/status                the current run's status.json (or idle)
     GET  /api/events                the same, as server-sent events, whenever it changes
     POST /api/chapters/{run}/retry  continue a run that stopped
+    POST /api/chapters/{run}/stop   stop the run being made: its process and anything it started
+    POST /api/reset                 forget the listener: end the conversation without remembering it,
+                                    stop any chapter being made, move listener memory aside
     POST /api/chat/start            a new conversation with the guide; it speaks first
     POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
     POST /api/chat/end              the page is closing: run the memory pass for the conversation
     POST /api/voice/start           a voice conversation: a signed URL for the guide agent + dynamic variables
+    POST /api/voice/resume          {"session", "reason"}: the guide stepped back and is coming back (the
+                                    listener spoke or tapped, or the chapter is ready): a new connection
     POST /api/voice/tool            {"session", "name", "args"}: a client tool the agent called, run here
     POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
+    GET  /wake.js                   the page's local listener (page/wake.js), which brings the guide back
     /api/ask/*                      asking mid-chapter, by voice (ask/routes.py, docs/ask-voice.md)
     GET /fast.js, POST /api/fast/position   a fast run on the page (faststart/routes.py, docs/fast-start.md)
     GET  /episode/, /runs/          the episode page (read along) and the run folders it reads
@@ -37,9 +43,11 @@ import asyncio
 import functools
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -48,15 +56,24 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ask import aside as ask_aside
 from ask import routes as ask_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
+from stages import new as new_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
 
+# What reset moves out of listener/ (the guide's memory). voice.json, the agent's ids, stays: it holds
+# nothing about the listener.
+MEMORY_FILES = ("profile.md", "guide.md", "history.md", "seeds", "sessions")
+
 PAGE = ROOT / "page" / "index.html"
+WAKE_JS = ROOT / "page" / "wake.js"
+PAGE_VOICE_KEYS = ("rest_after_silence_secs", "rest_after_ready_secs", "rest_after_no_words_secs",
+                   "rest_max_minutes", "wake")
 HOST, PORT = "127.0.0.1", 8765
 
 
@@ -115,6 +132,38 @@ class Pipeline:
             self.start(["new", name, "--unattended", *fast_routes.mode_args(r, mode)], name)
         return name
 
+    def stop(self, run: str, cfg: dict) -> dict:
+        """Stop the run being made. Ctrl-C first, so the pipeline records where it stopped
+        (decisions.md) and its streaming Claude call is dropped; then, if it has not ended within a
+        few seconds (research agents run in threads), terminate and kill its process group, which
+        takes ffmpeg and anything else it started. Queued batch requests are cancelled. The status
+        becomes "stopped"; the run can be continued later (python cli.py new <run> --unattended)."""
+        with self.lock:
+            r = Run.open(run, runs_dir=self.runs_dir)
+            r.unattended = True  # so decide() writes to decisions.md, as the run itself does
+            status = self._read(run) or {}
+            own = self.proc is not None and self.proc.poll() is None and self.run == run
+            pid = self.proc.pid if own else status.get("pid")
+            was_running = own or (status.get("state") == "making" and alive(pid))
+            if was_running:
+                group = own or _leads_group(pid)  # a run started from a terminal shares the shell's group
+                for sig, wait in ((signal.SIGINT, 5.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 2.0)):
+                    _signal(pid, sig, group)
+                    if _wait_gone(pid, self.proc if own else None, wait):
+                        break
+                if group:  # anything left in its group (an ffmpeg it started) goes too
+                    _signal(pid, signal.SIGKILL, True)
+            cancelled = _cancel_batches(r.root)
+            if was_running or status.get("state") == "making":
+                new_stage.write_status(r, cfg, "stopped", stage=status.get("stage"), label=status.get("label"),
+                                       message="You stopped this chapter.", pid=None,
+                                       history=status.get("history", []))
+                r.decide("stopped", "Stopped from the page." + (f" Cancelled batches: {', '.join(cancelled)}."
+                                                                 if cancelled else ""))
+            if own:
+                self.proc = None
+        return {"run": run, "stopped": bool(was_running), "batches_cancelled": cancelled}
+
     def _own_child_running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
@@ -159,6 +208,52 @@ class Pipeline:
         return found[-1].parent.name if found else None
 
 
+def _leads_group(pid) -> bool:
+    try:
+        return os.getpgid(pid) == pid
+    except (ProcessLookupError, PermissionError, TypeError):
+        return False
+
+
+def _signal(pid, sig, group: bool) -> None:
+    try:
+        os.killpg(pid, sig) if group else os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError, TypeError):
+        pass
+
+
+def _wait_gone(pid, proc, seconds: float) -> bool:
+    """Whether the process has ended within `seconds` (reaped, if it is the server's own child)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if proc is not None:
+            if proc.poll() is not None:
+                return True
+        elif not alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _cancel_batches(root: Path) -> list[str]:
+    """Cancel the Message Batches a stopped run left queued (stages/llm.py saves each id in
+    _batch_<label>.json before it waits). A later run then finds the batch cancelled and sends the
+    request again, streamed. Seed runs stream every stage, so there are usually none."""
+    markers = sorted(root.glob("_batch_*.json"))
+    if not markers:
+        return []
+    from stages import llm
+    done = []
+    for m in markers:
+        try:
+            batch_id = json.loads(m.read_text(encoding="utf-8"))["batch_id"]
+            llm.get_client().messages.batches.cancel(batch_id)
+            done.append(batch_id)
+        except Exception as e:  # already ended, or no network: the run's next start sorts it out
+            print(f"  could not cancel the batch in {m.name}: {e}")
+    return done
+
+
 class ChapterRequest(BaseModel):
     seed: str
     why: str = ""
@@ -177,9 +272,14 @@ class VoiceTool(BaseModel):
     args: dict = {}
 
 
+class VoiceResume(BaseModel):
+    session: str
+    reason: str = "tap"  # "spoke", "tap", "typed" or "ready"
+
+
 class VoiceLine(BaseModel):
     session: str
-    who: str            # "listener" or "guide"
+    who: str            # "listener", "guide", or "page" (the guide stepped back, and why)
     text: str = ""
     conversation_id: str | None = None  # sent once, when the voice connection opens
 
@@ -192,8 +292,15 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     @app.get("/", response_class=HTMLResponse)
     def page() -> str:
-        # The ElevenLabs browser client, pinned in config.yaml (voice.client_js).
-        return PAGE.read_text(encoding="utf-8").replace("__VOICE_CLIENT_JS__", cfg["voice"]["client_js"])
+        # The ElevenLabs browser client, pinned in config.yaml (voice.client_js), and the page's share
+        # of the voice settings (when the guide steps back, and what brings it back).
+        settings = json.dumps({k: cfg["voice"][k] for k in PAGE_VOICE_KEYS})
+        return (PAGE.read_text(encoding="utf-8").replace("__VOICE_CLIENT_JS__", cfg["voice"]["client_js"])
+                .replace("__VOICE_SETTINGS__", settings))
+
+    @app.get("/wake.js")
+    def wake_js() -> FileResponse:
+        return FileResponse(WAKE_JS, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/chapters")
     def start(req: ChapterRequest) -> dict:
@@ -267,6 +374,35 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return {"session": session.id, "signed_url": url, "dynamic_variables": voice.dynamic_variables(session),
                 "opened": opened, "ready_note": load_prompt("guide_ready").strip()}
 
+    @app.post("/api/voice/resume")
+    def voice_resume(req: VoiceResume) -> dict:
+        """The same conversation on a new connection: the guide stepped back (its step_back tool, or the
+        page after a silence) and the listener spoke or tapped, or the chapter became ready. The agent
+        remembers nothing between connections, so it gets the conversation so far with its prompt, and
+        the page's note about why it is back as its first turn (a tap, the chapter: it speaks first)."""
+        with chat["lock"]:
+            session = current(req.session)
+            if req.reason == "ready":
+                title = (pipe.status() or {}).get("title") or "your chapter"
+                note = load_prompt("guide_ready").strip().replace("{title}", title)
+            elif req.reason == "typed":  # what they typed is the first turn
+                note = ""
+            elif req.reason == "spoke":
+                # A sound woke it, which may not have been the listener (a door, a television): it
+                # listens, and the page plays two soft notes. Speaking on every sound was the
+                # lingering voice again. What they say next is its first turn.
+                note = ""
+            else:
+                note = load_prompt("guide_back").strip()
+            try:
+                url = voice.signed_url(cfg)
+            except Exception as e:
+                raise HTTPException(503, f"Voice isn't available: {e}") from None
+            variables = voice.dynamic_variables(session, resumed=True)  # before the note: it is not "earlier"
+            if note:
+                session.record("page", text=note, mode="voice")
+        return {"session": session.id, "signed_url": url, "dynamic_variables": variables, "opened": note}
+
     @app.post("/api/voice/tool")
     def voice_tool(req: VoiceTool) -> dict:
         """A client tool the agent called: run it in the conversation's session (as the typed chat does)."""
@@ -284,10 +420,10 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         """What was said, for the transcript the memory pass reads; or the connection's id."""
         with chat["lock"]:
             session = current(req.session)
-            if req.conversation_id:
-                session.voice_conversation = req.conversation_id
+            if req.conversation_id and req.conversation_id not in session.voice_conversations:
+                session.voice_conversations.append(req.conversation_id)
                 session.record("session", conversation_id=req.conversation_id)
-            if req.text.strip() and req.who in ("listener", "guide"):
+            if req.text.strip() and req.who in ("listener", "guide", "page"):
                 session.record(req.who, text=req.text.strip())
         return {"ok": True}
 
@@ -305,9 +441,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             session, chat["session"] = chat["session"], None
         if session is not None:
             remember(session.transcript)
-            cid = getattr(session, "voice_conversation", None)
-            if cid:  # ElevenLabs' record of the call (latency per turn, cost), once it has processed it
-                threading.Thread(target=lambda: _save_voice(cfg, session.id, cid), daemon=True).start()
+            # ElevenLabs' record of each connection (latency per turn, cost), once it has processed it.
+            for n, cid in enumerate(session.voice_conversations, 1):
+                threading.Thread(target=_save_voice, args=(cfg, session.id, cid, n), daemon=True).start()
         return {"ended": session is not None}
 
     @app.post("/api/chat")
@@ -315,6 +451,50 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         if not req.message.strip():
             raise HTTPException(400, "Say something first.")
         return talk(req.message, fresh=False, session_id=req.session)
+
+    @app.post("/api/chapters/{run}/stop")
+    def stop(run: str) -> dict:
+        try:
+            return pipe.stop(run, cfg)
+        except StageError:
+            raise HTTPException(404, "No such chapter.") from None
+
+    @app.post("/api/reset")
+    def reset() -> dict:
+        """Forget the listener and start fresh. The conversation in progress ends without a memory
+        pass (that would write some of it back), a chapter being made is stopped (it would add
+        itself to history.md when done), and listener memory, with every chapter's aside transcripts
+        (runs/<run>/12_asks/), is moved to listener/_cleared_<time>/, which nothing reads. The finished
+        chapters in runs/ stay, and so do ElevenLabs' own records of past voice calls."""
+        with chat["lock"]:
+            chat["session"] = None
+            for t in chat["passes"]:  # a pass in flight would write profile.md after the move
+                t.join()
+            chat["passes"] = []
+            stopped = None
+            if pipe.busy():
+                status = pipe.status()
+                if status.get("run"):
+                    stopped = pipe.stop(status["run"], cfg)["run"]
+            with memory.LOCK:
+                d = guide.listener_dir(cfg)
+                found = [n for n in MEMORY_FILES if (d / n).exists()]
+                has_asides = any(any((x / n).exists() for n in ask_aside.ASIDE_FILES) or any(x.glob("*.voice.json"))
+                                 for x in pipe.runs_dir.glob(f"*/{ask_aside.ASKS_DIR}"))
+                moved_to = None
+                if found or has_asides:
+                    moved_to = d / f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}"
+                    n = 1
+                    while moved_to.exists():
+                        n += 1
+                        moved_to = moved_to.with_name(f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}-{n}")
+                    moved_to.mkdir(parents=True)
+                    for name in found:
+                        (d / name).rename(moved_to / name)
+                    # What was said in asides (runs/<run>/12_asks/), which the aside agent reads back.
+                    if ask_aside.clear_asides(pipe.runs_dir, moved_to):
+                        found.append("asides")
+        return {"forgotten": found, "moved_to": moved_to.name if moved_to else None, "stopped": stopped}
 
     @app.post("/api/chapters/{run}/retry")
     def retry(run: str) -> dict:
@@ -372,9 +552,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     return app
 
 
-def _save_voice(cfg: dict, session_id: str, conversation_id: str) -> None:
+def _save_voice(cfg: dict, session_id: str, conversation_id: str, n: int = 1) -> None:
     try:
-        voice.save_conversation(cfg, session_id, conversation_id)
+        voice.save_conversation(cfg, session_id, conversation_id, n=n)
     except Exception as e:  # never take the server down over a call record
         print(f"  saving the voice record failed: {e}")
 

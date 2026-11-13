@@ -100,7 +100,8 @@ def world(tmp_path, cfg, monkeypatch):
 
 def head_digest(cfg, kind):
     """voice._digest for the two agents that existed before the check-in, written out as the code
-    stood then (stages/voice.py at 4d13961), so a branch added for the check-in cannot leak into them."""
+    stood then (stages/voice.py at 4d13961, plus the quiet guide's turn_timeout from the default branch,
+    15d0413), so a branch added for the check-in cannot leak into them."""
     v = cfg["voice"]
     conv = {"agent": {"first_message": "", "language": "en",
                       "dynamic_variables": {"dynamic_variable_placeholders": {
@@ -108,7 +109,7 @@ def head_digest(cfg, kind):
                       "prompt": {"prompt": voice.guide_prompt(kind), "llm": v["llm"],
                                  "reasoning_effort": v["reasoning_effort"], "tool_ids": []}},
             "tts": {"model_id": v["tts_model"], "voice_id": v.get("voice_id") or cfg["narration"]["voice_id"]},
-            "turn": {"turn_eagerness": v["turn_eagerness"]},
+            "turn": {"turn_eagerness": v["turn_eagerness"], "turn_timeout": v["turn_timeout"]},
             "conversation": {"max_duration_seconds": v["max_duration_seconds"]}}
     if kind == "aside":
         conv["turn"]["turn_timeout"] = cfg["ask"]["turn_timeout_secs"]

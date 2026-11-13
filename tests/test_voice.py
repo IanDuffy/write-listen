@@ -53,10 +53,11 @@ def vcfg(cfg, tmp_path):
 
 def test_tools_become_elevenlabs_client_tools(cfg):
     tools = voice.client_tools(cfg)
-    # Four tools since Fast Start milestone 5: scout_topic comes first, and is the one the agent does not wait for.
-    assert [t["name"] for t in tools] == ["scout_topic", "start_chapter", "add_note", "get_status"]
+    # Five tools: scout_topic first (Fast Start milestone 5, the one the agent does not wait for),
+    # step_back last (voice/quiet-guide).
+    assert [t["name"] for t in tools] == ["scout_topic", "start_chapter", "add_note", "get_status", "step_back"]
     assert all(t["type"] == "client" for t in tools)
-    assert [t["expects_response"] for t in tools] == [False, True, True, True]
+    assert [t["expects_response"] for t in tools] == [False, True, True, True, True]
     assert "additionalProperties" not in json.dumps(tools)  # not in ElevenLabs' schema subset
     start = tools[1]["parameters"]
     assert start["required"] == ["topic", "listener_said", "why", "notes"]
@@ -70,9 +71,11 @@ def test_the_agent_is_the_typed_guide(cfg):
     prompt = voice.guide_prompt()
     assert prompt.startswith("You are a guide. You make chapters")
     assert set(re.findall(r"\{\{\s*(\w+)\s*\}\}", prompt)) == set(voice.PLACEHOLDERS)
-    conv = voice.conversation_config(cfg, ["t1", "t2", "t3"])
+    conv = voice.conversation_config(cfg, ["t1", "t2", "t3", "t4"])
     p = conv["agent"]["prompt"]
-    assert p["llm"] == "claude-sonnet-5-5" and p["reasoning_effort"] == "none" and p["tool_ids"] == ["t1", "t2", "t3"]
+    assert p["llm"] == "claude-sonnet-5-5" and p["reasoning_effort"] == "low" and p["tool_ids"] == ["t1", "t2", "t3", "t4"]
+    # Never answer a silence: the platform's default turned 15 s of quiet into a turn (2026-11-12).
+    assert conv["turn"] == {"turn_eagerness": "patient", "turn_timeout": -1}
     assert conv["agent"]["first_message"] == ""  # the page tells it the listener arrived; it speaks first
     assert conv["tts"] == {"model_id": "eleven_v4_turbo", "voice_id": cfg["narration"]["voice_id"]}
     assert set(conv["agent"]["dynamic_variables"]["dynamic_variable_placeholders"]) == set(voice.PLACEHOLDERS)
@@ -82,20 +85,20 @@ def test_the_agent_is_the_typed_guide(cfg):
 def test_sync_creates_once_and_updates_only_on_change(vcfg):
     el = FakeEL()
     assert voice.sync_agent(vcfg, el) == "agent_1"
-    assert el.kinds() == ["tools.create"] * 4 + ["agents.create"]  # four tools since scout_topic (Fast Start)
+    assert el.kinds() == ["tools.create"] * 5 + ["agents.create"]  # scout_topic (Fast Start) and step_back (quiet guide)
     create = el.calls[-1][2]
-    assert create["conversation_config"]["agent"]["prompt"]["tool_ids"] == ["tool_1", "tool_2", "tool_3", "tool_4"]
+    assert create["conversation_config"]["agent"]["prompt"]["tool_ids"] == ["tool_1", "tool_2", "tool_3", "tool_4", "tool_5"]
     state = json.loads(voice.state_path(vcfg).read_text())
     assert state["agent_id"] == "agent_1" and state["tool_ids"]["get_status"] == "tool_4"
 
     el.calls.clear()
     assert voice.sync_agent(vcfg, el) == "agent_1" and el.calls == []  # nothing changed: no calls
 
-    vcfg["voice"]["reasoning_effort"] = "low"
+    vcfg["voice"]["reasoning_effort"] = "medium"
     voice.sync_agent(vcfg, el)
-    assert el.kinds() == ["tools.update"] * 4 + ["agents.update"]  # same tools and agent, updated
+    assert el.kinds() == ["tools.update"] * 5 + ["agents.update"]  # same tools and agent, updated
     assert el.calls[-1][1] == ("agent_1",)
-    assert el.calls[-1][2]["conversation_config"]["agent"]["prompt"]["reasoning_effort"] == "low"
+    assert el.calls[-1][2]["conversation_config"]["agent"]["prompt"]["reasoning_effort"] == "medium"
 
 
 def test_dynamic_variables_are_the_sessions_prompt_values(vcfg, tmp_path):
@@ -110,7 +113,10 @@ def app(vcfg, tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_client", FakeAnthropic(Responder()))
     monkeypatch.setattr(voice, "signed_url", lambda cfg, client=None: "wss://example/signed")
     saved = []
-    monkeypatch.setattr(server, "_save_voice", lambda cfg, sid, cid: saved.append((sid, cid)))
+    monkeypatch.setattr(server, "_save_voice", lambda cfg, sid, cid, n=1: saved.append((sid, cid) if n == 1 else (sid, cid, n)))
+    # The memory pass runs in a thread that can outlive the test, and with it the fake model: it
+    # would then build a real client from .env. These tests are not about memory.
+    monkeypatch.setattr(server.memory, "after_session", lambda *a, **k: False)
     runs = tmp_path / "runs"
     runs.mkdir()
     pipe = server.Pipeline(runs_dir=runs)
@@ -169,10 +175,10 @@ def test_a_failed_sync_resumes_without_duplicate_tools(vcfg):
     with pytest.raises(Exception, match="500"):
         voice.sync_agent(vcfg, el)
     state = json.loads(voice.state_path(vcfg).read_text())
-    assert state["agent_id"] is None and len(state["tool_ids"]) == 4 and state["digest"] is None  # ids kept
+    assert state["agent_id"] is None and len(state["tool_ids"]) == 5 and state["digest"] is None  # ids kept
     el.calls.clear()
     assert voice.sync_agent(vcfg, el) == "agent_1"
-    assert el.kinds() == ["tools.update"] * 4 + ["agents.create"]  # the tools are reused, not made again
+    assert el.kinds() == ["tools.update"] * 5 + ["agents.create"]  # the tools are reused, not made again
 
 
 def test_only_a_404_makes_a_new_agent(vcfg):
@@ -188,7 +194,7 @@ def test_only_a_404_makes_a_new_agent(vcfg):
     el.calls.clear()
     el.fail["agents.update"] = [404]
     voice.sync_agent(vcfg, el)
-    assert el.kinds() == ["tools.update"] * 4 + ["agents.update", "agents.create"]  # deleted: made again
+    assert el.kinds() == ["tools.update"] * 5 + ["agents.update", "agents.create"]  # deleted: made again
 
 
 def test_an_unprocessed_call_record_is_not_logged_as_free(vcfg, monkeypatch):
@@ -208,3 +214,79 @@ def test_an_unprocessed_call_record_is_not_logged_as_free(vcfg, monkeypatch):
     assert data["status"] == "processing"  # the blip was ridden out
     line = json.loads((sessions / "log.jsonl").read_text().splitlines()[-1])
     assert line["final"] is False and line["cost_usd"] is None
+
+
+# --- stepping back and coming back (Ian's notes on the first voice conversation, 2026-11-12) ---
+
+def test_the_page_gets_its_voice_settings_and_the_wake_listener(app, vcfg):
+    c, _, _, _ = app
+    page = c.get("/").text
+    assert "__VOICE_SETTINGS__" not in page
+    settings = json.loads(re.search(r"const VOICE = (\{.*?\});", page).group(1))
+    assert settings["rest_after_silence_secs"] == vcfg["voice"]["rest_after_silence_secs"] > 0
+    assert settings["wake"]["need_ms"] > 0 and settings["rest_max_minutes"] > 0
+    js = c.get("/wake.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+    assert 'registerProcessor("wake"' in js.text
+
+
+def test_the_guide_steps_back_and_comes_back_into_the_same_conversation(app, vcfg):
+    c, _, saved, runs = app
+    v = c.post("/api/voice/start").json()
+    sid = v["session"]
+    assert v["dynamic_variables"]["earlier"] == guide.NO_EARLIER
+    c.post("/api/voice/line", json={"session": sid, "who": "", "conversation_id": "conv_1"})
+    c.post("/api/voice/line", json={"session": sid, "who": "guide", "text": "Hey, good to see you."})
+    c.post("/api/voice/line", json={"session": sid, "who": "listener", "text": "Let me know when it's ready."})
+    c.post("/api/voice/line", json={"session": sid, "who": "guide", "text": "Will do."})
+    out = c.post("/api/voice/tool", json={"session": sid, "name": "step_back", "args": {}}).json()
+    assert out["quiet"] is True
+    c.post("/api/voice/line", json={"session": sid, "who": "page", "text": "[The guide stepped back: it was asked to.]"})
+
+    # The listener speaks: the same conversation on a new connection, told what came before.
+    back = c.post("/api/voice/resume", json={"session": sid, "reason": "spoke"}).json()
+    assert back["session"] == sid and back["signed_url"] == "wss://example/signed"
+    assert back["opened"] == ""  # a sound may not be the listener: the guide listens, it does not speak
+    earlier = back["dynamic_variables"]["earlier"]
+    assert "you: Hey, good to see you." in earlier and "listener: Let me know when it's ready." in earlier
+    assert "(you stepped back)" in earlier and earlier.endswith("page: [The guide stepped back: it was asked to.]")
+    c.post("/api/voice/line", json={"session": sid, "who": "", "conversation_id": "conv_2"})
+    c.post("/api/voice/line", json={"session": sid, "who": "", "conversation_id": "conv_2"})  # sent twice: kept once
+
+    tap = c.post("/api/voice/resume", json={"session": sid, "reason": "tap"}).json()
+    assert tap["opened"].startswith("[The listener tapped")
+    assert "listener tapped" not in tap["dynamic_variables"]["earlier"]  # the note is its first turn, not history
+    assert c.post("/api/voice/resume", json={"session": sid, "reason": "typed"}).json()["opened"] == ""
+
+    # The chapter is ready while the guide rests: it comes back to say so, with the title.
+    status = runs / "lesson" / "status.json"
+    status.parent.mkdir()
+    status.write_text(json.dumps({"run": "lesson", "state": "ready", "title": "The Night Office"}))
+    ready = c.post("/api/voice/resume", json={"session": sid, "reason": "ready"}).json()
+    assert 'The chapter is ready: "The Night Office"' in ready["opened"] and "unless they speak" in ready["opened"]
+    assert "The Night Office" in ready["dynamic_variables"]["chapter_now"]
+
+    transcript = guide.listener_dir(vcfg) / "sessions" / f"{sid}.jsonl"
+    whos = [json.loads(x)["who"] for x in transcript.read_text().splitlines()]
+    assert whos.count("page") == 4  # opened, stepped back, and why it came back (a tap, the chapter)
+
+    assert c.post("/api/voice/resume", json={"session": "someone-else", "reason": "spoke"}).status_code == 409
+    assert c.post("/api/chat/end", json={"session": sid}).json()["ended"] is True
+    assert sorted(saved, key=len) == [(sid, "conv_1"), (sid, "conv_2", 2)]  # each connection's record
+    assert c.post("/api/voice/resume", json={"session": sid, "reason": "spoke"}).status_code == 409  # it is over
+
+
+def test_later_connections_are_saved_beside_the_first(vcfg):
+    sessions = voice.listener_dir(vcfg) / "sessions"
+    sessions.mkdir(parents=True)
+    rec = NS(status="done", model_dump=lambda mode=None: {"status": "done", "metadata": {"cost_fiat": 0.1}})
+    el = NS(conversational_ai=NS(conversations=NS(get=lambda cid: rec)))
+    voice.save_conversation(vcfg, "s1", "conv_1", client=el)
+    voice.save_conversation(vcfg, "s1", "conv_2", client=el, n=2)
+    assert (sessions / "s1.voice.json").exists() and (sessions / "s1.voice.2.json").exists()
+
+
+def test_voice_compare_does_not_wait_for_words_after_step_back():
+    import inspect
+    src = inspect.getsource(voice._voice_replies)
+    assert 'v != "step_back"' in src  # the guide says nothing after it, by design: waiting would time out
