@@ -15,9 +15,12 @@ exposed to the network. One listener, one run at a time.
     POST /api/chat                  {"message": "..."} -> the guide's reply (it may start a chapter)
     POST /api/chat/end              the page is closing: run the memory pass for the conversation
     POST /api/voice/start           a voice conversation: a signed URL for the guide agent + dynamic variables
+    POST /api/voice/resume          {"session", "reason"}: the guide stepped back and is coming back (the
+                                    listener spoke or tapped, or the chapter is ready): a new connection
     POST /api/voice/tool            {"session", "name", "args"}: a client tool the agent called, run here
     POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
+    GET  /wake.js                   the page's local listener (page/wake.js), which brings the guide back
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
 the server stays responsive, and stopping or restarting the server does not stop
@@ -45,6 +48,9 @@ from stages import seed as seed_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
 
 PAGE = ROOT / "page" / "index.html"
+WAKE_JS = ROOT / "page" / "wake.js"
+PAGE_VOICE_KEYS = ("rest_after_silence_secs", "rest_after_ready_secs", "rest_after_no_words_secs",
+                   "rest_max_minutes", "wake")
 HOST, PORT = "127.0.0.1", 8765
 
 
@@ -162,9 +168,14 @@ class VoiceTool(BaseModel):
     args: dict = {}
 
 
+class VoiceResume(BaseModel):
+    session: str
+    reason: str = "tap"  # "spoke", "tap", "typed" or "ready"
+
+
 class VoiceLine(BaseModel):
     session: str
-    who: str            # "listener" or "guide"
+    who: str            # "listener", "guide", or "page" (the guide stepped back, and why)
     text: str = ""
     conversation_id: str | None = None  # sent once, when the voice connection opens
 
@@ -177,8 +188,15 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     @app.get("/", response_class=HTMLResponse)
     def page() -> str:
-        # The ElevenLabs browser client, pinned in config.yaml (voice.client_js).
-        return PAGE.read_text(encoding="utf-8").replace("__VOICE_CLIENT_JS__", cfg["voice"]["client_js"])
+        # The ElevenLabs browser client, pinned in config.yaml (voice.client_js), and the page's share
+        # of the voice settings (when the guide steps back, and what brings it back).
+        settings = json.dumps({k: cfg["voice"][k] for k in PAGE_VOICE_KEYS})
+        return (PAGE.read_text(encoding="utf-8").replace("__VOICE_CLIENT_JS__", cfg["voice"]["client_js"])
+                .replace("__VOICE_SETTINGS__", settings))
+
+    @app.get("/wake.js")
+    def wake_js() -> FileResponse:
+        return FileResponse(WAKE_JS, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/chapters")
     def start(req: ChapterRequest) -> dict:
@@ -250,6 +268,35 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return {"session": session.id, "signed_url": url, "dynamic_variables": voice.dynamic_variables(session),
                 "opened": opened, "ready_note": load_prompt("guide_ready").strip()}
 
+    @app.post("/api/voice/resume")
+    def voice_resume(req: VoiceResume) -> dict:
+        """The same conversation on a new connection: the guide stepped back (its step_back tool, or the
+        page after a silence) and the listener spoke or tapped, or the chapter became ready. The agent
+        remembers nothing between connections, so it gets the conversation so far with its prompt, and
+        the page's note about why it is back as its first turn (a tap, the chapter: it speaks first)."""
+        with chat["lock"]:
+            session = current(req.session)
+            if req.reason == "ready":
+                title = (pipe.status() or {}).get("title") or "your chapter"
+                note = load_prompt("guide_ready").strip().replace("{title}", title)
+            elif req.reason == "typed":  # what they typed is the first turn
+                note = ""
+            elif req.reason == "spoke":
+                # A sound woke it, which may not have been the listener (a door, a television): it
+                # listens, and the page plays two soft notes. Speaking on every sound was the
+                # lingering voice again. What they say next is its first turn.
+                note = ""
+            else:
+                note = load_prompt("guide_back").strip()
+            try:
+                url = voice.signed_url(cfg)
+            except Exception as e:
+                raise HTTPException(503, f"Voice isn't available: {e}") from None
+            variables = voice.dynamic_variables(session, resumed=True)  # before the note: it is not "earlier"
+            if note:
+                session.record("page", text=note, mode="voice")
+        return {"session": session.id, "signed_url": url, "dynamic_variables": variables, "opened": note}
+
     @app.post("/api/voice/tool")
     def voice_tool(req: VoiceTool) -> dict:
         """A client tool the agent called: run it in the conversation's session (as the typed chat does)."""
@@ -267,10 +314,10 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         """What was said, for the transcript the memory pass reads; or the connection's id."""
         with chat["lock"]:
             session = current(req.session)
-            if req.conversation_id:
-                session.voice_conversation = req.conversation_id
+            if req.conversation_id and req.conversation_id not in session.voice_conversations:
+                session.voice_conversations.append(req.conversation_id)
                 session.record("session", conversation_id=req.conversation_id)
-            if req.text.strip() and req.who in ("listener", "guide"):
+            if req.text.strip() and req.who in ("listener", "guide", "page"):
                 session.record(req.who, text=req.text.strip())
         return {"ok": True}
 
@@ -288,9 +335,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             session, chat["session"] = chat["session"], None
         if session is not None:
             remember(session.transcript)
-            cid = getattr(session, "voice_conversation", None)
-            if cid:  # ElevenLabs' record of the call (latency per turn, cost), once it has processed it
-                threading.Thread(target=lambda: _save_voice(cfg, session.id, cid), daemon=True).start()
+            # ElevenLabs' record of each connection (latency per turn, cost), once it has processed it.
+            for n, cid in enumerate(session.voice_conversations, 1):
+                threading.Thread(target=_save_voice, args=(cfg, session.id, cid, n), daemon=True).start()
         return {"ended": session is not None}
 
     @app.post("/api/chat")
@@ -346,9 +393,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     return app
 
 
-def _save_voice(cfg: dict, session_id: str, conversation_id: str) -> None:
+def _save_voice(cfg: dict, session_id: str, conversation_id: str, n: int = 1) -> None:
     try:
-        voice.save_conversation(cfg, session_id, conversation_id)
+        voice.save_conversation(cfg, session_id, conversation_id, n=n)
     except Exception as e:  # never take the server down over a call record
         print(f"  saving the voice record failed: {e}")
 

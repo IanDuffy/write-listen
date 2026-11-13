@@ -50,6 +50,7 @@ The conversation took place on {{today}}.
 - Its name, how it chose the name (in a line), the date they met, and what it has said about itself, briefly.
 - Keep everything consistent with what is already there; add only what the guide newly said about itself.
 - If the guide has not yet chosen a name and this is not a first meeting, keep the file as it is.
+- If this was a first meeting and the guide never said a name (it no longer introduces itself up front, so a short conversation can end before it does), return an empty string: the next conversation is then a first meeting again, and the guide is offered names to choose from.
 - If the guide said nothing about itself and the file exists, return it unchanged.
 
 **forget_chapters**: if the listener asked the guide to forget a chapter, or a subject that a chapter in the history is about, the run names of those chapters (the name in brackets after each title, before the date). Otherwise an empty list.
