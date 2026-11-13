@@ -150,7 +150,9 @@ class Hooks:
         seconds = timings.estimate(self.cfg)
         if seconds is None:
             return NO_FIGURE
-        return f"{max(1, math.ceil(seconds / 60))} (until it starts playing, going by earlier chapters)"
+        # guide.md says "about {{minutes}} minutes, or what start_chapter says": the plain number
+        # reads naturally there, and start_chapter's result says it is the time until it can play.
+        return str(max(1, math.ceil(seconds / 60)))
 
     # --- start_chapter --------------------------------------------------------------------
 

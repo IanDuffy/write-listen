@@ -427,8 +427,8 @@ def test_a_fast_conversation_is_never_handed_the_overnight_time(chat, cfg):
     assert f"about {overnight_minutes(cfg)} minutes" not in s.system and "give no time unless" in s.system
     base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 185.0}, "runs": []})
     s = chat.session()
-    assert s.values["minutes"] == "4 (until it starts playing, going by earlier chapters)"
-    assert "about 4 (until it starts playing" in s.system
+    assert s.values["minutes"] == "4"  # the time to first audio, not the overnight 27
+    assert "about 4 minutes, or what start_chapter says" in s.system
     # without the hooks (cli.py chat, the text box's chapters) the value is what it was
     plain = guide.Session(cfg, lambda *a: "run", lambda: {"state": "idle"}, chat.runs, rng=random.Random(1))
     assert plain.values["minutes"] == overnight_minutes(cfg)
