@@ -225,6 +225,40 @@ results, costs and Ian's test script: `ask/REPORT.md`. Open a finished chapter w
   listener waits), and its done-key is `11_episode/step.json`, written whether or not it built,
   so a finished run stays finished. Steps that cost nothing run even past the spending cap.
 
+## Fast Start (branch `feature/fast-start`, 2026-11-13)
+
+Spec: `docs/fast-start.md` (Ian). A second mode, `fast`: the opening plays about four minutes after the
+topic is set, and the rest is researched, written, edited and narrated section by section while the
+listener listens. `overnight` is unchanged. Report, live results, the fast-against-overnight comparison
+and Ian's live-try script: `faststart/REPORT.md`. Code in `faststart/`, tests in `tests/faststart/`.
+
+- `python cli.py new --seed "..." --unattended --mode fast` (cap `fast.max_run_usd`); a run with
+  `fast.json` continues fast. The guide's `start_chapter` starts fast runs; the page's text box stays
+  overnight. `python -m faststart e2e|overnight|report|notes-use|compare|spend|record` for live checks
+  (`e2e` plays a simulated listener in real time: run it detached; `--narrate first|sim` saves
+  ElevenLabs characters). Paid build steps go to `faststart/build_costs.jsonl`.
+- The run: scout (`01_scout.md`, entries filed as row L00 = D01...), outline and one fresh-context edit
+  with a code validator (`05_outline.json` is the truth; also `ledger.json`, `03_angle.md`,
+  `05_brief.md`), the opening from the scout alone, research rows in parallel (30 searches for the
+  outline's rows), then draft k with every earlier section's full text and lock k beside draft k+1
+  (`06_segments/`), narration piece by piece with ElevenLabs timings (`10_audio/secNN/`), archive into
+  the overnight layout so the episode page and ask-by-voice read it unchanged.
+- `faststart/scheduler.py` is pure (no I/O, no clock); `faststart/run.py` drives it from one thread
+  with lanes. Generation never waits for the listener; the only thing the listener changes is the
+  solo lock after `fast.max_hold_seconds` of waiting. `status.json` stays `making` until archived (the
+  server's invariants key on it); `first_audio`, `sections`, `waiting_for`, `check_in` are added.
+- `04_dossier.md` is append-only: a D number never changes (unlike `research.build_dossier`).
+- Listener notes: `listener_notes.md` (`faststart/notes.py`), not `00_source/notes.md`, for a fast run;
+  read before every draft and lock.
+- The page (`page/fast.js`, `faststart/routes.py`): markers, pieces through the one `<audio>`, position
+  reports to `fast/player.json`, waits that pause or bring in the check-in, a third voice agent kind
+  (`checkin`, `prompts/guide_checkin*.md`, state `listener/voice_checkin.json`; created on the account
+  at the first check-in). Not yet tried with a microphone.
+- `faststart/timings.json` (gitignored) holds the medians of this machine's runs: the only source of a
+  time the guide may give.
+- Prompts `prompts/fast_*.md` were tuned once after a blind comparison (commit `e4b37ac`); the
+  diagnosis and what remains are in the report.
+
 ## Local setup
 
 ```bash

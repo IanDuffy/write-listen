@@ -680,7 +680,8 @@ def test_a_fast_chapter_finished_before_this_visit_is_an_ordinary_chapter(world)
     assert b.js("Fast.active()") is False and b.js("Fast.onTap()") is False
     assert b.js("getComputedStyle(document.getElementById('sections')).display") == "none"
     b.page.click("#last")
-    b.wait("!document.getElementById('audio').paused")
+    # play() clears `paused` at once and fires the play event a task later: wait for the event
+    b.wait("window.__a.plays.length === 1 && !document.getElementById('audio').paused")
     assert b.plays() == ["/api/chapters/fast-run/audio"]
     b.page.wait_for_timeout(500)
     assert not (r.root / "fast" / "player.json").exists()  # no position reports
