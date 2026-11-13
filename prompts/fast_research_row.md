@@ -64,7 +64,7 @@ The lesson's other ideas, each researched by another agent. Stay in your lane. I
 {{other_rows}}
 </other_rows>
 
-Your budget is {{searches}} searches and {{fetches}} page fetches; the tools refuse any more. Plan before you search, and spend the fetches on the pages that settle the question. A fetched page is what lets you quote and cite exactly; a search result list is only a lead.
+Your budget is {{searches}} searches and {{fetches}} page fetches; the tools refuse any more. Plan before you search, and spend the fetches on the pages that settle the question. science.org also refuses the fetch tool: for a paper there, search for an open copy (PubMed Central, a university repository) and fetch that. A fetched page is what lets you quote and cite exactly; a search result list is only a lead.
 
 Bring back:
 
