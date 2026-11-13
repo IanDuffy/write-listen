@@ -150,6 +150,7 @@ status_minutes:
   factcheck: 2
   revise: 2
   narrate: 2
+  episode: 0
   report: 0
 
 # The guide's conversation (Phase 1, milestone 3): prompts/guide.md, prompts/guide_tools.json.
@@ -236,6 +237,7 @@ narration:
     speed: 1.0
   seed: 1234                  # same seed for every chunk, for a steadier voice
   max_chars_per_request: 4500 # chunk target; kept well under the model limit
+  timestamps: true            # keep ElevenLabs' character timings with each chunk (episode page, asking mid-chapter)
   chunk_pause_ms: 450         # between chunks inside a segment
   segment_pause_ms: 1600      # at segment breaks
   beat_pause_ms: 1100         # a held beat, where the script says [pause] (eleven_v4 has no break tag,

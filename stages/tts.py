@@ -63,28 +63,25 @@ def el_call(fn, *args, **kwargs):
         raise ElevenLabsError(f"Could not reach ElevenLabs: {e}") from None
 
 
-ALIGNMENT_KEYS = ("characters", "character_start_times_seconds", "character_end_times_seconds")
-
-
 @dataclass
 class Synth:
     audio: bytes      # raw PCM s16le mono when the format is pcm_*, else encoded audio
     request_id: str | None
-    # With timestamps=True: when each character of the text sent is spoken, in seconds from the start
-    # of this audio ({characters, character_start_times_seconds, character_end_times_seconds}, the
-    # shape episode.timing.ElevenLabsTimings reads from a chunk's .json). None otherwise.
+    # ElevenLabs' character timings for the text sent ({characters, character_start_times_seconds,
+    # character_end_times_seconds}), when narration.timestamps asks for them: the episode page and
+    # asking mid-chapter time every word from these (episode/timing.py), with no recognizer pass.
     alignment: dict | None = None
 
 
 def synthesize(text: str, *, voice_id: str, ncfg: dict,
                previous_request_ids: list[str] | None = None,
                previous_text: str | None = None, next_text: str | None = None,
-               timestamps: bool = False) -> Synth:
+               timestamps: bool | None = None) -> Synth:
     """Text -> audio for one chunk. The only function that knows about ElevenLabs.
 
-    timestamps=True asks the with-timestamps endpoint for the same audio plus character timings
-    (episode/INTEGRATION.md section 3): same request fields, same characters billed. The default
-    is the plain call, unchanged."""
+    Character timings come back with the audio when narration.timestamps is on (the default), or
+    when the caller asks with timestamps=True (Fast Start's pieces always do); timestamps=False
+    forces the plain call. Same request fields and characters billed either way."""
     from elevenlabs import VoiceSettings
 
     client = elevenlabs_client()
@@ -103,22 +100,24 @@ def synthesize(text: str, *, voice_id: str, ncfg: dict,
         kwargs["previous_text"] = previous_text
     if next_text:
         kwargs["next_text"] = next_text
+    def request_id(headers) -> str | None:
+        return headers.get("request-id") or headers.get("x-request-id")
+
     def convert():
+        if (ncfg.get("timestamps", True) if timestamps is None else timestamps):
+            # Same body, same billing; the audio comes back whole as base64 with the timings. The raw
+            # response is not a context manager here (unlike the streaming convert below).
+            resp = client.text_to_speech.with_raw_response.convert_with_timestamps(voice_id, **kwargs)
+            a = resp.data.alignment
+            return (base64.b64decode(resp.data.audio_base_64 or ""), request_id(resp.headers),
+                    a.model_dump() if a is not None and hasattr(a, "model_dump") else a)
         with client.text_to_speech.with_raw_response.convert(voice_id, **kwargs) as resp:
-            return b"".join(resp.data), resp.headers.get("request-id") or resp.headers.get("x-request-id"), None
+            return b"".join(resp.data), request_id(resp.headers), None
 
-    def convert_timed():
-        # One JSON response (not a stream, not a context manager): the audio in base64 and the alignment.
-        resp = client.text_to_speech.with_raw_response.convert_with_timestamps(voice_id, **kwargs)
-        a = resp.data.alignment
-        alignment = {key: list(getattr(a, key)) for key in ALIGNMENT_KEYS} if a else None
-        return (base64.b64decode(resp.data.audio_base_64),
-                resp.headers.get("request-id") or resp.headers.get("x-request-id"), alignment)
-
-    audio, request_id, alignment = el_call(convert_timed if timestamps else convert)
+    audio, rid, alignment = el_call(convert)
     if not audio:
         raise StageError("ElevenLabs returned no audio.")
-    return Synth(audio=audio, request_id=request_id, alignment=alignment)
+    return Synth(audio=audio, request_id=rid, alignment=alignment)
 
 
 def model_char_limit(model_id: str) -> int | None:
@@ -349,7 +348,10 @@ def narrate_segments(r: Run, cfg: dict, segments: list[tuple[int, str]], out_mp3
                              next_text=nxt[:500] if nxt else None)
             write_wav(wav_path, syn.audio, ncfg["output_format"])
             rid = syn.request_id
-            meta_path.write_text(json.dumps({"request_id": rid, "segment": n, "text": text}), encoding="utf-8")
+            meta = {"request_id": rid, "segment": n, "text": text}
+            if syn.alignment:  # episode/timing.py reads it from here
+                meta["alignment"] = syn.alignment
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
             cost = len(text) * ncfg["price_per_1000_chars"] / 1000
             r.log({"stage": stage, "label": f"{stage} chunk {i + 1}/{len(plan)}", "provider": "elevenlabs",
                    "model": ncfg["model_id"], "voice_id": voice_id, "characters": len(text),

@@ -26,8 +26,7 @@ Each aside is logged to `<run>/12_asks/asides.jsonl`. Topics saved for a future 
 point of interruption, collapsed to its first line.
 
 To try it: run the server (`.venv/bin/python server.py`), then open
-**`http://127.0.0.1:8765/?chapter=beauty-scarry`**. A chapter that finishes during onboarding offers
-asking too, if it has a timed transcript (see "Not done").
+**`http://127.0.0.1:8765/?chapter=beauty-scarry`**. A chapter made from onboarding can be asked about too, as soon as it is ready.
 
 | Piece | Where |
 |---|---|
@@ -210,11 +209,11 @@ the interrupted sentence, collapsed (33 lines).
 
 ## Not done, and follow-ups
 
-- **New chapters can't be asked about yet.** Asking needs `11_episode/timing.json`, which only
-  `python -m episode build` makes, and only chapter one has it. Two steps from the episode page's
-  integration note would fix that: 1 (the `episode` stage in `cli.py` and `new.py`) and 3 (narration
-  keeping ElevenLabs' timestamps, so no Whisper pass is needed). Not done here; the spec scoped
-  this build to asking.
+- **New chapters can be asked about (done after this report, same branch).** Narration now keeps
+  ElevenLabs' character timings with each chunk, and the unattended run's new `episode` step builds
+  `timing.json` and a read-along `episode.json` from them, in seconds, at no cost. Checked live on a short
+  script: every word matched. Chapters narrated before this change still need `python cli.py episode
+  <run>` (Whisper). Details in CLAUDE.md, "The timed transcript for new chapters".
 - **Merging with the other open branches.** `voice/quiet-guide` (uncommitted, in the main folder) and
   `claude/voice-first-page` both edit `page/index.html`, and quiet-guide also edits `stages/voice.py`,
   `config.yaml` and `prompts/guide.md`. Expect conflicts in those files; each side's change is small. The

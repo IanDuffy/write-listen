@@ -374,13 +374,20 @@ class FakeAnthropic:
 
 
 def fake_synthesize(text, *, voice_id, ncfg, **kw):
-    """PCM s16le mono: a quiet tone, 20 ms per character (capped), so durations are real."""
+    """PCM s16le mono: a quiet tone, 20 ms per character (capped), so durations are real; with
+    character timings spread evenly over it, as ElevenLabs returns them."""
     from stages.tts import Synth
 
     rate = int(ncfg["output_format"].split("_")[1])
     n = int(rate * min(len(text) * 0.02, 3.0))
     frames = b"".join(struct.pack("<h", int(800 * math.sin(2 * math.pi * 220 * i / rate))) for i in range(n))
-    return Synth(audio=frames, request_id=f"req_{len(text)}")
+    # ElevenLabs-style character timings for the text sent, spread evenly over the audio (narration.timestamps)
+    step = (n / rate) / max(1, len(text))
+    alignment = {"characters": list(text),
+                 "character_start_times_seconds": [round(i * step, 4) for i in range(len(text))],
+                 "character_end_times_seconds": [round((i + 1) * step, 4) for i in range(len(text))]}
+    return Synth(audio=frames, request_id=f"req_{len(text)}",
+                 alignment=alignment if ncfg.get("timestamps", True) else None)
 
 
 # --- a minimal PDF writer, for testing ingest ---------------------------------

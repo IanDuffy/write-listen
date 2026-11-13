@@ -4,7 +4,7 @@
 
 Creates a run, writes 00_source/seed.md, and with --unattended runs every stage
 in order: scout, angles, choose, ledger, research, ledger-update, brief, draft,
-assemble, coverage, edit, factcheck, revise, narrate, report. A stage whose output already
+assemble, coverage, edit, factcheck, revise, narrate, episode, report. A stage whose output already
 exists is skipped, so running the same command again continues from where a
 run stopped.
 
@@ -31,6 +31,49 @@ from . import (angles, assemble, brief, choose, coverage, draft, edit, estimate,
                narrate, report, research, revise, scout)
 from .common import Run, StageError, word_count
 
+
+def episode_step(r: Run, cfg: dict) -> None:
+    """11_episode/timing.json from the timings narration kept, so the chapter can be read along and
+    asked about (docs/ask-voice.md), and episode.json for the episode page, without reference cards
+    (those are Claude calls: `python cli.py episode <run>` adds them). Seconds, no cost.
+
+    Never stops the chapter, which is finished either way: without timings it is delivered as before.
+    Either way the step writes 11_episode/step.json (its done-key), so a finished run stays finished
+    and running `new` again does not redo it; decisions.md says what happened.
+
+    ElevenLabs' timings only: the Whisper fallback (`cli.py episode`) can take minutes, and download a
+    model, while a listener waits. Every newly narrated chunk carries timings (narration.timestamps)."""
+    from episode import bundle, timing
+    hint = (f"`python cli.py episode {r.name}` builds it with Whisper (needs requirements-episode.txt) and adds "
+            "the reference cards (Claude, up to $3).")
+    built, note = [], ""
+    try:
+        try:
+            rec = timing.pick_timings(r.root, "elevenlabs", lambda: None)
+        except StageError:
+            note = ("No timed transcript: the narration has no ElevenLabs timings for every chunk (narrated before "
+                    "they were kept, or reusing chunks from then). The chapter plays, but can't be read along or "
+                    f"asked about. {hint}")
+        else:
+            t = timing.build(r.root, rec, cfg["narration"].get("pronunciations") or {})
+            timing.write(r.root, t)
+            built.append("timing")
+            bundle.write(r.root)
+            built.append("episode")
+            s = t["stats"]
+            note = (f"Timed transcript from ElevenLabs' timings: {s['words']} words, {s['estimated']} estimated. "
+                    "The chapter can be read along and asked about.")
+    except Exception as e:  # noqa: BLE001 -- the chapter is finished either way
+        what = f"{type(e).__name__}: {e}"
+        note = (f"The timed transcript was built, so the chapter can be asked about, but the read-along page failed "
+                f"({what}). {hint}" if built else
+                f"No timed transcript ({what}). The chapter plays, but can't be read along or asked about. {hint}")
+    r.decide("episode", note)
+    p = r.path("episode_step")
+    p.parent.mkdir(exist_ok=True)
+    p.write_text(json.dumps({"built": built, "note": note}, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 # (step, the output that shows it is done, the stage, what the page says while it runs)
 STEPS = [
     ("scout", "map", scout.run, "Looking into it"),
@@ -47,8 +90,10 @@ STEPS = [
     ("factcheck", "factcheck", factcheck.run, "Checking the facts"),
     ("revise", "script_final", revise.run, "Editing"),
     ("narrate", "chapter_mp3", narrate.run, "Recording"),
+    ("episode", "episode_step", episode_step, "Finishing"),
     ("report", "report", report.run, "Finishing"),
 ]
+
 
 
 # --- status.json: what the page shows ---------------------------------------------------
@@ -135,7 +180,7 @@ def run(r: Run, cfg: dict) -> None:
     ahead, spent = remaining_forecast(r, cfg), r.spent()
     print(f"  unattended run {r.name}: {', '.join(todo)}\n"
           f"  forecast for the rest, upper end: ${ahead:.2f}; spent so far ${spent:.2f}; cap ${r.max_usd:.2f}")
-    if spent + ahead > r.max_usd:
+    if ahead > 0 and spent + ahead > r.max_usd:  # steps that cost nothing (episode, report) may always run
         msg = (f"The rest of this run could cost up to ${ahead:.2f} (upper end; ${spent:.2f} spent), past its "
                f"${r.max_usd:.2f} cap. Not started. Raise --max-usd or unattended.max_run_usd to go ahead.")
         r.decide("stopped", msg)

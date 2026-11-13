@@ -83,6 +83,16 @@ def test_seed_to_chapter_unattended(env):
     assert st["audio"] == "10_audio/chapter.mp3" and st["title"] == "Beauty" and st["minutes_left"] == 0
     assert [h["stage"] for h in st["history"]] == [s[0] for s in new.STEPS]
 
+    # The timed transcript, from the timings narration kept: the chapter can be read along and asked about.
+    timing = json.loads(r.path("timing").read_text())
+    assert timing["aligned_by"] == "elevenlabs" and timing["stats"]["estimated"] == 0
+    assert json.loads(r.path("episode").read_text())["references"] == []
+    assert "can be read along and asked about" in decisions
+    chunk = json.loads(next((r.path("audio_dir") / "chunks").glob("*.json")).read_text())
+    assert chunk["alignment"]["characters"] == list(chunk["text"])
+    from ask.routes import with_extras
+    assert with_extras(st, runs)["asks"] is True
+
     # listener/history.md: what the guide has made for this listener.
     assert "## Beauty (" in (runs.parent / "listener" / "history.md").read_text()
 

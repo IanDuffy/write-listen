@@ -28,6 +28,8 @@ Stages, in order. The pipeline runs hands-off: model stages (choose, the 04b jud
                                  (optional) read 09_script_final.md
     narrate <run>                -> 10_audio/chapter.mp3
     narrate <run> --pilot        -> 10_audio/pilot.mp3 (segments 1-2 by default)
+    episode <run>                timed transcript, references, episode.json -> 11_episode/ (python -m episode
+                                 build): the episode page, and what asking mid-chapter needs
     baseline <run>               -> baseline/script.md
     narrate <run> --baseline     -> baseline/chapter.mp3
     compare <run>                -> compare/A.mp3, B.mp3, key.txt
@@ -77,7 +79,7 @@ STAGES_IN_ORDER = [
     ("ledger_update", "ledger-update"), ("brief", "brief"), (None, "draft"),
     ("script_draft", "assemble (after draft)"), ("coverage", "coverage"), ("edit_notes", "edit"),
     ("factcheck", "factcheck"), ("script_final", "revise"),
-    (None, "narrate"), ("chapter_mp3", "narrate"),
+    (None, "narrate"), ("chapter_mp3", "narrate"), ("timing", "episode"),
     ("baseline_script", "baseline"), ("baseline_mp3", "narrate --baseline"),
     ("compare_dir", "compare"), ("report", "report"),
 ]
@@ -308,6 +310,9 @@ def main(argv: list[str] | None = None) -> int:
         elif st == "narrate":
             from stages import narrate
             narrate.run(r, cfg, pilot=args.pilot, baseline=args.baseline, segments=args.segments)
+        elif st == "episode":
+            from episode.__main__ import main as episode_main
+            return episode_main(["build", str(r.root)])
         elif st == "report":
             from stages import report
             try:

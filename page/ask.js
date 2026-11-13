@@ -148,7 +148,7 @@
     const my = ++token;
     a = { phase: "connecting", tap, t, o, fast: fast(), id: null, conv: null, mode: null, slow: false, lines: [],
           guideTurns: 0, listenerSpoke: false, lastGuide: "", heard: tap, sentFor: -1, resuming: false,
-          ready: null, firstSound: null, blobAt: null, pausedAt: null, longSent: false };
+          ready: null, firstSound: null, blobAt: null, pausedAt: null, longSent: false, chain: Promise.resolve() };
     startDrawing();
     a.blobAt = performance.now();
     render();
@@ -197,9 +197,17 @@
     render();
   }
 
+  // An aside's lines and tool calls reach the server one after another, in the order they happened:
+  // posted all at once they can arrive out of order, and the log would read wrong.
+  function inOrder(cur, url, body) {
+    const p = cur.chain.then(() => post(url, body));
+    cur.chain = p.catch(() => {});
+    return p;
+  }
+
   function line_(who, text, extra, my) {
     if (!a || token !== my || !a.id) return;
-    post("/api/ask/line", { aside: a.id, who, text, ...extra }).catch(() => {});
+    inOrder(a, "/api/ask/line", { aside: a.id, who, text, ...extra }).catch(() => {});
   }
 
   function heard(who, text, my) {
@@ -243,7 +251,7 @@
   async function tool(name, params, my) {
     if (!a || token !== my) return JSON.stringify({ error: "This aside has ended." });
     let out;
-    try { out = await post("/api/ask/tool", { aside: a.id, name, args: params || {} }); }
+    try { out = await inOrder(a, "/api/ask/tool", { aside: a.id, name, args: params || {} }); }
     catch (err) { out = { error: err.message }; }
     if (name === "resume_chapter" && a && token === my && !a.resuming && !(out && out.resuming === false)) {  // false: a check-in whose next part is not ready
       // The tool's reply asks for the lead-in (ask/routes.py RESUMED): go back once it has been said,
@@ -274,6 +282,7 @@
     let restart = { t: cur.t };
     if (cur.id) {
       try {
+        await cur.chain;  // every line and tool call first: the log is written when the aside ends
         const res = await post("/api/ask/end", {
           aside: cur.id, how,
           tap_to_ready_ms: cur.ready && Math.round(cur.ready - cur.tap),

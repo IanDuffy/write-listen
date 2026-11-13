@@ -73,17 +73,29 @@ def stub(monkeypatch):
     return client
 
 
-def test_synthesize_default_call_is_unchanged(stub, cfg):
+def test_synthesize_with_timestamps_false_is_the_plain_call(stub, cfg):
+    # Since e322052 (feature/ask-voice) narration asks for timings by default (narration.timestamps);
+    # timestamps=False still forces the plain endpoint, with every field as before.
     ncfg = cfg["narration"]
     syn = tts.synthesize("Hello there.", voice_id="v1", ncfg=ncfg, previous_request_ids=["a", "b", "c", "d"],
-                         previous_text="ignored when ids are given", next_text="Next.")
-    assert stub.timed == [] and len(stub.plain) == 1  # the plain endpoint, as before
+                         previous_text="ignored when ids are given", next_text="Next.", timestamps=False)
+    assert stub.timed == [] and len(stub.plain) == 1  # the plain endpoint
     sent = stub.plain[0]
     assert sent["voice_id"] == "v1" and sent["text"] == "Hello there." and sent["model_id"] == ncfg["model_id"]
     assert sent["output_format"] == ncfg["output_format"] and sent["seed"] == ncfg["seed"]
     assert sent["previous_request_ids"] == ["b", "c", "d"] and "previous_text" not in sent and sent["next_text"] == "Next."
     assert syn.audio == stub.audio and syn.request_id == "req_plain" and syn.alignment is None
     assert tts.Synth(b"x", "r").alignment is None  # the new field has a default: old callers still construct it
+
+
+def test_synthesize_follows_narration_timestamps_unless_told(stub, cfg):
+    ncfg = dict(cfg["narration"], timestamps=False)
+    tts.synthesize("Hi.", voice_id="v1", ncfg=ncfg)
+    assert len(stub.plain) == 1 and stub.timed == []          # the config says no
+    tts.synthesize("Hi.", voice_id="v1", ncfg=ncfg, timestamps=True)
+    assert len(stub.timed) == 1                                # Fast Start's pieces ask regardless
+    tts.synthesize("Hi.", voice_id="v1", ncfg=dict(ncfg, timestamps=True))
+    assert len(stub.timed) == 2                                # the default since e322052
 
 
 def test_synthesize_with_timestamps_returns_the_alignment(stub, cfg):
@@ -93,7 +105,7 @@ def test_synthesize_with_timestamps_returns_the_alignment(stub, cfg):
     assert sent["text"] == "Hi there." and sent["previous_text"] == "Before." and "previous_request_ids" not in sent
     assert sent["model_id"] == cfg["narration"]["model_id"] and sent["output_format"] == cfg["narration"]["output_format"]
     assert syn.audio == stub.audio and syn.request_id == "req_timed"
-    assert set(syn.alignment) == set(tts.ALIGNMENT_KEYS) and syn.alignment["characters"] == list("Hi there.")
+    assert set(syn.alignment) == {"characters", "character_start_times_seconds", "character_end_times_seconds"} and syn.alignment["characters"] == list("Hi there.")
     json.dumps(syn.alignment)  # plain lists and floats: it goes straight into the piece's .json
     assert [w["w"] for w in timing.alignment_words(syn.alignment)] == ["Hi", "there."]  # the reader's shape
 
