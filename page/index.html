@@ -8,6 +8,8 @@
   The one page the listener touches (docs/phase1-onboarding.md, "Status indicator and minimal UI").
   One element in the middle and a line of text under it; a text box as a fallback for typing; a
   toggle for the transcript. No framework, system font, one accent color.
+  Voice first (Ian, 2026-11-12: a tester typed instead of talking): the text box stays hidden until
+  a tap finds that voice can't start here (no microphone, refused, or no connection to the agent).
   Milestones 2-4: idle, thinking (the guide is composing a reply), listening and speaking (voice:
   the circle follows the mic and the guide's voice), making the chapter, ready, problem. Tapping
   the circle starts a voice conversation with the guide (the ElevenLabs agent, milestone 4); tap
@@ -52,7 +54,8 @@
           cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
-  form { display: flex; gap: 8px; }
+  form { display: none; gap: 8px; }
+  body.typing form { display: flex; }  /* voice couldn't start: type instead */
   #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
          border-radius: 999px; padding: 10px 16px; }
   #say:focus { outline: none; border-color: var(--accent); }
@@ -108,6 +111,7 @@ let voiceConv = null, voiceMode = null; // the live voice conversation; "listeni
 let readyNote = "";                     // what to tell the voice guide when the chapter is ready
 let pendingReady = "";                  // told once the guide is listening (a contextual update wouldn't make it speak)
 let starting = false;                   // a tap is setting up a conversation: further taps wait
+let typing = false;                     // voice couldn't start, so the text box is shown
 const core = document.querySelector("#orb .core");
 
 function note(text, kind = "stage") {
@@ -136,7 +140,7 @@ function render() {
   const shown = past ? "idle" : s.state;
   document.body.className = shown + ($("audio").paused ? "" : " playing") + (s.retryable === false ? " final" : "")
     + (thinking ? " thinking" : "") + (talking ? " talking" : "") + (past ? " past" : "")
-    + (voiceConv ? " voice " + (voiceMode || "") : "");
+    + (voiceConv ? " voice " + (voiceMode || "") : "") + (typing ? " typing" : "");
   $("last").textContent = past ? `Play the last chapter: ${s.title || "untitled"}` : "";
   $("say").disabled = $("send").disabled = thinking;  // the conversation goes on while a chapter is made
   const busy = s.state === "making";
@@ -365,7 +369,11 @@ $("orb").addEventListener("click", async () => {
   if (talking || thinking || starting) return;  // one conversation at a time, even on a double tap
   starting = true;
   try {
-    if (!(await startVoice())) await converse(null);
+    if (!(await startVoice())) {
+      typing = true;  // from now on this visit types; the box shows with the guide's first reply
+      await converse(null);
+      $("say").focus();
+    }
   } finally {
     starting = false;
   }
