@@ -8,6 +8,10 @@
 // The page keeps the timers: the slow-connection line and giving up, and the silences the guide is
 // told about (prompts/guide_aside_notes.md). The mic is off during playback: the voice session,
 // which opens it, starts only on the tap, and ends before the chapter resumes.
+//
+// A fast run (docs/fast-start.md, page/fast.js) is asked about while it is still being made: its
+// pieces are separate files, so the chapter's time and the way back come from Fast. Its check-in is
+// a second kind of conversation on this code: begin(o) takes the parts that differ (see begin).
 (function () {
   "use strict";
   const S = __ASK_SETTINGS__;  // config.yaml ask (ask/routes.py page_settings)
@@ -76,17 +80,19 @@
   }
 
   // --- what the page shows --------------------------------------------------------------------
+  function fast() { return !!(window.Fast && Fast.active()); }  // a fast run, played while it is made
+  function askable() { return !!status.asks && (status.state === "ready" || fast()); }
+
   function classes() {
-    const s = status;
-    let c = s.state === "ready" && s.asks ? " asks" : "";
+    let c = askable() ? " asks" : "";
     if (a) c += " aside " + a.phase + (a.mode ? " " + a.mode : "") + (calm.matches ? " calm" : "");
     return c;
   }
 
   function line() {  // what the line under the circle says, or null to leave it to the page
     if (flash) return flash;
-    if (a) return a.slow && a.phase === "connecting" ? "Still waking up" : "Back to the chapter";
-    if (status.state === "ready" && status.asks && !audio.paused) return "Ask a question";
+    if (a) return a.slow && a.phase === "connecting" ? "Still waking up" : a.o.line ? a.o.line(a) : "Back to the chapter";
+    if (askable() && !audio.paused) return "Ask a question";
     return null;
   }
 
@@ -127,16 +133,20 @@
   }
 
   function onTap() {  // true: the tap was ours
-    if (a) { back("button"); return true; }
-    if (status.state === "ready" && status.asks && !audio.paused) { begin(); return true; }
+    if (a) { if (!(a.o.tap && a.o.tap(a))) back("button"); return true; }
+    if (askable() && !audio.paused) { begin(); return true; }
     return false;
   }
 
-  async function begin() {
+  // o: what a check-in does differently (page/fast.js). t: where the listener is; body: more for
+  // /api/ask/start; tools: its client tools; opened(a): send the opening; tick(a): its own timers;
+  // tap(a): true if the tap was used; line(a): the line under the circle; done(how, a): what happens
+  // when it ends, in place of going back to the chapter.
+  async function begin(o = {}) {
     const tap = performance.now();
-    const t = audio.currentTime;
+    const t = o.t !== undefined ? o.t : fast() ? Fast.time() : audio.currentTime;
     const my = ++token;
-    a = { phase: "connecting", tap, t, id: null, conv: null, mode: null, slow: false, lines: [],
+    a = { phase: "connecting", tap, t, o, fast: fast(), id: null, conv: null, mode: null, slow: false, lines: [],
           guideTurns: 0, listenerSpoke: false, lastGuide: "", heard: tap, sentFor: -1, resuming: false,
           ready: null, firstSound: null, blobAt: null, pausedAt: null, longSent: false };
     startDrawing();
@@ -147,7 +157,7 @@
     a.giveUp = setTimeout(() => { if (a && token === my && a.phase === "connecting") back("timeout"); }, S.give_up_secs * 1000);
     let start;
     try {
-      start = await post("/api/ask/start", { run: status.run, t });
+      start = await post("/api/ask/start", { run: status.run, t, ...o.body });
     } catch (err) {
       if (token === my) back("error", "Couldn't reach the guide, so back to the chapter.");
       return;
@@ -164,10 +174,7 @@
     try {
       conv = await EL.Conversation.startSession({
         signedUrl: start.signed_url, connectionType: "websocket", dynamicVariables: start.dynamic_variables,
-        clientTools: {
-          resume_chapter: (p) => tool("resume_chapter", p, my),
-          save_seed: (p) => tool("save_seed", p, my),
-        },
+        clientTools: Object.fromEntries((o.tools || ["resume_chapter", "save_seed"]).map((n) => [n, (p) => tool(n, p, my)])),
         onConnect: ({ conversationId }) => line_("", "", { conversation_id: conversationId }, my),
         onMessage: ({ role, message }) => heard(role === "agent" ? "guide" : "listener", message, my),
         onModeChange: ({ mode }) => modeChange(mode, my),
@@ -184,9 +191,9 @@
     a.ready = performance.now();
     a.heard = a.ready;
     clearTimeout(a.giveUp);
-    conv.sendUserMessage(a.notes.opened);  // the guide speaks first, in its own words
-    a.ticker = setInterval(() => tick(my), 200);
-    a.longTimer = setTimeout(() => { if (a && token === my && a.conv) { a.conv.sendUserMessage(a.notes.long); } }, S.long_aside_minutes * 60000);
+    if (o.opened) o.opened(a); else conv.sendUserMessage(a.notes.opened);  // the guide speaks first, in its own words
+    a.ticker = setInterval(() => (o.tick ? a && token === my && o.tick(a) : tick(my)), 200);
+    a.longTimer = setTimeout(() => { if (a && token === my && a.conv && a.notes.long) { a.conv.sendUserMessage(a.notes.long); } }, S.long_aside_minutes * 60000);
     render();
   }
 
@@ -238,7 +245,7 @@
     let out;
     try { out = await post("/api/ask/tool", { aside: a.id, name, args: params || {} }); }
     catch (err) { out = { error: err.message }; }
-    if (name === "resume_chapter" && a && token === my && !a.resuming) {
+    if (name === "resume_chapter" && a && token === my && !a.resuming && !(out && out.resuming === false)) {  // false: a check-in whose next part is not ready
       // The tool's reply asks for the lead-in (ask/routes.py RESUMED): go back once it has been said,
       // or after a moment if none comes; never later than 8 s.
       a.resuming = true;
@@ -281,11 +288,19 @@
                         firstSound: cur.firstSound, restart, t: cur.t });
     transcriptAside(cur);
     if (a === cur) a = null;
+    if (cur.o.done) return cur.o.done(how, cur);  // a check-in: the awaited part plays, or the wait goes on
     if (token !== my) return;
     if (message) showFlash(message);
+    if (cur.fast) { Fast.seek(restart.t); return render(); }  // a fast run's pieces: Fast finds the place
     audio.currentTime = restart.t;
     audio.play().catch(() => {});
     render();
+  }
+
+  function send(text) {  // a page note into the live session, kept in the aside's transcript
+    if (!a || !a.conv) return;
+    a.conv.sendUserMessage(text);
+    line_("page", text, {}, token);
   }
 
   function transcriptAside(cur) {  // the aside in the page's transcript, collapsed to its first line
@@ -311,5 +326,6 @@
                                                                 { type: "application/json" }));
   });
 
-  window.Ask = { onTap, classes, line, decorate, debug, state: () => a && { phase: a.phase, mode: a.mode, id: a.id } };
+  window.Ask = { onTap, classes, line, decorate, debug, begin, back, send, VOICE_ON,
+                 state: () => a && { phase: a.phase, mode: a.mode, id: a.id } };
 })();

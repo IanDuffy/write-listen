@@ -10,6 +10,8 @@ ElevenLabs voice agent, where the tools become client tools in the page.
     add_note(note)                     appends to the run's 00_source/notes.md, which the
                                        stages that read the seed and have not run yet use
     get_status()                       the run's status.json, in plain terms
+    scout_topic(topic)                 fast runs only (docs/fast-start.md): look into a likely topic
+                                       early, silently; offered when the server supplies `fast`
 
 The transcript is written as it happens to listener/sessions/<id>.jsonl, and each
 call's tokens and cost to listener/sessions/log.jsonl. A session stops talking
@@ -27,6 +29,9 @@ from . import llm
 from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_profile, load_prompt
 
 TOOLS = json.loads((PROMPTS_DIR / "guide_tools.json").read_text(encoding="utf-8"))
+# What the Messages API takes: a tool may carry more for the voice agent (expects_response).
+API_TOOLS = [{k: t[k] for k in ("name", "description", "input_schema")} for t in TOOLS]
+FAST_ONLY = ("scout_topic",)  # offered only in a conversation that has the fast hooks
 SEED_STAGES_DONE = "05_brief.md"  # once the brief exists, no later stage reads the seed or its notes
 
 
@@ -67,15 +72,21 @@ def plain_status(status: dict) -> dict:
         out["title"] = status["title"]
     if state == "problem" and status.get("message"):
         out["problem"] = status["message"]
+    if status.get("mode") == "fast":  # a fast run: its sections too, and whether listening can start
+        from faststart import guide_hooks
+        out = guide_hooks.plain(out, status)
     return out
 
 
 class Session:
     """One conversation. `start(topic, why, notes)` starts a chapter and returns its run name
-    (raising to refuse); `status()` returns the current run's status.json."""
+    (raising to refuse); `status()` returns the current run's status.json. `fast`: what a fast run
+    changes (faststart.guide_hooks.Hooks); without it the conversation is as it was before them."""
 
-    def __init__(self, cfg: dict, start, status, runs_dir: Path, rng: random.Random | None = None):
+    def __init__(self, cfg: dict, start, status, runs_dir: Path, rng: random.Random | None = None, fast=None):
         self.cfg, self.start_fn, self.status_fn, self.runs_dir = cfg, start, status, runs_dir
+        self.fast = fast
+        self.tools = [t for t in API_TOOLS if fast is not None or t["name"] not in FAST_ONLY]
         sessions = listener_dir(cfg) / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
         self.id = time.strftime("%Y%m%d-%H%M%S")
@@ -118,7 +129,7 @@ class Session:
         said: list[str] = []  # everything the guide says this turn, before and after its tool calls
         for _ in range(self.cfg["guide"]["max_tool_rounds"] + 1):
             res = llm.call(self.log_run, self.cfg, "guide", role="guide", system=self.system,
-                           messages=self.messages, tools=TOOLS, label="guide", preapproved=True,
+                           messages=self.messages, tools=self.tools, label="guide", preapproved=True,
                            allow_empty=bool(said) or len(self.messages) > 1 and self._after_tools(),
                            log_extra={"session": self.id})
             content = llm.echo_after_fallback(res.content)  # what the API accepts back after a fallback
@@ -158,10 +169,14 @@ class Session:
         results = [json.loads(x["content"]) for x in last if isinstance(x, dict) and x.get("type") == "tool_result"]
         lines = dict(ln.split(": ", 1) for ln in load_prompt("guide_quiet").splitlines() if ": " in ln)
         for r in results:
+            if r.get("started") is True and "minutes" not in r:  # a fast run: no time unless one was measured
+                return lines["started_fast"]
             if r.get("started") is True:
                 return lines["started"].replace("{minutes}", str(r.get("minutes", 25)))
             if r.get("added") is True:
                 return lines["noted"]
+        if results and all("scouting" in r for r in results):  # scout_topic is silent: never "Done."
+            return lines["listening"]
         return lines["done"] if results else ""
 
     def _after_tools(self) -> bool:
@@ -175,7 +190,9 @@ class Session:
             return self.start_chapter(args.get("topic") or "", args.get("why") or "", args.get("notes") or "",
                                       args.get("listener_said") or "")
         if name == "add_note":
-            return self.add_note(args.get("note") or "")
+            return self.add_note(args.get("note") or "", args.get("kind"))
+        if name == "scout_topic":
+            return self.fast.scout_topic(args.get("topic") or "") if self.fast else {"scouting": False}
         if name == "get_status":
             return plain_status(self.status_fn() or {"state": "idle"})
         return {"error": f"no tool named {name}"}
@@ -194,6 +211,8 @@ class Session:
             return {"started": False, "reason": str(getattr(e, "detail", None) or e)}
         from . import memory
         memory.save_seed(self.cfg, self.runs_dir / self.run)  # listener/seeds/<run>.md
+        if self.fast and (out := self.fast.started(self.runs_dir / self.run)):
+            return out  # a fast run: no time unless earlier runs measured one, and how to wait
         return {"started": True, "minutes": round(sum((self.cfg.get("status_minutes") or {}).values())) or 25}
 
     def _current_run(self) -> str | None:
@@ -202,13 +221,15 @@ class Session:
         now = self.status_fn() or {}
         return now.get("run") if now.get("state") == "making" else None
 
-    def add_note(self, note: str) -> dict:
+    def add_note(self, note: str, kind: str | None = None) -> dict:
         run = self._current_run()
         if not note.strip():
             return {"added": False, "reason": "The note was empty."}
         if not run:
             return {"added": False, "reason": "No chapter is being made yet: put it in start_chapter's notes."}
         root = self.runs_dir / run
+        if self.fast and (out := self.fast.add_note(root, note, kind)):
+            return out  # a fast run: listener_notes.md, with the kind and the section it was said in
         p = root / "00_source" / "notes.md"
         if not p.exists():
             p.write_text(load_prompt("seed_notes").strip() + "\n\n", encoding="utf-8")

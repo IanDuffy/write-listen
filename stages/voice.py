@@ -34,6 +34,12 @@ KINDS = {  # one sync for both agents; "guide" is onboarding's, unchanged
     "aside": {"prompt": "guide_aside", "tools": "guide_aside_tools.json", "placeholders": ASIDE_PLACEHOLDERS,
               "state": "voice_aside.json"},
 }
+# The check-in agent (docs/fast-start.md, "When a section isn't ready"): the same guide while a fast
+# run's next section is still being made. Its values come from faststart/checkin.py `context`.
+CHECKIN_PLACEHOLDERS = ("identity", "profile", "chapter", "heard", "coming", "notes", "earlier_asides",
+                        "earlier_openings", "mic")
+KINDS["checkin"] = {"prompt": "guide_checkin", "tools": "guide_checkin_tools.json",
+                    "placeholders": CHECKIN_PLACEHOLDERS, "state": "voice_checkin.json"}
 
 
 def guide_prompt(kind: str = "guide") -> str:
@@ -49,6 +55,8 @@ def _tools(kind: str) -> list[dict]:
 
 
 def agent_name(cfg: dict, kind: str = "guide") -> str:
+    if kind == "checkin":
+        return cfg["fast"]["checkin"]["agent_name"]
     return cfg["voice"]["agent_name"] if kind == "guide" else cfg["ask"]["agent_name"]
 
 
@@ -87,6 +95,10 @@ def conversation_config(cfg: dict, tool_ids: list[str], kind: str = "guide") -> 
     if kind == "aside":  # the page times silences itself (prompts/guide_aside.md), so the platform waits
         conv["turn"]["turn_timeout"] = cfg["ask"]["turn_timeout_secs"]
         conv["agent"]["prompt"]["reasoning_effort"] = cfg["ask"].get("reasoning_effort") or v["reasoning_effort"]
+    if kind == "checkin":  # the same two settings, from fast.checkin: the page times the check-in's silence too
+        conv["turn"]["turn_timeout"] = cfg["fast"]["checkin"]["turn_timeout_secs"]
+        conv["agent"]["prompt"]["reasoning_effort"] = (cfg["fast"]["checkin"].get("reasoning_effort")
+                                                       or v["reasoning_effort"])
     return conv
 
 
@@ -224,6 +236,7 @@ MOCK_RESULTS = {  # the voice agent's tools, mocked: a comparison never starts a
     "start_chapter": {"started": True, "minutes": 25},
     "add_note": {"added": True, "effect": "The stages still to come will take it into account."},
     "get_status": {"state": "being made", "stage": "Researching", "minutes_left": 18},
+    "scout_topic": {"scouting": True},  # fast runs' early scout (docs/fast-start.md): silent, never a real search here
 }
 
 

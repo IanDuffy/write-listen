@@ -30,7 +30,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from stages.common import Run
+from stages.common import PATHS, Run
 
 FILES = {
     "mode": "fast.json",
@@ -107,6 +107,19 @@ def mark_fast(r: Run, clock=time.time) -> dict:
         info = {"mode": "fast", "seed_set": clock(), "seed_set_at": now_iso()}
         write_json(path(r, "mode"), info)
     return info
+
+
+def continues(root: Path, mode: str) -> bool:
+    """Whether an unfinished run folder a seed lookup found is this mode's to continue (cli.py's
+    `new --seed`, and the server's start_seed). A run started fast (fast.json) is continued only
+    in fast mode, and one the overnight pipeline has worked in (a status, a log or a map, and no
+    fast.json) only in overnight mode; a folder that holds just its seed belongs to neither yet.
+    (A run named outright is not asked: a run marked fast continues fast, which is how the
+    server's Try again continues one.)"""
+    root = Path(root)
+    if (root / FILES["mode"]).exists():
+        return mode == "fast"
+    return mode != "fast" or not any((root / PATHS[k]).exists() for k in ("status", "log", "map"))
 
 
 # --- the timeline -----------------------------------------------------------------------

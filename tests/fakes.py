@@ -275,6 +275,8 @@ class Responder:
                 return self.msg(kwargs, "Noted, I'll fold that in.")
             if "error" in result:
                 return self.msg(kwargs, "I couldn't check just now.")
+            if "scouting" in result:  # the silent scout_topic (fast runs): the guide just carries on
+                return self.msg(kwargs, "Tell me more about the pouring.")
             return self.msg(kwargs, f"It's {result.get('stage', result['state'])} now.")
         text = last.lower()
 

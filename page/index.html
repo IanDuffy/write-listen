@@ -139,7 +139,7 @@ function minutesLeft(s) {
 
 function render() {
   const s = status;
-  if (s.state === "ready") {
+  if (s.state === "ready" && !(window.Fast && Fast.active())) {  // a fast run heard as it was made keeps its pieces
     const src = `/api/chapters/${encodeURIComponent(s.run)}/audio`;
     if (!$("audio").src.endsWith(src)) $("audio").src = src;
   }
@@ -165,12 +165,14 @@ function render() {
     $("line").textContent = s.message || "Something went wrong.";
   }
   if (window.Ask) { const l = Ask.line(); if (l !== null) $("line").textContent = l; Ask.decorate(); }
+  if (window.Fast) Fast.render();  // a fast run: the section markers, and the circle while it plays or waits (page/fast.js)
 }
 
 function onStatus(s) {
   status = s;
+  if (window.Fast) Fast.onStatus(s);
   if (s.state === "making" && s.label && s.label !== lastLabel) note(s.label + "…", "stage");
-  if (s.state === "ready" && lastState === "making") {
+  if (s.state === "ready" && lastState === "making" && !(window.Fast && Fast.active())) {  // already being listened to
     fresh = true;
     if (voiceConv && readyNote) { pendingReady = readyNote.replace("{title}", s.title || "your chapter"); flushReady(); }
     note("Ready: " + (s.title || "your chapter"));
@@ -308,6 +310,7 @@ async function startVoice() {  // false: voice can't start here, so the caller t
         start_chapter: (p) => voiceTool("start_chapter", p),
         add_note: (p) => voiceTool("add_note", p),
         get_status: (p) => voiceTool("get_status", p),
+        scout_topic: (p) => voiceTool("scout_topic", p),
       },
       onConnect: ({ conversationId }) => voiceLine("", "", { conversation_id: conversationId }),
       onMessage: ({ role, message }) => {
@@ -371,6 +374,7 @@ $("retry").addEventListener("click", async () => {
 
 $("orb").addEventListener("click", async () => {
   if (window.Ask && Ask.onTap()) return;  // while a chapter plays: ask a question, or go back to it
+  if (window.Fast && Fast.onTap()) return;  // a fast run: play what is ready, pause, or talk while waiting
   const a = $("audio");
   if (!a.paused) return a.pause();  // even if a new chapter is being made meanwhile
   if (status.state === "ready" && fresh) { await endVoice(); return a.play(); }  // the mic would hear it
@@ -404,5 +408,6 @@ $("toggle").addEventListener("click", () => {
 });
 </script>
 <script src="/ask.js"></script>
+<script src="/fast.js"></script>
 </body>
 </html>

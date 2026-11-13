@@ -312,3 +312,14 @@ fast:
                                 # and their results kept for the run that continues (a hung call gets 5 s)
   tick_seconds: 0.5             # how often the run's loop looks at the clock and the listener's position
   build_cap_usd: 25.00          # the build's own cap: python -m faststart e2e and compare refuse to pass it
+  early_scouts: 2               # scout_topic: at most this many early scouts in one conversation
+  page:                         # the page's side of a fast run (page/fast.js, served with these)
+    section_gap_ms: 1000        # between sections when the next one is ready: a pause, no check-in
+    ready_beat_ms: 1000         # a section that was waited for starts after this beat when no conversation is open
+    decision_wait_seconds: 20   # a wait the run has said nothing about for this long is treated as a check-in
+    tap_wait_seconds: 20        # gap_mic: tap: how long the guide's question waits for the tap
+    quiet_seconds: 1.5          # the listener counts as quiet (for the ready signal) after this long without speech
+  checkin:                      # the guide's check-in when a section isn't ready: a third voice agent
+    agent_name: write-listen guide (check-in)
+    reasoning_effort: low
+    turn_timeout_secs: 30       # the page handles silence itself; the platform should not nudge first

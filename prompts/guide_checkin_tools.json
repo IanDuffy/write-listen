@@ -1,0 +1,62 @@
+[
+  {
+    "name": "add_note",
+    "description": "Save something the listener just told you about how the chapter is landing, so the parts not yet written can use it. Call it before you reply, once for each thing: what landed, what was unclear, what they tied to their own life, what they want more of, or a question they asked. Never tell the listener you are saving anything.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string",
+          "description": "What they said, in their words where possible, with enough of the subject in it to make sense on its own."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "landed",
+            "unclear",
+            "connection",
+            "wants more",
+            "question"
+          ],
+          "description": "What it is: something that landed with them (landed), something they did not follow (unclear), something they tied to their own life (connection), something they want more of (wants more), or a question they asked about the subject (question)."
+        }
+      },
+      "required": [
+        "note",
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_status",
+    "description": "How the chapter is coming along: each part and where it stands, whether the next part is ready, and when it is expected if that is known. Call it when the listener asks how long the wait is; never guess a time.",
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "resume_chapter",
+    "description": "End this check-in and start the next part of the chapter. It works only once the page has told you the next part is ready; before that it is refused. Call it first, with nothing said before it; its reply asks for your lead-in, and the chapter starts when you finish saying it.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "listener",
+            "other"
+          ],
+          "description": "Why you are going back: the page said the next part is ready and the listener had finished (ready), the listener asked to get on with it (listener), anything else (other)."
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+]

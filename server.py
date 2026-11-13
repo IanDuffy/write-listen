@@ -19,6 +19,7 @@ exposed to the network. One listener, one run at a time.
     POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
     /api/ask/*                      asking mid-chapter, by voice (ask/routes.py, docs/ask-voice.md)
+    GET /fast.js, POST /api/fast/position   a fast run on the page (faststart/routes.py, docs/fast-start.md)
     GET  /episode/, /runs/          the episode page (read along) and the run folders it reads
 
 The page and the status may name a finished chapter (?chapter=<run>), to play and ask about it.
@@ -33,12 +34,14 @@ writing a final status (a crash), the server reports a problem itself.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import os
 import subprocess
 import sys
 import threading
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -46,6 +49,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ask import routes as ask_routes
+from faststart import base as fast_base
+from faststart import guide_hooks as fast_hooks
+from faststart import routes as fast_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
@@ -87,9 +93,10 @@ class Pipeline:
                                          start_new_session=True)
         self.run = run
 
-    def start_seed(self, topic: str, why: str = "", notes: str = "", said: str = "") -> str:
+    def start_seed(self, topic: str, why: str = "", notes: str = "", said: str = "", mode: str = "overnight") -> str:
         """Start (or continue) the unattended run for this seed; returns the run's name. Used by the
-        text box (POST /api/chapters) and by the guide's start_chapter tool."""
+        text box (POST /api/chapters) and by the guide's start_chapter tool (which asks for mode "fast":
+        docs/fast-start.md). A seed's unfinished run is continued only in the mode that made it."""
         topic = topic.strip()
         if not topic:
             raise HTTPException(400, "Say what the chapter should be about.")
@@ -97,14 +104,15 @@ class Pipeline:
             if self.busy():
                 raise HTTPException(409, "A chapter is already being made.")
             text = seed_stage.seed_text(topic, why, notes, said)
-            name = seed_stage.find_run(text, self.runs_dir) or seed_stage.run_name(topic, self.runs_dir)
+            name = (seed_stage.find_run(text, self.runs_dir, ok=lambda root: fast_base.continues(root, mode))
+                    or seed_stage.run_name(topic, self.runs_dir))
             r = Run.open(name, create=True, runs_dir=self.runs_dir)
             if not r.path("seed").exists():
                 try:
                     seed_stage.write(r, topic, why, notes, said=said)
                 except StageError as e:
                     raise HTTPException(400, str(e)) from None
-            self.start(["new", name, "--unattended"], name)
+            self.start(["new", name, "--unattended", *fast_routes.mode_args(r, mode)], name)
         return name
 
     def _own_child_running(self) -> bool:
@@ -155,6 +163,7 @@ class ChapterRequest(BaseModel):
     seed: str
     why: str = ""
     notes: str = ""
+    mode: Literal["overnight", "fast"] = "overnight"  # the text box makes a chapter the overnight way unless asked
 
 
 class ChatRequest(BaseModel):
@@ -188,7 +197,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     @app.post("/api/chapters")
     def start(req: ChapterRequest) -> dict:
-        return {"run": pipe.start_seed(req.seed, req.why, req.notes)}
+        return {"run": pipe.start_seed(req.seed, req.why, req.notes, mode=req.mode)}
 
     # --- the guide's conversation (milestone 3) ---------------------------------------
     chat = {"session": None, "lock": threading.Lock(), "passes": []}
@@ -214,7 +223,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         for t in chat["passes"]:  # a returning guide must know who it is: wait for passes in flight
             t.join()
         chat["passes"] = []
-        chat["session"] = guide.Session(cfg, pipe.start_seed, pipe.status, pipe.runs_dir)
+        # The guide's chapters are made the fast way (docs/fast-start.md); the hooks are what that changes for it.
+        chat["session"] = guide.Session(cfg, functools.partial(pipe.start_seed, mode="fast"), pipe.status, pipe.runs_dir,
+                                        fast=fast_hooks.Hooks(cfg, pipe.runs_dir, pipe.status))
         return chat["session"]
 
     def talk(text: str | None, fresh: bool, session_id: str | None = None) -> dict:
@@ -355,6 +366,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return FileResponse(mp3, media_type="audio/mpeg")
 
     ask_routes.mount(app, cfg, pipe.runs_dir)
+    fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
     app.mount("/runs", StaticFiles(directory=pipe.runs_dir, check_dir=False), name="runs")
     return app

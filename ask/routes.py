@@ -10,6 +10,12 @@
 The page runs the voice session with the onboarding code's client (ElevenLabs' browser SDK) and
 keeps the timers; the server keeps the aside's state, so a page that dies mid-aside loses nothing
 that was said. One aside at a time: a new one ends any still open (logged as dropped).
+
+A fast run (docs/fast-start.md) adds a second kind of conversation on the same routes: the check-in,
+when the listener reaches a section that is not ready. /api/ask/start takes "kind": "check_in" (with
+"section", the one awaited, and "reopened"); the guide is the check-in agent, its context and tools
+come from faststart/checkin.py, and nothing restarts when it ends ("restart": null): the page plays
+the awaited section. Every aside's log line says which kind it was.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from faststart import checkin
 from stages import voice
 from stages.common import ROOT, Run, StageError, load_prompt
 
@@ -39,6 +46,9 @@ ENDINGS = ("listener", "closing", "silence", "never_mind", "other", "button", "d
 class AskStart(BaseModel):
     run: str
     t: float
+    kind: str = "ask"              # "check_in": the guide comes in while a fast run's next section is made
+    section: int | None = None     # a check-in: the section awaited (left out: the one status.json names)
+    reopened: bool = False         # a check-in the listener asked for ("Talk while you wait")
 
 
 class AskTool(BaseModel):
@@ -89,6 +99,9 @@ def with_extras(status: dict, runs_dir: Path) -> dict:
     if status.get("state") == "ready" and run:
         root = runs_dir / run
         status = {**status, "asks": A.can_ask(root), "episode": (root / "11_episode" / "episode.json").exists()}
+    elif status.get("state") == "making" and status.get("mode") == "fast" and run:
+        # A fast run is listened to while it is made: askable once its first section is timed.
+        status = {**status, "asks": A.can_ask(runs_dir / run)}
     return status
 
 
@@ -96,11 +109,14 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
     state = {"open": {}, "chapters": {}}
     lock = threading.Lock()
 
-    def chapter(run: str) -> A.Chapter:
+    def folder(run: str) -> Path:
         try:
-            root = Run.open(run, runs_dir=runs_dir).root
+            return Run.open(run, runs_dir=runs_dir).root
         except StageError:
             raise HTTPException(404, "No such chapter.") from None
+
+    def chapter(run: str) -> A.Chapter:
+        root = folder(run)
         if not A.can_ask(root):
             raise HTTPException(400, "This chapter has no timed transcript, so it can't be asked about yet.")
         key = (run, (root / A.TIMING).stat().st_mtime)
@@ -116,16 +132,20 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
 
     def finish(a: dict, how: str, timings: dict) -> dict:
         """End an aside: the restart point from how long it lasted, then the log line."""
-        ch = a["chapter"]
         seconds = time.monotonic() - a["t0"]
+        if a["kind"] == "check_in":
+            return finish_check_in(a, how, seconds, timings)
+        ch = a["chapter"]
         rewind = (a.get("resume") or {}).get("rewind")
         if how == "guide":
             how = (a.get("resume") or {}).get("reason") or "other"
         if how not in ENDINGS:
             how = "other"
-        restart = ch.restart_point(a["t"], seconds, rewind)
-        record = {"id": a["id"], "started": a["started"], "t": round(a["t"], 3), "sentence_id": a["sentence_id"],
-                  "segment": ch.sents[ch.locate(a["t"])].seg + 1, "transcript": a["lines"], "ended": how,
+        restart, segment = ch.restart_point(a["t"], seconds, rewind), ch.sents[ch.locate(a["t"])].seg + 1
+        if a["past"]:  # in a section still being narrated (a fast run): no sentence times yet, so where they paused
+            restart, segment = {"t": round(a["t"], 3), "sentence_id": a["sentence_id"], "rule": "position"}, a["past"]
+        record = {"id": a["id"], "kind": "ask", "started": a["started"], "t": round(a["t"], 3),
+                  "sentence_id": a["sentence_id"], "segment": segment, "transcript": a["lines"], "ended": how,
                   "seconds": round(seconds, 1), "restart": restart, "rewind_asked": rewind, "seeds": a["seeds"],
                   "tap_to_ready_ms": timings.get("tap_to_ready_ms"),
                   "tap_to_first_sound_ms": timings.get("tap_to_first_sound_ms"),
@@ -133,7 +153,61 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
         A.append_aside(ch.run, record)
         if a.get("conversation_id"):
             threading.Thread(target=_save_cost, args=(cfg, ch.run, a["id"], a["conversation_id"]), daemon=True).start()
+        after(lambda: checkin.question_notes(ch.run, a["lines"], segment))  # a fast run still being made: a note
         return record
+
+    def finish_check_in(a: dict, how: str, seconds: float, timings: dict) -> dict:
+        """End a check-in: the same log, no restart point (the page plays the awaited section), and
+        what the listener said goes to the profile's memory pass."""
+        record = {"id": a["id"], "kind": "check_in", "started": a["started"], "t": round(a["t"], 3),
+                  "sentence_id": a["sentence_id"], "segment": a["section"], "section": a["section"],
+                  "reopened": a["reopened"], "transcript": a["lines"], "ended": checkin.ending(a, how),
+                  "seconds": round(seconds, 1), "restart": None, "rewind_asked": None, "seeds": [],
+                  "tap_to_ready_ms": timings.get("tap_to_ready_ms"),
+                  "tap_to_first_sound_ms": timings.get("tap_to_first_sound_ms"),
+                  "conversation_id": a.get("conversation_id"), "cost_usd": None, "credits": None}
+        A.append_aside(a["run"], record)
+        if a.get("conversation_id"):
+            threading.Thread(target=_save_cost, args=(cfg, a["run"], a["id"], a["conversation_id"]), daemon=True).start()
+        after(lambda: checkin.remember(cfg, a, checkin.chapter_title(a["run"])))
+        return record
+
+    def after(work) -> None:
+        """Something done with an aside once it is logged: its failure never fails the request."""
+        try:
+            work()
+        except Exception as e:
+            print(f"  after an aside: {type(e).__name__}: {e}")
+
+    def drop_open() -> None:
+        with lock:
+            for old in list(state["open"].values()):  # one aside at a time
+                state["open"].pop(old["id"], None)
+                finish(old, "dropped", {})
+
+    def new_aside(kind: str, t: float, sentence_id: str, **more) -> dict:
+        return {"id": time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4], "kind": kind, "t": t,
+                "sentence_id": sentence_id, "t0": time.monotonic(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "lines": [], "seeds": [], "resume": None, **more}
+
+    def check_in_start(req: AskStart) -> dict:
+        root = folder(req.run)
+        section = req.section if req.section is not None else checkin.awaited(root)
+        if not (root / "fast.json").exists() or section not in checkin.sections_known(root):
+            raise HTTPException(400, "There is no part of this chapter to wait for.")
+        drop_open()
+        try:
+            url = voice.signed_url(cfg, kind="checkin")  # creates or updates the check-in agent if its prompt changed
+        except Exception as e:
+            raise HTTPException(503, f"Voice isn't available: {e}") from None
+        at = checkin.listener_at(root, section)
+        a = new_aside("check_in", max(req.t, 0.0), checkin.anchor(root, section, at["pieces"]), run=root,
+                      section=section, was_in=at["section"], have=at["pieces"], reopened=req.reopened)
+        with lock:
+            state["open"][a["id"]] = a
+        return {"aside": a["id"], "kind": "check_in", "section": section, "t": a["t"], "sentence_id": a["sentence_id"],
+                "signed_url": url, "dynamic_variables": checkin.context(root, cfg, section, a["t"]),
+                "notes": checkin.page_notes(), "settings": checkin.page_settings(cfg)}
 
     @app.get("/ask.js")
     def ask_js() -> Response:  # page/ask.js, with config.yaml ask's page settings
@@ -146,33 +220,41 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
 
     @app.post("/api/ask/start")
     def ask_start(req: AskStart) -> dict:
+        if req.kind == "check_in":
+            return check_in_start(req)
         ch = chapter(req.run)
-        with lock:
-            for old in list(state["open"].values()):  # one aside at a time
-                state["open"].pop(old["id"], None)
-                finish(old, "dropped", {})
+        drop_open()
         try:
             url = voice.signed_url(cfg, kind="aside")  # creates or updates the aside agent if its prompt changed
         except Exception as e:
             raise HTTPException(503, f"Voice isn't available: {e}") from None
         t = min(max(req.t, 0.0), ch.duration)
         i = ch.locate(t)
-        a = {"id": time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4], "chapter": ch, "t": t,
-             "sentence_id": ch.sents[i].id, "t0": time.monotonic(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-             "lines": [], "seeds": [], "resume": None}
+        values = ch.context(t, A.load_asides(ch.run))
+        # A fast run still being made: the listener may be past the timed transcript, in a section whose
+        # narration is still running. The guide is then told that section from its pieces.
+        past = checkin.beyond(ch, req.t)
+        if past:
+            t, values = req.t, {**values, **past["values"]}
+        a = new_aside("ask", t, past["sentence_id"] if past else ch.sents[i].id, chapter=ch,
+                      past=past["section"] if past else None)
         with lock:
             state["open"][a["id"]] = a
         n = notes()
         return {"aside": a["id"], "t": t, "sentence_id": a["sentence_id"], "signed_url": url,
-                "dynamic_variables": ch.context(t, A.load_asides(ch.run)), "notes": n,
-                "settings": page_settings(cfg)}
+                "dynamic_variables": values, "notes": n, "settings": page_settings(cfg)}
 
     @app.post("/api/ask/tool")
     def ask_tool(req: AskTool) -> dict:
         with lock:
             a = current(req.aside)
             args = dict(req.args or {})
-            if req.name == "resume_chapter":
+            if a["kind"] == "check_in":  # add_note, get_status, and resume_chapter once the awaited part has audio
+                try:
+                    out = checkin.tool(a, req.name, args)
+                except Exception as e:  # a plain result the guide can act on, as the onboarding tools give
+                    out = {"error": f"{type(e).__name__}: {e}"}
+            elif req.name == "resume_chapter":
                 a["resume"] = {"reason": args.get("reason") or "other", "rewind": args.get("rewind")}
                 out = RESUMED
             elif req.name == "save_seed":

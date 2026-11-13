@@ -9,6 +9,7 @@ from fakes import FakeAnthropic, Responder
 from fastapi.testclient import TestClient
 
 import server
+from faststart import notes as fast_notes
 from stages import guide, llm, voice
 
 
@@ -52,13 +53,17 @@ def vcfg(cfg, tmp_path):
 
 def test_tools_become_elevenlabs_client_tools(cfg):
     tools = voice.client_tools(cfg)
-    assert [t["name"] for t in tools] == ["start_chapter", "add_note", "get_status"]
-    assert all(t["type"] == "client" and t["expects_response"] for t in tools)
+    # Four tools since Fast Start milestone 5: scout_topic comes first, and is the one the agent does not wait for.
+    assert [t["name"] for t in tools] == ["scout_topic", "start_chapter", "add_note", "get_status"]
+    assert all(t["type"] == "client" for t in tools)
+    assert [t["expects_response"] for t in tools] == [False, True, True, True]
     assert "additionalProperties" not in json.dumps(tools)  # not in ElevenLabs' schema subset
-    start = tools[0]["parameters"]
+    start = tools[1]["parameters"]
     assert start["required"] == ["topic", "listener_said", "why", "notes"]
     assert all(p.get("description") for p in start["properties"].values())
-    assert tools[2]["parameters"] == {"type": "object", "properties": {}, "required": []}
+    assert tools[3]["parameters"] == {"type": "object", "properties": {}, "required": []}
+    note = tools[2]["parameters"]  # the note's kind is optional, and one of the five (faststart/notes.py)
+    assert note["required"] == ["note"] and note["properties"]["kind"]["enum"] == list(fast_notes.KINDS)
 
 
 def test_the_agent_is_the_typed_guide(cfg):
@@ -77,18 +82,18 @@ def test_the_agent_is_the_typed_guide(cfg):
 def test_sync_creates_once_and_updates_only_on_change(vcfg):
     el = FakeEL()
     assert voice.sync_agent(vcfg, el) == "agent_1"
-    assert el.kinds() == ["tools.create"] * 3 + ["agents.create"]
+    assert el.kinds() == ["tools.create"] * 4 + ["agents.create"]  # four tools since scout_topic (Fast Start)
     create = el.calls[-1][2]
-    assert create["conversation_config"]["agent"]["prompt"]["tool_ids"] == ["tool_1", "tool_2", "tool_3"]
+    assert create["conversation_config"]["agent"]["prompt"]["tool_ids"] == ["tool_1", "tool_2", "tool_3", "tool_4"]
     state = json.loads(voice.state_path(vcfg).read_text())
-    assert state["agent_id"] == "agent_1" and state["tool_ids"]["get_status"] == "tool_3"
+    assert state["agent_id"] == "agent_1" and state["tool_ids"]["get_status"] == "tool_4"
 
     el.calls.clear()
     assert voice.sync_agent(vcfg, el) == "agent_1" and el.calls == []  # nothing changed: no calls
 
     vcfg["voice"]["reasoning_effort"] = "low"
     voice.sync_agent(vcfg, el)
-    assert el.kinds() == ["tools.update"] * 3 + ["agents.update"]  # same tools and agent, updated
+    assert el.kinds() == ["tools.update"] * 4 + ["agents.update"]  # same tools and agent, updated
     assert el.calls[-1][1] == ("agent_1",)
     assert el.calls[-1][2]["conversation_config"]["agent"]["prompt"]["reasoning_effort"] == "low"
 
@@ -164,10 +169,10 @@ def test_a_failed_sync_resumes_without_duplicate_tools(vcfg):
     with pytest.raises(Exception, match="500"):
         voice.sync_agent(vcfg, el)
     state = json.loads(voice.state_path(vcfg).read_text())
-    assert state["agent_id"] is None and len(state["tool_ids"]) == 3 and state["digest"] is None  # ids kept
+    assert state["agent_id"] is None and len(state["tool_ids"]) == 4 and state["digest"] is None  # ids kept
     el.calls.clear()
     assert voice.sync_agent(vcfg, el) == "agent_1"
-    assert el.kinds() == ["tools.update"] * 3 + ["agents.create"]  # the tools are reused, not made again
+    assert el.kinds() == ["tools.update"] * 4 + ["agents.create"]  # the tools are reused, not made again
 
 
 def test_only_a_404_makes_a_new_agent(vcfg):
@@ -183,7 +188,7 @@ def test_only_a_404_makes_a_new_agent(vcfg):
     el.calls.clear()
     el.fail["agents.update"] = [404]
     voice.sync_agent(vcfg, el)
-    assert el.kinds() == ["tools.update"] * 3 + ["agents.update", "agents.create"]  # deleted: made again
+    assert el.kinds() == ["tools.update"] * 4 + ["agents.update", "agents.create"]  # deleted: made again
 
 
 def test_an_unprocessed_call_record_is_not_logged_as_free(vcfg, monkeypatch):

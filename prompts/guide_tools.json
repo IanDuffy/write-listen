@@ -1,5 +1,18 @@
 [
   {
+    "name": "scout_topic",
+    "description": "Quietly start looking into a topic that looks likely to become the chapter, before the listener has confirmed it, so the chapter can start sooner. Call it at most twice in a conversation, and never once a chapter is being made. It is silent: never mention it, never wait for it, and carry on with the conversation in the same turn.",
+    "expects_response": false,
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "topic": {"type": "string", "description": "The likely topic, in the words you would give start_chapter."}
+      },
+      "required": ["topic"],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "start_chapter",
     "description": "Start making the chapter you have told the listener you will make. Call it once they have said yes or not objected. It starts the research and writing, which takes about twenty minutes, and returns whether it started and about how long it will take.",
     "input_schema": {
@@ -20,7 +33,8 @@
     "input_schema": {
       "type": "object",
       "properties": {
-        "note": {"type": "string", "description": "What they said, in their words where possible."}
+        "note": {"type": "string", "description": "What they said, in their words where possible."},
+        "kind": {"type": "string", "enum": ["landed", "unclear", "connection", "wants more", "question"], "description": "What kind of remark it is: landed (something they heard worked for them), unclear (they lost the thread), connection (something about themselves or their own life), wants more (they want more of something), question (they asked something). Leave it out if none fits."}
       },
       "required": ["note"],
       "additionalProperties": false

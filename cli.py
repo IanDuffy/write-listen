@@ -157,21 +157,9 @@ def chat(cfg: dict) -> int:
     return 0
 
 
-def _continues(root, mode: str) -> bool:
-    """Whether an unfinished run folder a seed lookup found is this mode's to continue. A run
-    started fast (fast.json) is continued only by --mode fast, and one the overnight pipeline has
-    worked in (a status, a log or a map, and no fast.json) only without it; a folder that holds
-    just its seed belongs to neither yet. (A run named on the command line is not asked: a run
-    marked fast continues fast, which is how the server's Try again continues one.)"""
-    from faststart import base as fast_base
-
-    if (root / fast_base.FILES["mode"]).exists():
-        return mode == "fast"
-    return mode != "fast" or not any((root / PATHS[k]).exists() for k in ("status", "log", "map"))
-
-
 def new_run(args, cfg: dict) -> int:
     """`new`: create (or continue) a seed run; with --unattended, run it to the end."""
+    from faststart import base as fast_base
     from stages import new, seed
 
     name = args.run
@@ -181,7 +169,7 @@ def new_run(args, cfg: dict) -> int:
         text = (seed.seed_text(args.seed, args.why, args.notes) if args.seed
                 else open(args.seed_file, encoding="utf-8").read().strip() + "\n")
         # the newest unfinished run of this seed and of this mode; the other mode's run is left alone
-        name = seed.find_run(text, ok=lambda root: _continues(root, args.mode)) or seed.run_name(args.seed or text)
+        name = seed.find_run(text, ok=lambda root: fast_base.continues(root, args.mode)) or seed.run_name(args.seed or text)
     r = Run.open(name, force=args.force, yes=args.yes, create=True)
     if r.path("seed").exists():
         if args.seed or args.seed_file:
@@ -195,7 +183,6 @@ def new_run(args, cfg: dict) -> int:
             raise StageError(f"{r.name} starts from a transcript; a seed run needs its own name.")
         seed.write(r, args.seed or "", args.why, args.notes, args.seed_file)
     cfg = run_config(r, cfg)
-    from faststart import base as fast_base
     fast = args.mode == "fast" or fast_base.is_fast(r)  # a run marked fast is continued as one (the server's retry)
     if not args.unattended:
         if fast:
