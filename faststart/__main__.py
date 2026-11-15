@@ -20,7 +20,8 @@
     record <run> [--what overnight]
                            add a run made another way to that log (the overnight run of check 11), once
 
-<run> is a run name under runs/ or a path to a run folder. e2e, overnight and compare make paid
+<run> is a run name (the harnesses make theirs under shared/runs, never in a listener's chapters)
+or a path to a run folder. e2e, overnight and compare make paid
 calls and refuse to pass the build's cap (config.yaml fast.build_cap_usd).
 """
 
@@ -37,11 +38,15 @@ from stages.common import Run, StageError, load_config
 
 
 def open_run(name: str) -> Run:
-    """A run by name (under runs/) or by the path of its folder."""
+    """A run by the path of its folder, or by name: the harnesses' (shared/runs), else the active
+    listener's chapters (a fast run the guide started)."""
+    from .e2e import harness_runs_dir
+
     p = Path(name).expanduser()
     if p.is_dir():
         return Run(name=p.resolve().name, root=p.resolve())
-    return Run.open(name, runs_dir=common.default_runs_dir())
+    own = harness_runs_dir()
+    return Run.open(name, runs_dir=own if (own / name).is_dir() else common.default_runs_dir())
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -228,6 +228,23 @@ def _copy(src: Path, dest: Path) -> None:
     shutil.copytree(src, dest, symlinks=True, copy_function=shutil.copy2)
 
 
+def _merge(src: Path, dest: Path) -> bool:
+    """Copy into dest what it lacks, file by file (a folder that exists is merged into, never
+    skipped whole; a file that exists is kept). Whether anything was copied."""
+    if not dest.exists() and not dest.is_symlink():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            os.symlink(os.readlink(src), dest)
+        elif src.is_dir():
+            _copy(src, dest)
+        else:
+            shutil.copy2(src, dest)
+        return True
+    if src.is_symlink() or not src.is_dir() or not dest.is_dir():
+        return False
+    return any([_merge(c, dest / c.name) for c in sorted(src.iterdir())])
+
+
 def _repoint(dest: Path, src: Path) -> None:
     """ffmpeg lists (10_audio/**/concat.txt) hold absolute paths: point the copy's at the copy."""
     for p in dest.rglob("concat.txt"):
@@ -237,11 +254,43 @@ def _repoint(dest: Path, src: Path) -> None:
             p.write_text(new, encoding="utf-8")
 
 
+RUN_NAME_FILES = ("status.json", "fast.json", "11_episode/episode.json")
+
+
+def _fix_run_name(root: Path) -> list[str]:
+    """A renamed chapter's files that name their run ("run") name its folder: the page builds the
+    audio and episode addresses from status.json's run, so the old name would 404. Each file keeps
+    its mtime (the server follows the newest status.json)."""
+    out = []
+    for rel in RUN_NAME_FILES:
+        p = root / rel
+        data = read_json(p)
+        if isinstance(data, dict) and isinstance(data.get("run"), str) and data["run"] != root.name:
+            st = p.stat()
+            write_json(p, {**data, "run": root.name})
+            os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+            out.append(str(p))
+    return out
+
+
+def fix_run_names(listener: Path | str | None = None) -> list[str]:
+    """Repair for a migration made before migrate() renamed run fields: every chapter folder's
+    files name the folder as their run. Idempotent. Returns the files changed."""
+    d = listener if isinstance(listener, Path) else folder(listener)
+    return [p for ch in chapters(listener=d) for p in _fix_run_name(ch)]
+
+
+# What the memory pass and the guide read (stages/memory.py): they go into the listener's own folder.
+MEMORY_ITEMS = ("profile.md", "guide.md", "history.md", "seeds", "sessions")
+
+
 def migrate(sources: list[Path], lid: str = common.DEFAULT_LISTENER, chapters: tuple[str, ...] = (),
             dry_run: bool = False) -> dict:
     """Copy each checkout's runs/ and listener/ into listeners/<lid>/: the named chapter runs into
-    chapters/<date>-<slug>/, everything else into archive/<checkout>/. Copies, never moves: the
-    sources are other checkouts' working folders. Idempotent: what is already there is left."""
+    chapters/<date>-<slug>/ (their run fields renamed to match), the memory files (MEMORY_ITEMS)
+    into the listener's folder itself, everything else (_cleared_*, _tests_*, voice_compare, other
+    runs) into archive/<checkout>/. Copies, never moves: the sources are other checkouts' working
+    folders. Idempotent: what is already there is kept, and a folder is merged into file by file."""
     d = common.LISTENERS_DIR / lid
     plan: list[tuple[str, Path, Path]] = []
     for src_root in sources:
@@ -259,6 +308,8 @@ def migrate(sources: list[Path], lid: str = common.DEFAULT_LISTENER, chapters: t
         for item in sorted(lst.iterdir()) if lst.is_dir() else []:
             if item.name.startswith("voice") and item.suffix == ".json":
                 plan.append(("shared", item, common.SHARED_DIR / "voice" / item.name))
+            elif item.name in MEMORY_ITEMS:
+                plan.append(("memory", item, d / item.name))
             else:
                 plan.append(("archive", item, d / "archive" / label / "listener" / item.name))
     found = {p[1].name for p in plan if p[0] == "chapter"}
@@ -269,18 +320,11 @@ def migrate(sources: list[Path], lid: str = common.DEFAULT_LISTENER, chapters: t
         return done
     ensure(lid)
     for kind, src, dest in plan:
-        if dest.exists():
-            done["kept"].append(str(dest))
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
+        done["copied" if _merge(src, dest) else "kept"].append(str(dest))
         if src.is_dir():
-            _copy(src, dest)
             _repoint(dest, src)
-        elif kind == "shared":
-            shutil.copy2(src, dest)
-        else:
-            shutil.copy2(src, dest)
-        done["copied"].append(str(dest))
+        if kind == "chapter":
+            _fix_run_name(dest)
     if not (common.LISTENERS_DIR / "active.json").exists():
         set_active(lid)
     return done
@@ -298,7 +342,32 @@ def finished(root: Path) -> bool:
     return (root / "10_audio" / "chapter.mp3").exists()
 
 
+def finished_at(root: Path) -> float:
+    """When a finished chapter finished: finished.json's t (an overnight build), else status.json's
+    updated when it says ready (a seed or fast run), else its chapter.mp3's mtime (a migrated one)."""
+    for p, key in ((root / "finished.json", "t"), (root / "status.json", "updated")):
+        data = read_json(p)
+        if not isinstance(data, dict) or (key == "updated" and data.get("state") != "ready"):
+            continue
+        try:
+            return datetime.fromisoformat(str(data.get(key))).timestamp()
+        except ValueError:
+            pass
+    mp3 = root / "10_audio" / "chapter.mp3"
+    return mp3.stat().st_mtime if mp3.exists() else 0.0
+
+
 def latest_chapter(lid: str | None = None, *, listener: Path | None = None) -> Path | None:
-    """The newest playable chapter: the last folder by name with a chapter.mp3."""
+    """The newest playable chapter: of the folders with a chapter.mp3, the one that finished last.
+    Not by name: seed and fast runs are named <slug>-YYYYMMDD, overnight ones YYYY-MM-DD-<slug>."""
     done = [p for p in chapters(lid, listener=listener) if finished(p)]
-    return done[-1] if done else None
+    return max(done, key=lambda p: (finished_at(p), p.name)) if done else None
+
+
+def overnight_build(root: Path) -> bool:
+    """A chapter folder the overnight runner makes (overnight/runner.py), not the seed pipeline:
+    its locked plan is in 00_source/up_next.json, or its status says mode overnight."""
+    if (root / "00_source" / "up_next.json").exists():
+        return True
+    st = read_json(root / "status.json")
+    return isinstance(st, dict) and st.get("mode") == "overnight"

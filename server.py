@@ -206,11 +206,19 @@ class Pipeline:
             # The process ended without writing ready or problem (killed, or a crash).
             status = {**status, "state": "problem", "message": "The chapter stopped unexpectedly.",
                       "retryable": True, "detail": f"see runs/{self.run}/run.log"}
-        return status
+        return {**status, "run": self.run}  # the folder it was read from (a migrated copy may name its old one)
+
+    def detach(self) -> None:
+        """Stop following the run this server started (Start fresh: it was the previous listener's).
+        The run itself keeps going in its own process and writes into its own listener's folder."""
+        with self.lock:
+            self.proc, self.run = None, None
 
     def _latest(self) -> str | None:
-        found = sorted(self.runs_dir.glob("*/status.json"), key=lambda p: p.stat().st_mtime)
-        found += sorted(self.runs_dir.glob("*/run.log"), key=lambda p: p.stat().st_mtime)  # started, no status yet
+        """The newest seed or fast run. Overnight builds share the chapters folder but are the overnight
+        runner's (wl overnight ...): the page never follows them, retries them or waits for them."""
+        found = [p for pattern in ("*/status.json", "*/run.log")  # run.log: started, no status yet
+                 for p in self.runs_dir.glob(pattern) if not profiles.overnight_build(p.parent)]
         found.sort(key=lambda p: p.stat().st_mtime)
         return found[-1].parent.name if found else None
 
@@ -482,6 +490,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 previous = common.listener_dir(cfg).name
                 cfg.pop("listener_dir", None)  # from now on, follow listeners/active.json
                 lid = profiles.reset()
+            pipe.detach()  # the new listener's page is idle, and free to start a chapter
         return {"listener": lid, "previous": previous}
 
     @app.post("/api/chapters/{run}/retry")
@@ -493,6 +502,8 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 r = Run.open(run, runs_dir=pipe.runs_dir)
             except StageError:
                 raise HTTPException(404, "No such chapter.") from None
+            if profiles.overnight_build(r.root):  # the seed pipeline would rebuild it its own way, and pay twice
+                raise HTTPException(400, "That is an overnight chapter: continue it with `wl overnight resume`.")
             if not r.path("seed").exists():
                 raise HTTPException(400, "That run has no seed.")
             pipe.start(["new", run, "--unattended"], run)

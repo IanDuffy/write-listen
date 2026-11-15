@@ -3,7 +3,7 @@
 import hashlib
 import json
 import os
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -152,6 +152,104 @@ def test_latest_chapter_is_the_newest_with_audio(own_listeners):
             (ian / "chapters" / name / "10_audio" / "chapter.mp3").write_bytes(b"x")
     assert profiles.latest_chapter("ian").name == "2026-11-14-b"
     assert [p.name for p in profiles.chapters("ian")] == ["2026-11-11-a", "2026-11-14-b", "2026-11-17-c"]
+
+
+def test_a_migrated_run_names_its_new_folder_and_plays_from_the_main_page(tmp_path, cfg, own_listeners):
+    """Review C17: status.json's run was the old name, so the page's audio address 404'd."""
+    import ask_fixture
+    old = "herons-hunt-standing-still-20261114"
+    live = tmp_path / "live"
+    root = ask_fixture.build(live / "runs" / old, audio=True)
+    (root / "status.json").write_text(json.dumps({"run": old, "state": "ready", "title": "Herons",
+                                                  "updated": "2026-11-14T09:00:00+00:00"}))
+    (root / "11_episode" / "episode.json").write_text(json.dumps({"run": old, "sentences": []}))
+    (root / "fast.json").write_text(json.dumps({"seed_at": 1}))  # no run field: left as it is
+    profiles.migrate([live], "ian", (old,))
+    (new,) = profiles.chapters("ian")
+    assert new.name != old
+    assert json.loads((new / "status.json").read_text())["run"] == new.name
+    assert json.loads((new / "11_episode" / "episode.json").read_text())["run"] == new.name
+    assert (new / "fast.json").read_text() == (root / "fast.json").read_text()
+
+    cfg.pop("listener_dir", None)
+    c = TestClient(server.create_app(server.Pipeline(), cfg, remember_on_start=False))
+    st = c.get("/api/status").json()
+    assert st["run"] == new.name and st["state"] == "ready" and st["asks"] is True
+    assert c.get(f"/api/chapters/{st['run']}/audio").status_code == 200
+
+    # The repair for a migration made before this fix: idempotent, and each file keeps its mtime.
+    (new / "status.json").write_text(json.dumps({"run": old, "state": "ready"}))
+    os.utime(new / "status.json", (1_000_000, 1_000_000))
+    assert profiles.fix_run_names("ian") == [str(new / "status.json")]
+    assert json.loads((new / "status.json").read_text()) == {"run": new.name, "state": "ready"}
+    assert (new / "status.json").stat().st_mtime == 1_000_000
+    assert profiles.fix_run_names(own_listeners / "ian") == []
+
+
+def test_migration_puts_the_memory_files_in_the_listener_and_merges_file_by_file(tmp_path, own_listeners):
+    """Review C21: the live profile, guide, history, seeds and sessions went to archive/, so the guide
+    met Ian as a stranger; and a re-run skipped a sessions folder that had gained files."""
+    main = _checkout(tmp_path / "main", {}, [
+        ("profile.md", "- Builds cabinets.\n"), ("guide.md", "# The guide\n- Name: Wren.\n"), ("history.md", "- herons\n"),
+        ("seeds/herons.md", "seed\n"), ("sessions/1.jsonl", '{"who": "listener"}\n'), ("sessions/1.done", ""),
+        ("_tests_20261112/profile.md", "- test\n"), ("voice_compare/report.md", "r\n"), ("voice.json", "{}")])
+    ian = profiles.create("ian")
+    (ian / "guide.md").write_text("# The guide\n- Name: Moss.\n")  # already there: kept
+    (ian / "sessions" / "0.jsonl").write_text("{}\n")
+    out = profiles.migrate([main], "ian")
+    assert (ian / "profile.md").read_text() == "- Builds cabinets.\n" and (ian / "history.md").exists()
+    assert (ian / "guide.md").read_text() == "# The guide\n- Name: Moss.\n"
+    assert (ian / "seeds" / "herons.md").exists()
+    assert sorted(p.name for p in (ian / "sessions").iterdir()) == ["0.jsonl", "1.done", "1.jsonl"]
+    arch = ian / "archive" / "main" / "listener"
+    assert sorted(p.name for p in arch.iterdir()) == ["_tests_20261112", "voice_compare"]
+    assert str(ian / "guide.md") in out["kept"] and str(ian / "profile.md") in out["copied"]
+
+    assert profiles.migrate([main], "ian")["copied"] == []  # idempotent
+    (main / "listener" / "sessions" / "2.jsonl").write_text('{"who": "guide"}\n')
+    (main / "listener" / "_tests_20261112" / "guide.md").write_text("x\n")
+    again = profiles.migrate([main], "ian")
+    assert sorted(again["copied"]) == sorted([str(arch / "_tests_20261112"), str(ian / "sessions")])
+    assert (ian / "sessions" / "2.jsonl").exists() and (arch / "_tests_20261112" / "guide.md").exists()
+
+
+def test_latest_chapter_is_the_one_that_finished_last_whatever_its_name(own_listeners):
+    """Review C18: by folder name, a seed run (<slug>-YYYYMMDD) outranked every overnight chapter."""
+    ian = profiles.create("ian")
+
+    def chapter(name, **files):
+        (ian / "chapters" / name / "10_audio").mkdir(parents=True)
+        (ian / "chapters" / name / "10_audio" / "chapter.mp3").write_bytes(b"x")
+        for rel, data in files.items():
+            (ian / "chapters" / name / rel).write_text(json.dumps(data))
+        return ian / "chapters" / name
+
+    chapter("octopus-hearts-20261116", **{"status.json": {"state": "ready", "updated": "2026-11-16T10:00:00+00:00"}})
+    assert profiles.latest_chapter("ian").name == "octopus-hearts-20261116"
+    chapter("2026-11-18-why-bridges-sway", **{"finished.json": {"t": "2026-11-18T03:10:00+00:00"},
+                                             "status.json": {"state": "making", "updated": "2026-11-20T00:00:00+00:00"}})
+    assert profiles.latest_chapter("ian").name == "2026-11-18-why-bridges-sway"
+    old = chapter("2026-11-11-beauty-scarry")  # migrated: only its chapter.mp3's mtime
+    t = datetime(2026, 11, 11, 12).timestamp()
+    os.utime(old / "10_audio" / "chapter.mp3", (t, t))
+    assert profiles.finished_at(old) == t and profiles.latest_chapter("ian").name == "2026-11-18-why-bridges-sway"
+    chapter("zebra-stripes-20261119", **{"status.json": {"state": "ready", "updated": "2026-11-19T10:00:00+00:00"}})
+    assert profiles.latest_chapter("ian").name == "zebra-stripes-20261119"
+
+
+def test_the_fast_harnesses_make_their_runs_outside_every_listener(cfg, own_listeners, monkeypatch):
+    """Review C22: `python -m faststart e2e` made its runs in the active listener's chapters."""
+    from faststart import __main__ as fs_main
+    from faststart import e2e
+    monkeypatch.setattr(common, "RUNS_DIR", None)
+    profiles.create("ian")
+    profiles.set_active("ian")
+    assert e2e.harness_runs_dir() == common.SHARED_DIR / "runs"
+    assert common.LISTENERS_DIR not in e2e.harness_runs_dir().parents
+    (common.SHARED_DIR / "runs" / "sim-run").mkdir(parents=True)
+    (own_listeners / "ian" / "chapters" / "guide-run").mkdir()
+    assert fs_main.open_run("sim-run").root == common.SHARED_DIR / "runs" / "sim-run"
+    assert fs_main.open_run("guide-run").root == own_listeners / "ian" / "chapters" / "guide-run"
 
 
 def test_the_listener_cli(cfg, own_listeners, monkeypatch, capsys):
