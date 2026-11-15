@@ -4,6 +4,7 @@ code), the intro's context (check 12's "nothing from the script beyond the brief
 recorded chapter with the rewind (check 13 in code)."""
 
 import json
+import os
 from datetime import datetime
 
 import pytest
@@ -49,7 +50,7 @@ def test_the_library_states(app):
     assert s["up_next"]["line"] == schedule.next_label(s["settings"], now) and s["up_next"]["change"] is True
     root = app.listener / "chapters" / "2026-11-17-why-herons-wait"
     root.mkdir(parents=True)
-    profiles.write_json(root / "status.json", {"state": "making", "label": "Recording"})
+    profiles.write_json(root / "status.json", {"state": "making", "label": "Recording", "pid": os.getpid()})
     card(app.listener, status="building", chapter=root.name)
     s = routes.library_state(app.cfg, datetime(2026, 11, 17, 3, 0))
     assert s["up_next"]["state"] == "building" and s["up_next"]["change"] is False
@@ -69,6 +70,37 @@ def test_the_library_states(app):
     page = app.c.get("/library")
     assert page.status_code == 200 and 'id="change"' in page.text and "/library.js" in page.text
     assert "window.Morning" in app.c.get("/library.js").text
+
+
+def test_a_dead_build_shows_as_not_finished_and_can_change(app):
+    """C4/C24: kill -9 mid-build; the page must not say 'Building now' all day."""
+    import subprocess
+    import sys
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    root = app.listener / "chapters" / "2026-11-17-why-herons-wait"
+    root.mkdir(parents=True)
+    profiles.write_json(root / "status.json", {"state": "making", "label": "Recording", "pid": p.pid})
+    card(app.listener, status="building", chapter=root.name, locked_at="2026-11-17T02:00:00")
+    s = routes.library_state(app.cfg, datetime(2026, 11, 17, 10, 0))
+    assert s["up_next"]["state"] == "failed" and s["up_next"]["line"] == "Last night's chapter didn't finish"
+    assert s["up_next"]["change"] is True and s["up_next"]["can_change"] is True
+    assert profiles.read_json(root / "status.json")["state"] == "problem"
+
+
+def test_a_failed_planning_pass_shows_on_the_card(app):
+    """C23: 'Couldn't plan the next chapter' with the reason, until a pass succeeds or the window ends."""
+    from overnight import planner
+    card(app.listener, status="ready", for_morning="2026-11-17", planned_at="2026-11-16T18:00:00")
+    profiles.append_jsonl(app.listener / planner.FAILURES, {
+        "t": "2026-11-17T18:00:00", "reason": "the title 'Why Herons Wait' repeats the past chapter 'Why Herons Wait', after a retry."})
+    s = routes.library_state(app.cfg, datetime(2026, 11, 17, 18, 30))
+    assert s["up_next"]["line"].startswith("Couldn't plan the next chapter: the title 'Why Herons Wait' repeats")
+    assert s["up_next"]["plan_failed"]
+    s = routes.library_state(app.cfg, datetime(2026, 11, 18, 9, 0))  # Wednesday's build start: a new window
+    assert s["up_next"]["line"] == "The next plan is written this evening" and s["up_next"]["plan_failed"] is None
+    card(app.listener, status="planned", for_morning="2026-11-18", planned_at="2026-11-17T19:00:00")
+    assert routes.library_state(app.cfg, datetime(2026, 11, 17, 19, 30))["up_next"]["plan_failed"] is None
 
 
 def test_settings_are_saved_and_checked(app):

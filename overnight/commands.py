@@ -57,18 +57,24 @@ def plist_path() -> Path:
 
 
 def tick(cfg: dict, lid: str | None, clock: datetime | None = None) -> dict:
-    """Plan if a planning pass is due, build if a build is due. Safe to call at any time."""
+    """Plan if a planning pass is due, build if a build is due. Safe to call at any time. A card left
+    building by a dead build is marked failed first (runner.reconcile); a planning pass that keeps
+    failing is not retried more than schedule.plan_backoff allows."""
     from . import planner, schedule
     listener = runner.listener_folder(lid)
     if not listener.is_dir():
         return {"did": None, "reason": f"no listener folder at {listener}"}
     t = clock or datetime.now()
     settings = profiles.settings(cfg, listener=listener)
-    card = runner.read_card(listener)
+    card = runner.reconcile(listener)
     print(f"[{t:%Y-%m-%d %H:%M}] tick for {listener.name}")
     if schedule.build_due(card, settings, t):
         return {"did": "build", **runner.run(cfg, listener.name, clock=t, keep_awake=True)}
     if schedule.plan_due(card, settings, t):
+        wait = schedule.plan_backoff([f.get("t") or "" for f in planner.failures(listener)], settings, t)
+        if wait:
+            print(f"  not planning: {wait}")
+            return {"did": None, "reason": wait}
         return {"did": "plan", "card": planner.plan(cfg, listener, now=t)}
     return {"did": None}
 
@@ -104,6 +110,8 @@ def main(argv: list[str]) -> int:
             request = ({"mode": args.mode or "topic", "topic": args.topic, "notes": args.notes, "session": None}
                        if args.mode or args.topic else None)
             card = planner.plan(cfg, runner.listener_folder(args.listener), request=request)
+            if card and card.get("queued"):
+                print(f"  {card.get('note')} Queued for the next build day.")
             print(json.dumps(card, indent=1, ensure_ascii=False))
         elif args.cmd == "tick":
             out = tick(cfg, args.listener)

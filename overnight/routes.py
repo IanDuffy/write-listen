@@ -62,16 +62,39 @@ def state_line(card: dict | None, settings: dict, now: datetime, build: dict | N
         return "planned", "Ready tomorrow morning"
 
 
+def plan_failure(listener: Path, card: dict | None, settings: dict, now: datetime) -> dict | None:
+    """The last planning pass, if it failed in this planning window (since the last build start) and no
+    card has been planned since."""
+    from . import planner, schedule
+    fails = planner.failures(listener)
+    if not fails:
+        return None
+    last, opened = fails[-1], schedule.last_start(settings, now)
+    t = str(last.get("t") or "")[:19]
+    if opened and t < opened.strftime("%Y-%m-%dT%H:%M:%S"):
+        return None
+    if card and str(card.get("planned_at") or "")[:19] >= t:
+        return None
+    return last
+
+
 def library_state(cfg: dict, now: datetime | None = None) -> dict:
-    from . import schedule
+    from . import runner, schedule
     now = now or datetime.now()
     listener = common.listener_dir(cfg)
     settings = profiles.settings(cfg, listener=listener)
+    try:
+        runner.reconcile(listener)  # a build that died leaves 'building': it didn't finish
+    except OSError as e:
+        print(f"  library: could not check the build ({e})")
     card = profiles.read_json(listener / "up_next.json")
     build = None
     if card and card.get("chapter"):
         build = profiles.read_json(listener / "chapters" / card["chapter"] / "status.json")
     state, line = state_line(card, settings, now, build)
+    failed = plan_failure(listener, card, settings, now) if state in ("none", "waiting") else None
+    if failed:
+        line = f"Couldn't plan the next chapter: {failed.get('reason') or 'the planning pass failed'}"
     try:
         can, why = schedule.can_change(card, settings, now)
     except Exception:
@@ -81,7 +104,7 @@ def library_state(cfg: dict, now: datetime | None = None) -> dict:
     return {"listener": listener.name, "now": now.isoformat(timespec="seconds"),
             "up_next": {"state": state, "line": line, "card": shown,
                         "change": state in ("planned", "failed"), "can_change": can,
-                        "change_note": why},
+                        "change_note": why, "plan_failed": (failed or {}).get("reason")},
             "latest": _chapter_info(latest) if latest else None,
             "settings": settings}
 

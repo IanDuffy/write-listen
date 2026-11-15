@@ -15,21 +15,35 @@ card came from is marked used.
 
 Files: listeners/<id>/plans/<plan id>/ (log.jsonl: every call, priced; inputs.md, choice.json, scout.md,
 card.json), then up_next.json, whole. seed_text(card) is 00_source/seed.md for the build's lock stage.
+
+Before reading, the pass brings the latest chapter's yield up to date (library.after_chapter: the
+questions asked and topics saved during its asides, which happen after the build). The final write is
+under the card lock (overnight/locks.py), shared with the runner in another process, and re-checks the
+card first: a request whose cutoff has passed meanwhile (or whose card is now building) is queued
+instead (the result carries "queued": True); a pass without a request whose card changed meanwhile
+(id or status) is dropped, and the card as it is returned. A request past the cutoff at the start is
+queued the same way. A pass without a request that fails is recorded in plan_failures.jsonl (the
+tick backs off on it, schedule.plan_backoff); a queued topic whose passes fail QUEUE_TRIES times is
+marked used, so it cannot block every night.
 """
 
 from __future__ import annotations
 
 import re
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 
 from stages import llm, research
 from stages.common import Run, StageError, load_prompt, parse_json
 
-from . import library, profiles, schedule
+from . import library, locks, profiles, schedule
 
+FAILURES = "plan_failures.jsonl"  # {"t", "plan", "queued", "error", "reason"}: failed passes without a request
+_monotonic = time.monotonic  # the pass's own clock (tests move it)
+QUEUE_TRIES = 2  # failed passes with one queued topic before it is set aside (marked used)
 STREAK = 3  # continuations in a row, after which surprise branches
 LOCK = threading.Lock()  # one pass at a time in a process (the 18:00 pass and a Change can meet)
 TITLE_STOP = {"the", "a", "an", "of", "and", "in", "on", "to", "for", "why", "how", "what", "is", "are", "it",
@@ -329,20 +343,63 @@ def _plan_id(listener: Path, now: datetime) -> str:
     return pid
 
 
+def failures(listener: Path) -> list[dict]:
+    return profiles.read_jsonl(Path(listener) / FAILURES)
+
+
+def plain_reason(e: BaseException) -> str:
+    """The first sentence of an error, without the stage prefix: for the library page's line."""
+    first = (str(e).strip().splitlines() or [type(e).__name__])[0]
+    first = re.sub(r"^plan( \w+)?:\s*", "", re.split(r"(?<=\.)\s", first)[0])
+    return (first[:157] + "...") if len(first) > 160 else first
+
+
+def _record_failure(listener: Path, now: datetime, e: BaseException, info: dict) -> None:
+    rec = {"t": now.isoformat(timespec="seconds"), "plan": info.get("plan"), "queued": info.get("queued"),
+           "error": f"{type(e).__name__}: {e}", "reason": plain_reason(e)}
+    profiles.append_jsonl(listener / FAILURES, rec)
+    qid = info.get("queued")
+    if qid and sum(1 for f in failures(listener) if f.get("queued") == qid) >= QUEUE_TRIES:
+        library.mark_used(listener, [qid], f"set aside: {QUEUE_TRIES} planning passes failed with it", library.QUEUE)
+        print(f"  queued topic {qid} set aside after {QUEUE_TRIES} failed planning passes")
+
+
 def plan(cfg: dict, listener: Path, *, request: dict | None = None, now: datetime | None = None) -> dict:
     """The planning pass. `request` is {mode, topic, notes, session} from Change by voice. Returns the
-    card written to up_next.json."""
+    card written to up_next.json; or, with a request that could no longer change tonight's card, the
+    card as it is with "queued": True (the request went to queue.jsonl)."""
+    listener, now, info = Path(listener), now or datetime.now(), {}
     with LOCK:
-        return _plan(cfg, Path(listener), request, now or datetime.now())
+        try:
+            return _plan(cfg, listener, request, now, info)
+        except Exception as e:
+            if request is None:
+                _record_failure(listener, now, e, info)
+            raise
 
 
-def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime) -> dict:
+def _queued(listener: Path, request: dict, current: dict | None, why: str) -> dict:
+    q = library.queue_add(listener, request)
+    print(f"  {why} The request went to the queue ({q['id']}).")
+    return {**(current or {}), "queued": True, "queue_id": q["id"], "note": why}
+
+
+def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime, info: dict) -> dict:
+    from . import runner
+    t0 = _monotonic()
     settings = profiles.settings(cfg, listener=listener)
-    current = profiles.read_json(listener / "up_next.json")
+    current = runner.reconcile(listener)  # a dead build's card is failed, not building
     if request:
         ok, why = schedule.can_change(current, settings, now)
         if not ok:
-            raise StageError(why)
+            return _queued(listener, request, current, why)
+    seen = ((current or {}).get("id"), (current or {}).get("status"))
+    latest = profiles.latest_chapter(listener=listener)
+    if latest is not None:  # its asides happened after its build: bring its questions and saved topics in
+        try:
+            library.after_chapter(cfg, listener, latest)
+        except Exception as e:  # the pass can plan without them; they stay in the chapter's 12_asks/
+            print(f"  library: {latest.name} not brought up to date ({type(e).__name__}: {e})")
     ps = plan_settings(cfg)
     minutes = int(settings["chapter"].get("minutes", 20))
     ctx = gather(cfg, listener, request)
@@ -364,8 +421,10 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime) -> dic
     ctx.update(mode=mode, streak=continuations(ctx["past"]), corpus="")
     ctx["corpus"] = listener_corpus(ctx)
     allowed = allowed_decisions(mode, ctx)
+    info["queued"] = (ctx["queued"] or queued_mode or {}).get("id")
 
     pid = _plan_id(listener, now)
+    info["plan"] = pid
     pdir = listener / "plans" / pid
     pdir.mkdir(parents=True)
     r = Run(name=pid, root=pdir, unattended=True, max_usd=ps["max_usd"])
@@ -409,19 +468,32 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime) -> dic
         raise StageError(f"plan: the title {card['title']!r} repeats the past chapter {clash!r}, after a retry. "
                          f"The card was not changed; see {pdir}.")
 
-    nb = schedule.next_build(settings, now) or schedule.next_start(settings, now)
     queued = ctx["queued"] if choice["decided"] == "queue" else queued_mode
-    up = {"id": pid, "for_morning": nb.date().isoformat() if nb else None,
-          "title": card["title"], "overview": card["overview"], "summary": card["summary"],
-          "mode": mode, "decided": choice["decided"], "source": choice["source"],
-          "research_questions": card["research_questions"], "angle": card["angle"],
-          "request": request or None, "notes": ((request or queued or {}).get("notes") or None),
-          "status": "planned", "planned_at": now.isoformat(timespec="seconds"), "locked_at": None,
-          "chapter": None, "error": None, "plan_dir": f"plans/{pid}"}
-    profiles.write_json(listener / "up_next.json", up)
-    if queued:
-        library.mark_used(listener, [queued["id"]], pid, library.QUEUE)
-    if choice["source"]["kind"] == "seed":
-        library.mark_used(listener, [choice["source"]["ref"]], pid)
+    with locks.card_lock(listener):  # the runner moves the card to building under the same lock
+        at = now + timedelta(seconds=_monotonic() - t0)  # the pass took a minute: the cutoff may have come
+        current = runner.reconcile(listener)
+        if request:
+            ok, why = schedule.can_change(current, settings, at)
+            if not ok:
+                profiles.write_json(pdir / "outcome.json", {"written": False, "queued": True, "why": why})
+                return _queued(listener, request, current, why)
+        elif ((current or {}).get("id"), (current or {}).get("status")) != seen:
+            why = "The card changed while this pass ran (a Change, or the build started); this pass was dropped."
+            profiles.write_json(pdir / "outcome.json", {"written": False, "why": why})
+            print(f"  {why}")
+            return current
+        nb = schedule.next_build(settings, at) or schedule.next_start(settings, at)
+        up = {"id": pid, "for_morning": nb.date().isoformat() if nb else None,
+              "title": card["title"], "overview": card["overview"], "summary": card["summary"],
+              "mode": mode, "decided": choice["decided"], "source": choice["source"],
+              "research_questions": card["research_questions"], "angle": card["angle"],
+              "request": request or None, "notes": ((request or queued or {}).get("notes") or None),
+              "status": "planned", "planned_at": now.isoformat(timespec="seconds"), "locked_at": None,
+              "chapter": None, "error": None, "plan_dir": f"plans/{pid}"}
+        profiles.write_json(listener / "up_next.json", up)
+        if queued:
+            library.mark_used(listener, [queued["id"]], pid, library.QUEUE)
+        if choice["source"]["kind"] == "seed":
+            library.mark_used(listener, [choice["source"]["ref"]], pid)
     print(f"  planned {up['title']!r} for {up['for_morning']} ({mode}, {choice['decided']}), ${cost:.3f}")
     return up

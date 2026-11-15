@@ -14,10 +14,18 @@ date + time, never by adding hours across a night, so a change of clocks moves n
     change     before the cutoff a change rewrites the card; from the cutoff, and while building, it goes
                to queue.jsonl for the next build day.
 
-Retry: a failed card is built again on the next build morning. The runner counts builds started for a
-card in `attempts`; from MAX_ATTEMPTS on, a failed card is replanned instead (a chapter that cannot
-finish, say one past its runaway stop, must not block every night after it). Without `attempts` a
-failed card counts as tried once.
+Retry: a failed card is built again on a later build morning than its last attempt (`attempt_at`, set
+by the runner at each build start), never the same night: an outage that failed the build at 03:00 is
+likely still there at 03:15. The runner counts builds in `attempts` and scheduled builds in
+`scheduled_attempts`; from MAX_ATTEMPTS scheduled builds on, a failed card is replanned instead (a
+chapter that cannot finish, say one past its runaway stop, must not block every night after it).
+Manual builds (`run --now`, `resume`) do not use up the scheduled tries, so two failed daytime tests
+of tonight's card still leave tonight's build. A card without `scheduled_attempts` counts its
+`attempts` (without either, a failed card counts as tried once).
+
+Planning failures: plan_backoff() keeps a pass that keeps failing from being paid for every quarter
+hour: one failed pass an hour at most, PLAN_TRIES in a planning window (from the last build start),
+then nothing until the next window or a manual `wl overnight plan`.
 """
 
 from __future__ import annotations
@@ -27,7 +35,9 @@ from datetime import date, datetime, time, timedelta
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 DAY_NAMES = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 BUILD_WINDOW_HOURS = 5  # 02:00 -> 07:00: the latest a scheduled build may still start
-MAX_ATTEMPTS = 2  # builds of one card (the first and one retry) before a failed card is replanned
+MAX_ATTEMPTS = 2  # scheduled builds of one card (the first and one retry) before a failed card is replanned
+PLAN_TRIES = 3  # failed planning passes in one planning window before the tick waits for the next one
+PLAN_RETRY_MINUTES = 60  # at most one failed planning pass in this long
 
 
 def _hhmm(v: str) -> time:
@@ -89,7 +99,20 @@ def plan_opens(settings: dict, build: datetime) -> datetime:
 
 
 def _attempts(card: dict) -> int:
+    if "scheduled_attempts" in card:
+        return int(card.get("scheduled_attempts") or 0)
     return int(card.get("attempts") or 1)
+
+
+def _stamp(t: datetime) -> str:
+    """Local wall-clock time as the cards write it (ISO, to the second, any offset dropped)."""
+    return t.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _tried_before(card: dict, start: datetime) -> bool:
+    """Did the card's last build attempt begin before this build start? (No record: yes.)"""
+    last = str(card.get("attempt_at") or card.get("locked_at") or "")[:19]
+    return not last or last < _stamp(start)
 
 
 def _stale_building(card: dict, morning: date) -> bool:
@@ -101,8 +124,8 @@ def _stale_building(card: dict, morning: date) -> bool:
 def build_due(card: dict | None, settings: dict, now: datetime) -> bool:
     """Should the scheduled build start now? Building is on, a build start has passed within the
     window (BUILD_WINDOW_HOURS), and the card is planned for this morning (or an earlier one it
-    missed), or failed and due its retry, or left 'building' by a build that died on an earlier night.
-    A ready card is never rebuilt."""
+    missed), or failed and due its retry (tried before this morning's start, scheduled tries left), or
+    left 'building' by a build that died on an earlier night. A ready card is never rebuilt."""
     if not card or not enabled(settings):
         return False
     start = last_start(settings, now)
@@ -113,7 +136,8 @@ def build_due(card: dict | None, settings: dict, now: datetime) -> bool:
     if status == "planned":
         return str(card.get("for_morning") or "") <= morning.isoformat()
     if status == "failed":
-        return _attempts(card) < MAX_ATTEMPTS
+        return (_attempts(card) < MAX_ATTEMPTS and _tried_before(card, start)
+                and str(card.get("for_morning") or "") <= morning.isoformat())
     if status == "building":
         return _stale_building(card, morning)
     return False
@@ -140,6 +164,21 @@ def plan_due(card: dict | None, settings: dict, now: datetime) -> bool:
     if card.get("for_morning") == nb.date().isoformat():
         return False
     return now >= plan_opens(settings, nb)
+
+
+def plan_backoff(failed: list[str], settings: dict, now: datetime) -> str | None:
+    """failed: when each failed planning pass began (ISO, local). A reason for the tick not to plan now,
+    or None: a pass failed less than PLAN_RETRY_MINUTES ago, or PLAN_TRIES failed in this planning
+    window (since the last build start). A manual `wl overnight plan` is not held back."""
+    opened = last_start(settings, now)
+    since, upto = (_stamp(opened) if opened else ""), _stamp(now)
+    recent = sorted(t[:19] for t in failed if since <= str(t)[:19] <= upto)
+    if len(recent) >= PLAN_TRIES:
+        return (f"{len(recent)} planning passes failed since {since or 'the last build'}; the next try is in "
+                "the next planning window, or run `wl overnight plan`")
+    if recent and recent[-1] > _stamp(now - timedelta(minutes=PLAN_RETRY_MINUTES)):
+        return f"a planning pass failed at {recent[-1][11:16]}; the next try waits an hour"
+    return None
 
 
 def can_change(card: dict | None, settings: dict, now: datetime) -> tuple[bool, str]:

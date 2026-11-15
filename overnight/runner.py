@@ -21,6 +21,12 @@ status.json holds the stage, when it started, the cost so far and any error; cos
 stage and provider. A failure (the runaway stop included) stops the build, marks the card failed
 ("Last night's chapter didn't finish"), and `wl overnight resume` restarts from the failed stage. If
 nobody resumes it, the next build day retries the same plan before a new one is planned.
+
+Every build start (a first build, a retry, a resume) sets the card itself to building, with
+`attempts`, `attempt_at` and `scheduled_attempts` (schedule.py's retry rules), under the card lock
+(overnight/locks.py), and refuses if a new plan replaced the card meanwhile. A build that dies
+without an exception (kill -9, power loss, launchd's SIGTERM) leaves the card building: reconcile()
+marks it failed once neither the build lock's pid nor status.json's is alive.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ from pathlib import Path
 from stages import common
 from stages.common import Run, StageError, run_config
 
-from . import profiles
+from . import locks, profiles
 
 LOCK_FILE = ".overnight.lock"
 CARD = "up_next.json"
@@ -153,6 +159,59 @@ def card_path(listener: Path) -> Path:
 
 def read_card(listener: Path) -> dict | None:
     return profiles.read_json(card_path(listener))
+
+
+def _pid_alive(pid) -> bool:
+    try:
+        return bool(pid) and _alive(int(pid))
+    except (TypeError, ValueError):
+        return False
+
+
+def build_stopped(listener: Path, card: dict) -> bool:
+    """Is the build of this 'building' card gone? Neither the build lock's pid nor the chapter's
+    status.json pid is alive (a missing lock or pid counts as gone: the runner takes the lock before it
+    marks the card building, and writes its pid before every stage)."""
+    lockfile = listener / LOCK_FILE
+    try:
+        lock_pid = (lockfile.read_text().split() or [None])[0] if lockfile.exists() else None
+    except OSError:
+        lock_pid = None
+    if _pid_alive(lock_pid):
+        return False
+    st = profiles.read_json(listener / "chapters" / card["chapter"] / "status.json") if card.get("chapter") else None
+    return not _pid_alive((st or {}).get("pid"))
+
+
+STOPPED = "the build process stopped"
+
+
+def reconcile(listener: Path) -> dict | None:
+    """A card still 'building' whose build process is gone becomes failed (error STOPPED), and its
+    status.json a problem, as a build stopped by an exception would have left them; then the normal
+    retry and Change rules apply. Returns the card as it now is. Two small reads when nothing is wrong."""
+    listener = Path(listener)
+    card = read_card(listener)
+    if not card or card.get("status") != "building":
+        return card
+    with locks.card_lock(listener):
+        card = read_card(listener)
+        if not card or card.get("status") != "building" or not build_stopped(listener, card):
+            return card
+        if card.get("chapter"):
+            root = listener / "chapters" / card["chapter"]
+            st = profiles.read_json(root / "status.json")
+            if st is not None and st.get("state") == "making":
+                profiles.write_json(root / "status.json", {
+                    **st, "state": "problem", "error": STOPPED, "detail": STOPPED, "pid": None,
+                    "message": "Last night's chapter didn't finish.", "updated": _now_iso()})
+            if root.is_dir():
+                Run(name=root.name, root=root, unattended=True).decide(
+                    "stopped", f"The build process was gone while the card still said building ({card.get('id')}).")
+        card = {**card, "status": "failed", "error": STOPPED}
+        profiles.write_json(card_path(listener), card)
+        print(f"  {listener.name}: the build of {card.get('chapter') or card.get('id')} had stopped; marked failed")
+        return card
 
 
 def _update_card(listener: Path, card: dict, **fields) -> None:
@@ -291,13 +350,40 @@ def sized(cfg: dict, settings: dict) -> dict:
     return {**cfg, "overnight": {**o, "write": w, "total_minutes": [m - 2, m + 2]}}
 
 
-def build(cfg: dict, listener: Path, card: dict, *, keep_awake: bool = False) -> dict:
-    """Build (or continue) the chapter for this card. Returns the final status."""
+def _start_card(listener: Path, card: dict, name: str, scheduled: bool, at: datetime | None) -> dict:
+    """The card says building from the moment a build starts, a retry or a resume included (the lock
+    stage is skipped then). Under the card lock, and only if the card is still this plan."""
+    with locks.card_lock(listener):
+        now = read_card(listener)
+        if now is not None and now.get("id") != card.get("id"):
+            raise StageError(f"A new plan ({now.get('id')}) replaced the card for '{card.get('title')}' before "
+                             "its build started; nothing was built. The next tick builds the new one if it is due.")
+        fields = {"status": "building", "chapter": name, "error": None,
+                  "locked_at": card.get("locked_at") or _now_iso(),
+                  "attempts": int(card.get("attempts") or 0) + 1,
+                  "attempt_at": (at or datetime.now()).isoformat(timespec="seconds"),
+                  # manual builds (--now, resume) leave the scheduled tries alone (schedule._attempts)
+                  "scheduled_attempts": int(card.get("scheduled_attempts") or 0) + (1 if scheduled else 0)}
+        card = {**card, **fields}
+        _update_card(listener, card, **fields)
+        return card
+
+
+def build(cfg: dict, listener: Path, card: dict, *, keep_awake: bool = False, scheduled: bool = False,
+          at: datetime | None = None) -> dict:
+    """Build (or continue) the chapter for this card. Returns the final status. `scheduled`: started by
+    the clock (counts toward schedule.MAX_ATTEMPTS); `at`: when the build started (default now)."""
     lockfile = _take_lock(listener)
     try:
         if keep_awake:
             _keep_awake()
         name = card.get("chapter") or chapter_name(listener, card)
+        if all((listener / "chapters" / name / key).exists() for _, key, _, _ in STAGES):
+            r = Run.open(name, runs_dir=listener / "chapters")
+            _update_card(listener, card, status="ready", chapter=r.name, error=None)
+            return write_status(r, "ready", card, audio="10_audio/chapter.mp3", cost_usd=round(r.spent(), 4))
+        card = _start_card(listener, card, name, scheduled, at)
+        attempts = card["attempts"]
         r = Run.open(name, create=True, runs_dir=listener / "chapters")
         r.unattended = True
         settings = profiles.settings(cfg, listener=listener)
@@ -305,14 +391,9 @@ def build(cfg: dict, listener: Path, card: dict, *, keep_awake: bool = False) ->
         cfg = sized(cfg, settings)
         cfg_r = run_config(r, cfg)
         todo = [label for label, key, _, _ in STAGES if not done(r, key)]
-        if not todo:
-            _update_card(listener, card, status="ready", chapter=r.name, error=None)
-            return write_status(r, "ready", card, audio="10_audio/chapter.mp3", cost_usd=round(r.spent(), 4))
-        attempts = int(card.get("attempts") or 0) + 1  # schedule.build_due retries a failed card once
-        card = {**card, "attempts": attempts}
-        _update_card(listener, card, attempts=attempts)
         r.decide("start" if r.spent() == 0 else "continue",
-                 f"Overnight build of '{card['title']}' ({card.get('id')}): {', '.join(todo)}. Runaway stop "
+                 f"Overnight build of '{card['title']}' ({card.get('id')}), attempt {attempts}"
+                 f"{' (scheduled)' if scheduled else ''}: {', '.join(todo)}. Runaway stop "
                  f"${r.max_usd:.2f}; ${r.spent():.2f} spent before this.")
         print(f"  overnight build {r.name}: {', '.join(todo)} (runaway stop ${r.max_usd:.0f})")
         for label, key, fn, plain in STAGES:
@@ -368,7 +449,7 @@ def run(cfg: dict, lid: str | None = None, *, now: bool = False, clock: datetime
     if not listener.is_dir():
         raise StageError(f"No listener folder at {listener}.")
     settings = profiles.settings(cfg, listener=listener)
-    card = read_card(listener)
+    card = reconcile(listener)
     t = clock or datetime.now()
     if not now:
         if not schedule.build_due(card, settings, t):
@@ -379,13 +460,13 @@ def run(cfg: dict, lid: str | None = None, *, now: bool = False, clock: datetime
     elif card is None or card.get("status") == "ready":
         print("  no plan waiting: planning one first")
         card = planner.plan(cfg, listener, now=t)
-    return {"ran": True, **build(cfg, listener, card, keep_awake=keep_awake)}
+    return {"ran": True, **build(cfg, listener, card, keep_awake=keep_awake, scheduled=not now, at=t)}
 
 
 def resume(cfg: dict, lid: str | None = None) -> dict:
     """`wl overnight resume`: continue the card's chapter from the stage that failed or stopped."""
     listener = listener_folder(lid)
-    card = read_card(listener)
+    card = reconcile(listener)
     if not card or card.get("status") not in ("failed", "building") or not card.get("chapter"):
         raise StageError("There is no stopped build to resume.")
     return {"ran": True, **build(cfg, listener, card)}
@@ -393,7 +474,7 @@ def resume(cfg: dict, lid: str | None = None) -> dict:
 
 def state(cfg: dict, lid: str | None = None) -> dict:
     listener = listener_folder(lid)
-    card = read_card(listener) or {}
+    card = reconcile(listener) or {}
     out = {"listener": listener.name, "card": card}
     if card.get("chapter"):
         out["status"] = profiles.read_json(listener / "chapters" / card["chapter"] / "status.json")

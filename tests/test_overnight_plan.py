@@ -35,7 +35,7 @@ def test_surprise_reads_everything_and_writes_the_card(world, cfg):
     pdir = d / up["plan_dir"]
     for f in ("log.jsonl", "inputs.md", "choice.json", "scout.md", "card.json"):
         assert (pdir / f).exists(), f
-    assert fake.kinds() == ["choose", "scout", "card"]
+    assert fake.kinds() == ["open", "choose", "scout", "card"]  # the latest chapter's asides judged first
     # What the planner read: the last chapter, seeds, library, profile, every past chapter.
     seen = all_text(fake.of("choose")[0])
     for bit in ("Fish that see the shadow", "Patience is a hunting tool.", "Wait, why do they stand on one leg?",
@@ -138,7 +138,7 @@ def test_a_repeated_title_gets_one_retry(world, cfg):
     d, fake = world
     fake.titles = ["why herons wait!", "Night Fishing on the River"]
     up = planner.plan(cfg, d, now=TUESDAY_EVENING)
-    assert up["title"] == "Night Fishing on the River" and fake.kinds() == ["choose", "scout", "card", "card"]
+    assert up["title"] == "Night Fishing on the River" and fake.kinds() == ["open", "choose", "scout", "card", "card"]
     retry = all_text(fake.of("card")[1])
     assert 'titled "why herons wait!"' in retry and '"Why Herons Wait"' in retry
     assert profiles.read_json(d / up["plan_dir"] / "card.json")["titles_tried"] == ["why herons wait!",
@@ -168,12 +168,109 @@ def test_first_run_with_nothing(tmp_path, cfg, monkeypatch):
     assert fake.of("choose")[0]["output_config"]["format"]["schema"]["properties"]["decided"]["enum"] == ["branch"]
 
 
-def test_a_request_after_the_cutoff_is_refused_for_the_queue(world, cfg):
+def test_a_request_after_the_cutoff_goes_to_the_queue(world, cfg):
     d, fake = world
-    planner.plan(cfg, d, now=datetime(2026, 11, 17, 1, 0))  # the card for this morning
-    with pytest.raises(StageError, match="next build day"):
-        planner.plan(cfg, d, request={"mode": "topic", "topic": "x", "session": "s"},
-                     now=datetime(2026, 11, 17, 2, 30))
+    old = planner.plan(cfg, d, now=datetime(2026, 11, 17, 1, 0))  # the card for this morning
+    fake.calls.clear()
+    out = planner.plan(cfg, d, request={"mode": "topic", "topic": "x", "session": "s"},
+                       now=datetime(2026, 11, 17, 2, 30))
+    assert out["queued"] is True and "next build day" in out["note"] and out["id"] == old["id"]
+    assert card_of(d) == old and fake.calls == []  # nothing paid, the card untouched
+    assert [q["topic"] for q in library.queue(d)] == ["x"]
+
+
+def test_a_change_whose_cutoff_comes_during_the_pass_is_queued_not_written(world, cfg, monkeypatch):
+    """C2/C11/C28: Change at 01:59:30, the pass takes a minute; at 02:00:30 the old card is tonight's
+    build. The card must not be replaced (a second chapter that night); the request is queued."""
+    d, fake = world
+    old = planner.plan(cfg, d, now=datetime(2026, 11, 16, 18, 0))  # Tuesday's card
+    clock = iter([0.0, 60.0])
+    monkeypatch.setattr(planner, "_monotonic", lambda: next(clock))
+    req = {"mode": "topic", "topic": "Octopus eyes", "notes": "", "session": "s1"}
+    out = planner.plan(cfg, d, request=req, now=datetime(2026, 11, 17, 1, 59, 30))
+    assert out["queued"] is True and out["id"] == old["id"]
+    assert card_of(d) == old
+    assert [q["topic"] for q in library.queue(d)] == ["Octopus eyes"]
+    assert profiles.read_json(sorted((d / "plans").iterdir())[-1] / "outcome.json")["queued"] is True
+
+
+def test_a_change_queues_when_the_build_takes_the_card_during_the_pass(world, cfg, monkeypatch):
+    """The runner (another process) moved the card to building while the pass ran."""
+    d, fake = world
+    old = planner.plan(cfg, d, now=datetime(2026, 11, 16, 18, 0))
+    real = fake.__call__
+
+    def build_starts(kwargs):
+        if "Write the Up next card" in all_text(kwargs):
+            profiles.write_json(d / "up_next.json", {**card_of(d), "status": "building", "chapter": "c",
+                                                     "locked_at": "2026-11-17T02:00:01"})
+            (d / "chapters" / "c").mkdir()
+            profiles.write_json(d / "chapters" / "c" / "status.json", {"state": "making", "pid": __import__("os").getpid()})
+        return real(kwargs)
+    from fakes import FakeAnthropic
+    from stages import llm
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(build_starts))
+    out = planner.plan(cfg, d, request={"mode": "topic", "topic": "Tides", "session": "s2"},
+                       now=datetime(2026, 11, 17, 1, 59))
+    assert out["queued"] is True and card_of(d)["status"] == "building" and card_of(d)["id"] == old["id"]
+    assert [q["topic"] for q in library.queue(d)] == ["Tides"]
+
+
+def test_a_plain_pass_is_dropped_if_the_card_changed_meanwhile(world, cfg, monkeypatch):
+    """C2 (c): the 18:00 pass and a Change at 18:00 both write; the listener's card must survive."""
+    d, fake = world
+    real = fake.__call__
+    changed = {"id": "plan-by-change", "title": "Octopus Eyes", "status": "planned", "for_morning": "2026-11-18"}
+
+    def change_lands(kwargs):
+        if "Write the Up next card" in all_text(kwargs) and card_of(d) is None:
+            profiles.write_json(d / "up_next.json", changed)
+        return real(kwargs)
+    from fakes import FakeAnthropic
+    from stages import llm
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(change_lands))
+    out = planner.plan(cfg, d, now=TUESDAY_EVENING)
+    assert out == changed and card_of(d) == changed
+
+
+def test_failed_passes_are_recorded_and_a_queued_topic_that_keeps_failing_is_set_aside(world, cfg):
+    """C3/C23: a queued topic whose card title repeats a past chapter must not block every night."""
+    d, fake = world
+    q = library.add_queue(d, "Why herons wait")
+    fake.titles = ["Why Herons Wait"]  # every card repeats the first chapter
+    for hour in (18, 19):
+        with pytest.raises(StageError, match="repeats the past chapter"):
+            planner.plan(cfg, d, now=datetime(2026, 11, 17, hour, 0))
+    fails = planner.failures(d)
+    assert [f["queued"] for f in fails] == [q["id"], q["id"]] and fails[0]["t"] == "2026-11-17T18:00:00"
+    assert fails[0]["reason"].startswith("the title 'Why Herons Wait' repeats the past chapter")
+    assert library.queue(d) == []  # set aside after QUEUE_TRIES failures
+    fake.titles = ["Something New Entirely"]
+    fake.calls.clear()
+    up = planner.plan(cfg, d, now=datetime(2026, 11, 17, 20, 0))
+    assert up["decided"] != "queue" and up["mode"] == "surprise"
+    with pytest.raises(StageError):  # a request's failure is the Change's to handle, not the tick's
+        fake.titles = ["Why Herons Wait"]
+        planner.plan(cfg, d, request={"mode": "topic", "topic": "herons", "session": "s"},
+                     now=datetime(2026, 11, 17, 21, 0))
+    assert len(planner.failures(d)) == 2
+
+
+def test_each_pass_brings_the_latest_chapters_asides_in(world, cfg):
+    """C25: the morning's asides come after the build's library step; the next pass adds their questions."""
+    d, fake = world
+    strike = d / "chapters" / "2026-11-17-the-strike"
+    library.after_chapter(cfg, d, strike)  # what the build did at 05:00
+    fake.calls.clear()
+    profiles.append_jsonl(strike / "12_asks" / "asides.jsonl", {"id": "ask-2", "segment": 2, "transcript": [
+        {"who": "listener", "text": "How fast is the strike compared to a cat?"}]})
+    fake.open = [{"n": 1, "question": "How does a heron's strike compare with a cat's pounce?"}]
+    planner.plan(cfg, d, now=TUESDAY_EVENING)
+    assert fake.kinds()[0] == "open"
+    listed = all_text(fake.of("open")[0])
+    assert "How fast is the strike compared to a cat?" in listed and "stand on one leg" not in listed
+    assert "How does a heron's strike compare with a cat's pounce?" in [s["text"] for s in library.seeds(d)]
+    assert "How does a heron's strike compare with a cat's pounce?" in all_text(fake.of("choose")[0])
 
 
 def test_overnight_off_still_dates_the_card(world, cfg):

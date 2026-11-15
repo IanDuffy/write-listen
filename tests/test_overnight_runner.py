@@ -249,3 +249,149 @@ def test_the_overnight_cli(world, monkeypatch, capsys):
     assert cli.main(["overnight", "status"]) == 0
     assert '"status": "ready"' in capsys.readouterr().out
     assert "<string>tick</string>" in commands.plist_text() and "<integer>45</integer>" in commands.plist_text()
+
+
+# --- review fixes: the card through retries, dead builds, planning back-off ----------
+
+def _kill_at_research(world, times=1):
+    left = {"n": times}
+
+    def kill(kwargs):
+        t = all_text(kwargs)
+        if left["n"] and ("Your idea is row L02" in t or "This idea is row L02" in t):
+            left["n"] -= 1
+            raise Killed()
+    world.comp.hooks.append(kill)
+
+
+def _dead_pid() -> int:
+    import subprocess
+    import sys
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def test_the_card_lock_holds_across_processes_and_nests_in_a_thread(tmp_path):
+    """C2/C11/C28: the tick process and the server's replan thread share listeners/<id>/.card.lock."""
+    import subprocess
+    import sys
+    import time as _time
+    from overnight import locks
+    child = subprocess.Popen([sys.executable, "-c", (
+        "import fcntl, sys, time\n"
+        f"f = open({str(tmp_path / locks.LOCK_NAME)!r}, 'a'); fcntl.flock(f, fcntl.LOCK_EX)\n"
+        "print('held', flush=True); time.sleep(0.6)\n")], stdout=subprocess.PIPE, text=True)
+    assert child.stdout.readline().strip() == "held"
+    t0 = _time.monotonic()
+    with locks.card_lock(tmp_path):
+        waited = _time.monotonic() - t0
+        with locks.card_lock(tmp_path):  # the planner's write reconciles inside its own lock
+            pass
+    child.wait()
+    assert waited > 0.3
+
+
+def test_a_resumed_build_puts_the_card_back_to_building(world):
+    """C1: during a retry or resume the card says building, so Change is queued, not replanned, and the
+    finished build marks its own card ready."""
+    from overnight import schedule
+    _kill_at_research(world)
+    with pytest.raises(Killed):
+        runner.run(world.cfg, "ian", now=True)
+    assert profiles.read_json(world.listener / "up_next.json")["status"] == "failed"
+    seen = []
+
+    def look(kwargs):
+        c = profiles.read_json(world.listener / "up_next.json")
+        s = profiles.settings(world.cfg, listener=world.listener)
+        seen.append((c["status"], c.get("error"), schedule.can_change(c, s, datetime.now())[0]))
+    world.comp.hooks.append(look)
+    assert runner.resume(world.cfg, "ian")["state"] == "ready"
+    assert seen and all(x == ("building", None, False) for x in seen)
+    card = profiles.read_json(world.listener / "up_next.json")
+    assert card["status"] == "ready" and card["attempts"] == 2
+
+
+def test_a_build_refuses_a_card_a_new_plan_replaced(world):
+    """C2/C28: the build re-reads the card under the card lock before it starts."""
+    from overnight import planner
+    old = planner.plan(world.cfg, world.listener, now=datetime(2026, 11, 16, 18, 5))
+    profiles.write_json(world.listener / "up_next.json", {**old, "id": "plan-newer"})
+    with pytest.raises(StageError, match="replaced the card"):
+        runner.build(world.cfg, world.listener, old)
+    assert not any((world.listener / "chapters").iterdir())  # nothing made, nothing paid
+    assert profiles.read_json(world.listener / "up_next.json")["status"] == "planned"
+
+
+def test_a_dead_build_is_marked_failed_and_retried_like_one(world):
+    """C4/C24: kill -9 leaves the card building and status.json making with a dead pid."""
+    import os
+    _kill_at_research(world)
+    with pytest.raises(Killed):
+        runner.run(world.cfg, "ian", now=True)
+    card = profiles.read_json(world.listener / "up_next.json")
+    root = world.listener / "chapters" / card["chapter"]
+    st = json.loads((root / "status.json").read_text())
+    profiles.write_json(root / "status.json", {**st, "state": "making", "pid": _dead_pid()})
+    profiles.write_json(world.listener / "up_next.json", {**card, "status": "building", "error": None})
+    (world.listener / runner.LOCK_FILE).write_text(f"{_dead_pid()} 2026-11-17T02:00:00\n")
+    out = commands.tick(world.cfg, "ian", clock=datetime(2026, 11, 15, 12, 0))  # a Sunday: nothing due
+    assert out["did"] is None
+    card = profiles.read_json(world.listener / "up_next.json")
+    assert card["status"] == "failed" and card["error"] == runner.STOPPED
+    st = json.loads((root / "status.json").read_text())
+    assert st["state"] == "problem" and st["error"] == runner.STOPPED and st["pid"] is None
+    assert "build process was gone" in (root / "decisions.md").read_text()
+    # A live build is left alone: its status pid is this process.
+    profiles.write_json(world.listener / "up_next.json", {**card, "status": "building"})
+    profiles.write_json(root / "status.json", {**st, "state": "making", "pid": os.getpid()})
+    assert runner.reconcile(world.listener)["status"] == "building"
+    profiles.write_json(root / "status.json", {**st, "state": "making", "pid": _dead_pid()})
+    assert runner.resume(world.cfg, "ian")["state"] == "ready"  # resume reconciles, then continues
+
+
+def test_manual_runs_leave_tonights_scheduled_build(world):
+    """C5/C27: two failed `run --now` tests of tonight's card; the 02:00 tick still builds it."""
+    from datetime import timedelta
+    _kill_at_research(world, times=2)
+    for _ in range(2):
+        with pytest.raises(Killed):
+            runner.run(world.cfg, "ian", now=True)
+    card = profiles.read_json(world.listener / "up_next.json")
+    assert card["status"] == "failed" and card["attempts"] == 2 and card["scheduled_attempts"] == 0
+    morning = datetime.fromisoformat(card["for_morning"])
+    while morning.weekday() > 4:  # build days here are Monday to Friday
+        morning += timedelta(days=1)
+    two = morning.replace(hour=2)
+    out = commands.tick(world.cfg, "ian", clock=two)
+    assert out["did"] == "build" and out["state"] == "ready"
+    card = profiles.read_json(world.listener / "up_next.json")
+    assert card["scheduled_attempts"] == 1 and card["attempts"] == 3
+    assert card["attempt_at"] == two.isoformat(timespec="seconds")
+
+
+def test_the_tick_backs_off_a_planning_pass_that_keeps_failing(world, monkeypatch):
+    """C3/C23: one failed pass an hour, three in a planning window, then the next window."""
+    from overnight import planner
+    tried = []
+
+    def fail(cfg, listener, request, now, info):
+        tried.append(now)
+        raise StageError("plan choose: no topic came back.")
+    monkeypatch.setattr(planner, "_plan", fail)
+
+    def tick(h, m=0, day=17):
+        return commands.tick(world.cfg, "ian", clock=datetime(2026, 11, day, h, m))
+    with pytest.raises(StageError):
+        tick(18)
+    assert tick(18, 15)["did"] is None and len(tried) == 1
+    for h in (19, 20):
+        with pytest.raises(StageError):
+            tick(h)
+    out = tick(23)
+    assert out["did"] is None and "next planning window" in out["reason"] and len(tried) == 3
+    assert tick(1, 45, day=18)["did"] is None and len(tried) == 3
+    with pytest.raises(StageError):
+        tick(2, 15, day=18)  # Wednesday's build start opened a new window
+    assert len(tried) == 4 and len(planner.failures(world.listener)) == 4

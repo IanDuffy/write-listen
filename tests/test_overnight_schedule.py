@@ -157,3 +157,41 @@ def test_next_label(now, label):
 def test_next_label_off():
     assert S.next_label(st(enabled=False), at(16, 18)) == "Overnight building is off"
     assert S.next_label(st(start="21:00"), at(16, 18)) == "Ready this evening"
+
+
+# --- retries on a later build day (C5, C27) and planning back-off (C3, C23) ----------
+
+def test_a_failed_build_is_retried_on_the_next_build_day_not_the_same_night():
+    s = st()
+    failed = card("failed", "2026-11-17", attempts=1, scheduled_attempts=1, attempt_at="2026-11-17T02:00:04",
+                  locked_at="2026-11-17T02:00:04-05:00")
+    assert not S.build_due(failed, s, at(17, 2, 15))   # the next tick, in the same outage
+    assert not S.build_due(failed, s, at(17, 6, 45))
+    assert S.build_due(failed, s, at(18, 2))            # Wednesday 02:00 retries the same plan
+    assert not S.plan_due(failed, s, at(17, 18, 30))    # and nothing replans it in between
+    # without attempt_at (older cards) the lock time stands in
+    assert not S.build_due(card("failed", "2026-11-17", locked_at="2026-11-17T02:00:04"), s, at(17, 3))
+    assert S.build_due(card("failed", "2026-11-17", locked_at="2026-11-17T02:00:04"), s, at(18, 2))
+
+
+def test_manual_runs_do_not_use_up_tonights_scheduled_tries():
+    """Two failed daytime `run --now` tests of tonight's card still leave tonight's build."""
+    s = st()
+    tested = card("failed", "2026-11-17", attempts=2, scheduled_attempts=0, attempt_at="2026-11-16T15:10:00")
+    assert S.build_due(tested, s, at(17, 2))
+    assert not S.plan_due(tested, s, at(16, 19))
+    used = card("failed", "2026-11-17", attempts=3, scheduled_attempts=2, attempt_at="2026-11-18T02:00:00")
+    assert not S.build_due(used, s, at(19, 2)) and S.plan_due(used, s, at(18, 18))  # replanned
+    assert not S.build_due(card("failed", "2026-11-18", attempt_at="2026-11-16T15:00:00"), s, at(17, 2))  # not before its morning
+
+
+def test_plan_backoff():
+    s = st()
+    assert S.plan_backoff([], s, at(17, 18)) is None
+    assert "hour" in S.plan_backoff(["2026-11-17T18:00:00"], s, at(17, 18, 15))
+    assert S.plan_backoff(["2026-11-17T18:00:00"], s, at(17, 19, 0)) is None
+    three = ["2026-11-17T18:00:00", "2026-11-17T19:00:00", "2026-11-17T20:00:00"]
+    assert "next planning window" in S.plan_backoff(three, s, at(17, 23))
+    assert "next planning window" in S.plan_backoff(three, s, at(18, 1, 59))
+    assert S.plan_backoff(three, s, at(18, 2, 0)) is None  # a new window from the next build start
+    assert S.plan_backoff(["2026-11-16T18:00:00"] * 5, s, at(17, 18)) is None  # an earlier night's

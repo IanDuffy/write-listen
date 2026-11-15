@@ -86,6 +86,25 @@ def test_after_chapter_without_asides_makes_no_call_and_keeps_questions_if_the_c
     assert "Wait, why do they stand on one leg?" in [s["text"] for s in library.seeds(d) if s["kind"] == "question"]
 
 
+def test_after_chapter_judges_questions_asked_since_its_last_run(world, cfg):
+    """C25: the build's run (05:00) sees no asides; the morning's are judged on the next run, and only they."""
+    d, fake = world
+    root = d / "chapters" / "2026-11-17-the-strike"
+    library.after_chapter(cfg, d, root)
+    assert len(fake.of("open")) == 1
+    profiles.append_jsonl(root / "12_asks" / "asides.jsonl", {"id": "ask-2", "segment": 2, "transcript": [
+        {"who": "listener", "text": "Do herons ever miss the fish?"}]})
+    fake.open = [{"n": 1, "question": "How often does a heron's strike miss?"}]
+    got = library.after_chapter(cfg, d, root)
+    assert len(fake.of("open")) == 2 and got["seeds"] == 1
+    call = all_text(fake.of("open")[1])
+    assert "1. (asked during section 2) Do herons ever miss the fish?" in call and "one leg" not in call
+    added = json.loads((root / library.ADDED).read_text())
+    assert [q["question"] for q in added["open_questions"]] == ["Why do herons stand on one leg?",
+                                                               "How often does a heron's strike miss?"]
+    assert library.after_chapter(cfg, d, root) == {"seeds": 0, "library": 0} and len(fake.of("open")) == 2
+
+
 def test_the_chapter_that_answered_every_question_adds_none(world, cfg):
     d, fake = world
     fake.open = []

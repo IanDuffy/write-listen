@@ -254,7 +254,9 @@ def open_questions(cfg: dict, root: Path, questions: list[dict]) -> list[dict]:
 
 def after_chapter(cfg: dict, listener: Path, chapter_root: Path) -> dict:
     """Add what a finished chapter yields to seeds.jsonl and library.jsonl. Safe to run again: ids
-    dedupe, and the question judgement is kept in the chapter's 13_library.json."""
+    dedupe, and the question judgement is kept in the chapter's 13_library.json, with the questions
+    judged so far ("judged"): questions asked since (asides.jsonl grew) are judged on the next run,
+    which each planning pass makes for the latest chapter (its asides come after its build)."""
     if listener is None:
         raise StageError(f"library: {chapter_root} is not in a listener's chapters folder.")
     root, name = Path(chapter_root), Path(chapter_root).name
@@ -265,14 +267,18 @@ def after_chapter(cfg: dict, listener: Path, chapter_root: Path) -> dict:
         seed_items.append({"kind": "idea", "text": s["topic"] + (f" ({s['why']})" if s["why"] else ""),
                            "words": s["words"], "source": {**src, "aside": "seeds.md"}})
     questions = aside_questions(root)
-    if "open_questions" in done:
-        open_qs = done["open_questions"]
-    else:
+    judged = set(done.get("judged") or [])
+    if "open_questions" in done and "judged" not in done:  # written before "judged" was kept
+        judged = {_norm(q["words"]) for q in done["open_questions"]}
+    new_qs = [q for q in questions if _norm(q["words"]) not in judged]
+    open_qs = list(done.get("open_questions") or [])
+    if new_qs or "open_questions" not in done:  # asides after the last pass (the morning's) get judged
         try:
-            open_qs = open_questions(cfg, root, questions)
+            open_qs += open_questions(cfg, root, new_qs)
         except StageError as e:  # better a seed too many than a question lost
             print(f"  library: open questions not judged ({e}); keeping every question asked")
-            open_qs = [{**q, "question": q["words"]} for q in questions]
+            open_qs += [{**q, "question": q["words"]} for q in new_qs]
+    judged |= {_norm(q["words"]) for q in new_qs}
     for q in open_qs:
         seed_items.append({"kind": "question", "text": q["question"], "words": q["words"],
                            "source": {**src, "aside": q.get("aside")}})
@@ -285,7 +291,7 @@ def after_chapter(cfg: dict, listener: Path, chapter_root: Path) -> dict:
                                "note": ref.get("note") or "", "source": {**src, "ref": ref.get("id")}})
     new_seeds = add_seeds(listener, seed_items)
     new_works = add_works(listener, work_items)
-    profiles.write_json(root / ADDED, {"t": _now(), "open_questions": open_qs,
+    profiles.write_json(root / ADDED, {"t": _now(), "open_questions": open_qs, "judged": sorted(judged),
                                        "seeds": sorted({*done.get("seeds", []), *(s["id"] for s in new_seeds)}),
                                        "library": sorted({*done.get("library", []), *(w["id"] for w in new_works)})})
     print(f"  library: {len(new_seeds)} new seeds, {len(new_works)} new library items")
