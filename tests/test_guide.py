@@ -343,3 +343,26 @@ def test_the_name_it_chose_survives_a_long_conversation(world):
     assert name not in v["earlier"]  # cut from the start of a long conversation
     assert v["names"] == f"(you have already told them your name is {name}: keep it)"
     assert session().resume_values()["names"].count(",") == 4  # no name said yet: the draw stands
+
+
+def test_a_returning_listener_without_guide_md_is_not_met_as_new(world, cfg):
+    """Round 2: meeting() decides; a past conversation in which they spoke is enough, with no name on record."""
+    session, resp, _, _, _, listener = world
+    (listener / "sessions").mkdir(exist_ok=True)
+    (listener / "sessions" / "20261112-080000.jsonl").write_text(
+        json.dumps({"who": "listener", "text": "I pour concrete."}) + "\n")
+    s = session()
+    s.say(None)
+    system = all_text(guide_calls(resp)[-1])
+    assert guide.RETURNING_NO_NAME in system and "(none: this is your first meeting)" not in system
+    head = json.loads(s.transcript.read_text().splitlines()[0])
+    assert head["returning"] is True and head["names"]  # names still offered, for when they ask
+
+
+def test_a_returning_listener_without_a_profile_is_not_called_new_by_its_placeholder(world, cfg):
+    session, resp, _, _, _, listener = world
+    (listener / "profile.md").unlink()
+    (listener / "guide.md").write_text("- Name: Wren.\n")
+    session().say(None)
+    system = all_text(guide_calls(resp)[-1])
+    assert guide.NO_PROFILE_YET in system and "(no profile yet: this is a first meeting)" not in system

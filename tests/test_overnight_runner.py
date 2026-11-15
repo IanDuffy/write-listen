@@ -396,3 +396,22 @@ def test_the_tick_backs_off_a_planning_pass_that_keeps_failing(world, monkeypatc
     with pytest.raises(StageError):
         tick(2, 15, day=18)  # Wednesday's build start opened a new window
     assert len(tried) == 4 and len(planner.failures(world.listener)) == 4
+
+
+def test_a_note_added_while_a_manual_build_starts_reaches_the_seed(world, monkeypatch):
+    """R14: run() reads the card, then preflight takes seconds; a note typed then went on the card on disk,
+    but lock() wrote seed.md from the stale copy, so research and writing never saw it."""
+    from overnight import live, planner
+    planner.plan(world.cfg, world.listener, now=datetime(2026, 11, 16, 18, 5))
+
+    def preflight(cfg):
+        out = live.add_note(world.cfg, "Mention the grey heron colony", now=datetime(2026, 11, 16, 18, 10))
+        assert out["where"] == "card"
+    monkeypatch.setattr(record, "preflight", preflight)
+    _kill_at_research(world)
+    with pytest.raises(Killed):
+        runner.run(world.cfg, "ian", now=True)
+    root = chapter_root(world.listener)
+    assert "- Mention the grey heron colony" in (root / "00_source" / "seed.md").read_text()
+    locked = json.loads((root / "00_source" / "up_next.json").read_text())
+    assert [n["text"] for n in locked["notes_added"]] == ["Mention the grey heron colony"]

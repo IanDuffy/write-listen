@@ -35,7 +35,17 @@ PROMPTS = {
     "fast_draft_middle": "overnight_draft_middle",
     "fast_lock": "overnight_lock",
 }
-NOTES: list[dict] = []  # no listener notes arrive while an overnight chapter is written
+
+
+def listener_notes(r: Run) -> list[dict]:
+    """Notes the listener added after the build started and before its research finished
+    (overnight/live.add_note writes them to 00_source/notes.md, one '- ' bullet each), in the form
+    faststart/notes.py gives sections.draft and sections.lock: section 0, before the chapter began."""
+    p = r.path("notes")
+    if not p.exists():
+        return []
+    return [{"time": "", "section": 0, "kind": "note", "text": line[2:].strip()}
+            for line in p.read_text(encoding="utf-8").splitlines() if line.startswith("- ") and line[2:].strip()]
 
 
 class Dossier:
@@ -92,10 +102,11 @@ def said(r: Run, outline: dict) -> str:
     """The listener's own words (what they asked for, the phrases the outline kept): quoted back,
     they are not a quotation a dossier entry has to back (checks.section_problems)."""
     seed = r.path("seed").read_text(encoding="utf-8") if r.path("seed").exists() else ""
-    return "\n".join([seed, *(str(w) for w in outline.get("listener_words") or [])])
+    return "\n".join([seed, *(str(w) for w in outline.get("listener_words") or []),
+                      *(n["text"] for n in listener_notes(r))])
 
 
-def _lock(ctx: sections.Ctx, n: int, mode: str) -> None:
+def _lock(ctx: sections.Ctx, n: int, mode: str, notes: list[dict]) -> None:
     """Lock section n (paired with the draft of n+1, or as the ending) and persist it. A section
     whose locked text exists is done: apply() writes that file last."""
     r = ctx.r
@@ -103,7 +114,7 @@ def _lock(ctx: sections.Ctx, n: int, mode: str) -> None:
         return
     nxt = sections.latest_draft(r, n + 1) if mode == "paired" else None
     before = [(k, sections.locked_text(r, k)) for k in range(1, n)]
-    got = sections.lock(ctx, n, sections.latest_draft(r, n), nxt, before, NOTES, mode)
+    got = sections.lock(ctx, n, sections.latest_draft(r, n), nxt, before, notes, mode)
     sections.apply(ctx, got)
 
 
@@ -117,12 +128,13 @@ def run(r: Run, cfg: dict) -> Path:
     total = len(ctx.outline["sections"])
     text = lambda k: sections.locked_text(r, k) or sections.latest_draft(r, k)
 
-    sections.draft(ctx, 1, [], NOTES)
+    notes = listener_notes(r)
+    sections.draft(ctx, 1, [], notes)
     for n in range(2, total + 1):
         earlier = [(k, text(k), sections.locked_text(r, k) is not None) for k in range(1, n)]
-        sections.draft(ctx, n, earlier, NOTES)
-        _lock(ctx, n - 1, "paired")
-    _lock(ctx, total, "final")
+        sections.draft(ctx, n, earlier, notes)
+        _lock(ctx, n - 1, "paired", notes)
+    _lock(ctx, total, "final", notes)
 
     segs = [(n, sections.locked_text(r, n)) for n in range(1, total + 1)]
     problems = checks.chapter_problems(segs, ctx.dossier.text(), said(r, ctx.outline))

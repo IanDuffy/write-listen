@@ -132,7 +132,7 @@ def test_the_memory_pass_adds_library_and_seeds(world, cfg):
     call = all_text(fake.of("memory")[0])
     assert "- (work) The Peregrine" in call and "- (seed, question) How do kingfishers see under water?" in call
     schema = fake.of("memory")[0]["output_config"]["format"]["schema"]
-    assert {"library", "seeds", "profile", "guide", "forget_chapters"} == set(schema["required"])
+    assert {"library", "seeds", "profile", "guide", "forget_chapters", "forgot"} == set(schema["required"])
     work = [w for w in library.works(d) if w["title"] == "H is for Hawk"][0]
     assert work["creator"] == "Helen Macdonald" and work["source"] == {"session": "20261117-200000"}
     seeds = {s["text"]: s for s in library.seeds(d)}
@@ -223,3 +223,14 @@ def test_intro_brief_stops_if_no_finding_survives(built, cfg):
     with pytest.raises(StageError, match="no finding passed"):
         intro.run(r, cfg)
     assert not (r.root / intro.OUT).exists()
+
+
+def test_next_notes_are_append_only_and_marked_used(tmp_path):
+    d = tmp_path / "l"
+    a = library.add_next_note(d, " Something on tides ", "typed")
+    b = library.add_next_note(d, "short please", "voice")
+    assert a["id"] != b["id"] and a["id"].startswith("n-") and a["text"] == "Something on tides"
+    assert [n["text"] for n in library.next_notes(d)] == ["Something on tides", "short please"]
+    library.mark_used(d, [a["id"]], "plan-1", library.NEXT_NOTES)
+    assert [n["id"] for n in library.next_notes(d)] == [b["id"]]
+    assert len(library.next_notes(d, unused=False)) == 2 and len((d / "next_notes.jsonl").read_text().splitlines()) == 3

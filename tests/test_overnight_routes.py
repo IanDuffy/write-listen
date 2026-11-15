@@ -67,9 +67,38 @@ def test_the_library_states(app):
     assert s["latest"]["audio"] == f"/api/chapters/{root.name}/audio" and s["latest"]["minutes"] is not None
     profiles.save_settings(app.cfg, {"overnight": {"enabled": False}}, "ian")
     assert routes.library_state(app.cfg)["up_next"]["state"] == "off"
-    page = app.c.get("/library")
-    assert page.status_code == 200 and 'id="change"' in page.text and "/library.js" in page.text
-    assert "window.Morning" in app.c.get("/library.js").text
+    page = app.c.get("/library")  # a shell around the module, which builds the cards and the player
+    assert page.status_code == 200 and 'id="library"' in page.text and "/library.js" in page.text
+    js = app.c.get("/library.js").text
+    assert "window.Morning" in js and 'id="change"' in js and 'id="chapter-audio"' in js and 'id="player"' in js
+    home = app.c.get("/")  # the main page mounts the same module below the orb
+    assert 'id="orb"' in home.text and '<section id="library"></section>' in home.text and "/library.js" in home.text
+    assert home.text.index('id="orb"') < home.text.index('<section id="library">')
+
+
+def test_history_lists_every_finished_chapter_newest_first(app):
+    import ask_fixture
+    chapters = app.listener / "chapters"
+    older = chapters / "2026-11-17-why-herons-wait"
+    ask_fixture.build(older, audio=True)
+    profiles.write_json(older / "00_source" / "up_next.json", {"title": "Why Herons Wait", "overview": "Patience."})
+    profiles.write_json(older / "11_episode" / "episode.json", {"title": "Why Herons Wait", "segments": []})
+    profiles.write_json(older / "finished.json", {"t": "2026-11-17T04:00:00"})
+    seed = chapters / "octopus-eyes-20261118"  # a seed run's name: its date comes from when it finished
+    ask_fixture.build(seed, audio=True)
+    profiles.write_json(seed / "status.json", {"state": "ready", "updated": "2026-11-18T09:30:00"})
+    unfinished = chapters / "2026-11-19-tides"
+    (unfinished / "00_source").mkdir(parents=True)
+    s = routes.library_state(app.cfg, datetime(2026, 11, 19, 8, 0))
+    runs = [x["run"] for x in s["history"]]
+    assert runs == [seed.name, older.name]  # newest first by when it finished; the unfinished one is not listed
+    first, second = s["history"]
+    assert set(first) == {"run", "title", "overview", "date", "minutes", "audio", "episode", "intro", "asks"}
+    assert first["date"] == "2026-11-18" and first["episode"] is None and first["intro"] is False
+    assert second["title"] == "Why Herons Wait" and second["date"] == "2026-11-17" and second["minutes"]
+    assert second["episode"] == f"#/chapter/{older.name}"  # the chapter view in the page, not the old episode page
+    assert second["audio"] == f"/api/chapters/{older.name}/audio"
+    assert s["latest"]["run"] == seed.name
 
 
 def test_a_dead_build_shows_as_not_finished_and_can_change(app):

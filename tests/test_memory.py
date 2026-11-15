@@ -148,3 +148,122 @@ def test_forgetting_a_chapter_removes_it_from_history_and_seeds(mem, cfg, tmp_pa
     assert not (listener / "seeds" / "concrete-20261112.md").exists()
     call = [c for c in resp.calls if "You keep the memory of a guide" in all_text(c)][-1]
     assert "The conversation took place on 2026-11-13." in all_text(call)
+
+
+# --- meeting(): has the guide met this listener? (Overnight Chapters round 2) ---------------------------
+
+def test_meeting_is_first_only_with_no_chapter_no_conversation_and_no_guide_md(mem, cfg):
+    listener, _ = mem
+    (listener / "profile.md").write_text("- Likes birds.\n")  # a profile alone is not a meeting
+    session(listener, "20261112-080000", [{"who": "session"}, {"who": "guide", "text": "Hi."}])  # they never spoke
+    (listener / "archive" / "sessions").mkdir(parents=True)
+    (listener / "archive" / "sessions" / "20261101-080000.jsonl").write_text(json.dumps({"who": "listener", "text": "old"}) + "\n")
+    (listener / "chapters" / "2026-11-13-unfinished" / "00_source").mkdir(parents=True)  # no chapter.mp3
+    assert memory.meeting(cfg) == {"first": True, "chapters": 0, "conversations": 0, "guide_name": None,
+                                   "last_chapter": None}
+
+
+def test_meeting_counts_what_the_listener_and_guide_share(mem, cfg):
+    listener, _ = mem
+    session(listener, "20261112-080000", TALK)
+    m = memory.meeting(cfg)
+    assert m["first"] is False and m["conversations"] == 1 and m["guide_name"] is None
+    (listener / "guide.md").write_text("# The guide\n\n**Name:** Wren\n- Chose it for the bird.\n")
+    done = listener / "chapters" / "2026-11-14-herons" / "10_audio"
+    done.mkdir(parents=True)
+    (done / "chapter.mp3").write_bytes(b"x")
+    (listener / "history.md").write_text("# Chapters made so far\n\n## Concrete (concrete-20261112, 2026-11-12)\n\n"
+                                         "## Why Herons Wait (2026-11-14-herons, 2026-11-14)\n\n- Angle: patience.\n")
+    assert memory.meeting(cfg) == {"first": False, "chapters": 1, "conversations": 1, "guide_name": "Wren",
+                                   "last_chapter": "Why Herons Wait"}
+    only_guide = mem[0].parent / "other"
+    (only_guide / "sessions").mkdir(parents=True)
+    (only_guide / "guide.md").write_text("- Name: Juniper.\n")
+    cfg["listener_dir"] = str(only_guide)
+    assert memory.meeting(cfg)["first"] is False and memory.meeting(cfg)["guide_name"] == "Juniper"
+
+
+def test_recent_is_the_end_of_the_last_conversation_and_the_latest_chapter(mem, cfg):
+    listener, _ = mem
+    assert memory.recent(cfg) == {"conversation": "", "when": "", "mode": None, "chapter": ""}
+    session(listener, "20261112-080000", TALK)
+    lines = [{"who": "session", "mode": "change"}] + [{"who": "listener" if i % 2 else "guide", "text": f"line {i}"}
+                                                      for i in range(12)]
+    session(listener, "20261114-190000", lines)
+    session(listener, "20261115-090000", [{"who": "guide", "text": "unheard"}])  # no listener line: not counted
+    (listener / "history.md").write_text("# Chapters made so far\n\n## Why Herons Wait (h, 2026-11-14)\n\n- Angle: x.\n")
+    got = memory.recent(cfg, lines=4)
+    assert got["conversation"] == "you: line 8\nlistener: line 9\nyou: line 10\nlistener: line 11"
+    assert got["when"] == "2026-11-14" and got["mode"] == "change"
+    assert got["chapter"].startswith("Why Herons Wait (h, 2026-11-14)")
+    assert memory.recent(cfg, exclude="20261114-190000")["when"] == "2026-11-12"
+
+
+# --- review round 2: recent() never quotes back what was forgotten; a session's own chapter is left out ----
+
+class SaysForgot(Responder):
+    """The fake memory pass, plus the "forgot" flag the real one sets when the listener asked to forget."""
+
+    def __call__(self, kwargs):
+        out = super().__call__(kwargs)
+        t = all_text(kwargs)
+        if "You keep the memory of a guide" in t and "forget what" in t.split("<transcript>")[1].lower():
+            data = json.loads(out.content[0].text)
+            out.content[0].text = json.dumps({**data, "forgot": True})
+        return out
+
+
+def test_recent_never_quotes_a_conversation_in_which_they_asked_to_forget(mem, cfg, monkeypatch):
+    """R9: the pass removes it from profile.md, but the raw transcript still holds it; recent() fed it to the
+    next session. Not quoted before the pass (an aside never gets one) nor after it, and no earlier
+    conversation, which may hold what was forgotten, is quoted in its place."""
+    listener, _ = mem
+    from fakes import FakeAnthropic
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(SaysForgot()))
+    session(listener, "20261112-090000", TALK)  # said Maya here
+    t = session(listener, "20261113-090000", [{"who": "guide", "text": "Morning."},
+                                              {"who": "listener", "text": "Actually, forget what I said about Maya."}])
+    assert memory.recent(cfg)["conversation"] == "" and memory.recent(cfg)["when"] == ""  # before its pass
+    assert memory.after_session(cfg, t) is True and t.with_suffix(".forgot").exists()
+    got = memory.recent(cfg)
+    assert got["conversation"] == "" and "Maya" not in json.dumps(got)
+    later = session(listener, "20261114-090000", [{"who": "listener", "text": "I forget where I left my keys"}])
+    memory.after_session(cfg, later)  # the pass found nothing to forget: quoted again
+    assert not later.with_suffix(".forgot").exists()
+    assert memory.recent(cfg)["conversation"] == "listener: I forget where I left my keys"
+
+
+def test_a_forgotten_only_chapter_is_never_named_again(mem, cfg, tmp_path):
+    """R9: with history.md emptied by forget_chapters, meeting() fell back to the chapter folder's title."""
+    listener, _ = mem
+    done = listener / "chapters" / "concrete-20261112"
+    (done / "10_audio").mkdir(parents=True)
+    (done / "10_audio" / "chapter.mp3").write_bytes(b"x")
+    (done / "03_angle.md").write_text("# Angle: Concrete That Heals Itself\n")
+    (listener / "history.md").write_text("# Chapters made so far\n\n## Concrete That Heals Itself "
+                                         "(concrete-20261112, 2026-11-12)\n\n- Angle: lime.\n")
+    t = session(listener, "20261113-090000", TALK + [{"who": "listener", "text": "Please forget the concrete chapter."}])
+    memory.after_session(cfg, t)
+    m = memory.meeting(cfg)
+    assert m["chapters"] == 1 and m["last_chapter"] is None and t.with_suffix(".forgot").exists()
+    assert memory.recent(cfg)["chapter"] == ""
+
+
+def test_meeting_and_recent_leave_out_the_chapter_a_session_is_about(mem, cfg):
+    """R8: at Play the latest history entry is the chapter being introduced."""
+    listener, _ = mem
+    (listener / "history.md").write_text("# Chapters made so far\n\n## Concrete (concrete-20261112, 2026-11-12)\n\n"
+                                         "## Why Herons Wait (2026-11-14-herons, 2026-11-14)\n\n- Angle: patience.\n")
+    assert memory.meeting(cfg, exclude_run="2026-11-14-herons")["last_chapter"] == "Concrete"
+    assert memory.recent(cfg, exclude_run="2026-11-14-herons")["chapter"].startswith("Concrete (concrete-20261112")
+    assert memory.recent(cfg)["chapter"].startswith("Why Herons Wait")
+
+
+def test_recent_keeps_the_newest_lines_within_max_chars(mem, cfg):
+    listener, _ = mem
+    session(listener, "20261114-190000", [{"who": "listener" if i % 2 else "guide", "text": f"line {i} " + "x" * 90}
+                                          for i in range(8)])
+    got = memory.recent(cfg, max_chars=250)["conversation"]
+    assert len(got) <= 250 and got.endswith("line 7 " + "x" * 90) and "line 5" not in got
+    one = memory.recent(cfg, lines=1, max_chars=50)["conversation"]
+    assert len(one) == 50 and one.startswith("…") and one.endswith("x" * 10)

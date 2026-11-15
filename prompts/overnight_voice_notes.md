@@ -3,10 +3,11 @@
 The first note goes as speakable context the moment the session starts (GPT-Live has no opening
 parameter; a developer message alone did not reliably make it speak first, live-voice branch). The
 bracketed notes go as instructions with the mic open (GPT-Live ignores them while muted). {title} is
-filled by the page.
+filled by the page. The opening notes say what to do first in the situation (the session's {{situation}}),
+never just "say hello" (round 2: a returning listener was greeted "good to meet you").
 ---
-intro_opened: Say hello now and begin the intro to their chapter, "{title}", as your instructions say.
-change_opened: Say hello now in a few words, then mention tonight's plan, "{title}", in a sentence and ask what they'd rather hear.
+intro_opened: Begin the intro to their chapter, "{title}", now, as your instructions say for this moment: a greeting that fits who they are to you, then the chapter.
+change_opened: Begin now, as your instructions say for this moment: open with why they're here, the plan by its title, and ask what they'd like instead.
 ask_opened: [The listener tapped to ask something: the recording is paused. If they say nothing, open with a word or two, then listen.]
 intro_wrap: [Time to move into the chapter: one natural lead-in line now, then start it.]
 silence: [A few seconds of silence since you spoke. If you have answered their question, lead back in a few words and go back to the chapter now.]

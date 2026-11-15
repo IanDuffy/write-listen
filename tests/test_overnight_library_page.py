@@ -141,12 +141,12 @@ def test_play_opens_the_intro_and_the_tool_starts_the_recording(site, page):
     first = [m for m in pg.evaluate("window.__rtc.sent") if m["type"] == "session.commentary.append"][0]
     assert "Why Herons Wait" in first["content"]
     assert site.posts[-1]["delegation"]["responses"]["tools"][0]["name"] == "start_chapter"
-    assert pg.evaluate("document.getElementById('audio').paused")  # nothing plays until the intro hands over
+    assert pg.evaluate("document.getElementById('chapter-audio').paused")  # nothing plays until the intro hands over
     say(pg, "Morning! I made you one about herons. OK, let's listen.")
     tool(pg, "start_chapter", "c1")
     pg.wait_for_function("window.__types().includes('response.create')")
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
-    assert pg.evaluate("document.getElementById('audio').currentTime") < 2  # from the beginning
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
+    assert pg.evaluate("document.getElementById('chapter-audio').currentTime") < 2  # from the beginning
     assert page.ends[-1]["how"] == "tool" and "session.close" in pg.evaluate("window.__types()")
     assert pg.inner_text("#play") == "Ask a question" and page.errors == []
 
@@ -156,7 +156,7 @@ def test_without_the_tool_the_lead_in_line_and_a_silence_start_it(site, page):
     pg.click("#play")
     start_session(pg)
     say(pg, "I found something odd about herons. Here it is.")
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
     assert page.ends[-1]["how"] == "lead-in"
 
 
@@ -166,7 +166,7 @@ def test_at_ninety_seconds_at_the_latest(site, page, monkeypatch):
     pg.click("#play")
     start_session(pg)
     say(pg, "Good morning, this one took a while to find.")
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
     assert page.ends[-1]["how"] == "timeout"
 
 
@@ -176,11 +176,11 @@ def test_a_tap_during_the_recording_asks_and_resumes_with_the_rewind(site, page)
     start_session(pg)
     tool(pg, "start_chapter", "c1")
     say(pg, "Here it is.")
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
-    pg.evaluate("document.getElementById('audio').currentTime = 20")
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
+    pg.evaluate("document.getElementById('chapter-audio').currentTime = 20")
     pg.wait_for_timeout(300)
     pg.click("#play")  # "Ask a question"
-    pg.wait_for_function("document.getElementById('audio').paused")
+    pg.wait_for_function("document.getElementById('chapter-audio').paused")
     pg.wait_for_function("window.__rtc.channels.length > 1")
     start_session(pg)
     assert pg.inner_text("#play") == "Back to the chapter"
@@ -188,8 +188,8 @@ def test_a_tap_during_the_recording_asks_and_resumes_with_the_rewind(site, page)
     pg.wait_for_function("window.__types().includes('session.instructions.append')")
     say(pg, "Because the fish can't see it. Anyway, where were we.")
     tool(pg, "resume_chapter", "c2", {"reason": "closing"})
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
-    t = pg.evaluate("document.getElementById('audio').currentTime")
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
+    t = pg.evaluate("document.getElementById('chapter-audio').currentTime")
     from ask import aside as A
     restart = A.load_asides(site.root)[-1]["restart"]
     assert restart["t"] <= 20.5 and abs(t - restart["t"]) < 1.5  # from the restart point, not where it paused
@@ -201,8 +201,7 @@ def test_change_talks_it_over_and_the_card_refreshes(site, page):
     pg.click("#change")
     start_session(pg)
     pg.wait_for_function("window.__types().includes('session.commentary.append')")
-    first = [m for m in pg.evaluate("window.__rtc.sent") if m["type"] == "session.commentary.append"][0]
-    assert "How Owls Hear" in first["content"]
+    assert "How Owls Hear" in site.posts[-1]["instructions"]  # the plan, in the session's context
     say(pg, "Octopus eyes it is: I'll make you one on how they see.")
     tool(pg, "set_next_chapter", "c9", {"mode": "topic", "topic": "Octopus eyes"})
     pg.wait_for_function("document.getElementById('up-title').textContent === 'Octopus Eyes'", timeout=15000)
@@ -224,7 +223,7 @@ def test_read_live_reads_the_chapter_in_the_same_session(site, page):
     first = reads[0].split(":", 1)[1].strip()
     say(pg, first)
     pg.wait_for_function("window.__rtc.sent.filter((m) => m.type === 'session.commentary.append' && m.content.startsWith('Read this')).length === 2", timeout=8000)
-    assert pg.evaluate("document.getElementById('audio').paused")  # the guide reads; the recording stays off
+    assert pg.evaluate("document.getElementById('chapter-audio').paused")  # the guide reads; the recording stays off
     pg.click("#play")  # "Stop"
     pg.wait_for_function("window.__types().includes('session.close')")
     assert page.ends[-1]["how"] == "read-live-stopped" and page.errors == []
@@ -248,7 +247,7 @@ def wait_for(fn, timeout=8.0):
 
 
 def playing(pg):
-    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
 
 
 def into_the_recording(pg):
@@ -314,7 +313,7 @@ def test_one_conversation_at_a_time(site, page):
     say(pg, "Here it is.")
     playing(pg)
     pg.click("#change")
-    pg.wait_for_function("document.getElementById('audio').paused")  # the recording waits
+    pg.wait_for_function("document.getElementById('chapter-audio').paused")  # the recording waits
     pg.wait_for_function("window.__rtc.channels.length > 1")
     start_session(pg)
     pg.wait_for_function("document.getElementById('change').textContent === 'Done'")
@@ -382,7 +381,7 @@ def test_a_lead_in_needs_them_to_ask_before_the_minimum(site, page):
     start_session(pg)
     say(pg, "Morning. Here it is.")
     pg.wait_for_timeout(2000)
-    assert pg.evaluate("document.getElementById('audio').paused")
+    assert pg.evaluate("document.getElementById('chapter-audio').paused")
 
 
 def test_a_stray_enjoy_or_a_lead_in_mid_line_does_not_cut_the_guide_off(site, page):
@@ -394,7 +393,7 @@ def test_a_stray_enjoy_or_a_lead_in_mid_line_does_not_cut_the_guide_off(site, pa
     pg.wait_for_timeout(1800)
     say(pg, "Here it is, the odd part: herons wait because the water bends the light they hunt by.")
     pg.wait_for_timeout(2200)
-    assert pg.evaluate("document.getElementById('audio').paused") and page.errors == []
+    assert pg.evaluate("document.getElementById('chapter-audio').paused") and page.errors == []
 
 
 def test_a_second_change_ended_by_done_is_not_taken_for_the_first(site, page):

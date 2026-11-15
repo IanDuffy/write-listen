@@ -3,6 +3,8 @@
     library.jsonl   works, people and topics the listener has met: {"id": "w-<hash>", "kind": work|person|topic, ...}
     seeds.jsonl     questions and ideas for future chapters: {"id": "s-<hash>", "kind": question|idea|parked, ...}
     queue.jsonl     topics set after a cutoff, for a later night: {"id": "q-<time>", "topic", ...}
+    next_notes.jsonl  notes for the next chapter, left too late for tonight's: {"id": "n-<time>", "t", "text",
+                    "via": typed|voice}; the next planning pass takes them into its card's notes_added
 
 All three are append-only. An item's id is a hash of what it is, so adding it twice adds it once.
 Using a seed or a queued topic appends {"used": <id>, "by": <plan id>, "t": ...}; nothing is rewritten.
@@ -27,6 +29,7 @@ from stages.common import Run, StageError, load_prompt, parse_json, spoken_text
 from . import profiles
 
 SEEDS, LIBRARY, QUEUE = "seeds.jsonl", "library.jsonl", "queue.jsonl"
+NEXT_NOTES = "next_notes.jsonl"  # notes for the next chapter left when tonight's could no longer take them
 SEED_KINDS = ("question", "idea", "parked")
 WORK_KINDS = ("work", "person", "topic")
 ADDED = "13_library.json"  # what after_chapter added, and the question judgement (so a re-run pays nothing)
@@ -141,6 +144,23 @@ def queue_add(listener: Path, request: dict) -> dict:
     """add_queue for a set_next_chapter request ({mode, topic, notes, session}) made after the cutoff."""
     return add_queue(listener, request.get("topic") or "", request.get("notes") or "", request.get("session"),
                      request.get("mode") or "topic")
+
+
+def next_notes(listener: Path, unused: bool = True) -> list[dict]:
+    """Notes left for the next chapter (next_notes.jsonl), oldest first."""
+    return _items(listener / NEXT_NOTES, unused)
+
+
+def add_next_note(listener: Path, text: str, via: str = "typed") -> dict:
+    """A note for the next chapter that tonight's card can no longer take (overnight/live.add_note)."""
+    base = f"n-{time.strftime('%Y%m%d-%H%M%S')}"
+    have = {r.get("id") for r in profiles.read_jsonl(listener / NEXT_NOTES)}
+    nid, n = base, 2
+    while nid in have:
+        nid, n = f"{base}-{n}", n + 1
+    rec = {"id": nid, "t": _now(), "text": text.strip(), "via": via}
+    profiles.append_jsonl(listener / NEXT_NOTES, rec)
+    return rec
 
 
 def mark_used(listener: Path, ids: list[str], by: str, file: str = SEEDS) -> None:

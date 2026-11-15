@@ -49,16 +49,22 @@ MODES = ("intro", "change", "ask")
 TOOLS_FILE = PROMPTS_DIR / "overnight_voice_tools.json"
 MODE_TOOLS = {"intro": ("start_chapter",), "change": ("set_next_chapter",), "ask": ("resume_chapter", "save_seed")}
 APPEND_LIMIT_CHARS = 1600  # GPT-Live takes at most 500 tokens per append
+INSTRUCTIONS_LIMIT_CHARS = int(16000 * 3.5)  # GPT-Live's instructions: 16,000 tokens, at 3.5 characters a token
+# {{recent}}'s parts, in characters: the end of the last conversation (an ask's is shortest: its chapter fills
+# the rest), and the latest history entry (an ask has none: its own chapter is already in {{chapter}})
+RECENT_CHARS = {"intro": 1200, "change": 1200, "ask": 600}
+RECENT_ENTRY_CHARS = 700
 
 
 def lcfg(cfg: dict) -> dict:
     return cfg["overnight"]["live"]
 
 
-def notes() -> dict[str, str]:
-    """prompts/overnight_voice_notes.md: what the page tells the guide, one `key: text` per line."""
+def notes(name: str = "overnight_voice_notes") -> dict[str, str]:
+    """prompts/overnight_voice_notes.md: what the page tells the guide, one `key: text` per line (also
+    prompts/overnight_voice_meeting.md, the lines {{meeting}}, {{situation}} and {{recent}} are made of)."""
     out = {}
-    for line in load_prompt("overnight_voice_notes").splitlines():
+    for line in load_prompt(name).splitlines():
         k, sep, v = line.partition(":")
         if sep and re.fullmatch(r"[a-z_]+", k.strip()):
             out[k.strip()] = v.strip()
@@ -73,11 +79,42 @@ def tools(mode: str) -> list[dict]:
              "parameters": t["input_schema"], "strict": False} for t in raw if t["name"] in allowed]
 
 
+def _render(mode: str, values: dict) -> str:
+    shared = load_prompt("overnight_voice_guide", identity=values["identity"], meeting=values["meeting"],
+                         recent=values["recent"])
+    return load_prompt(f"overnight_voice_{mode}", **{**values, "guide": shared})
+
+
+def trim_dossier(text: str, target: int) -> str:
+    """An ask's {{dossier}} cut to about `target` characters: the one-line entries (other segments) go first,
+    from the end, then the full ones (this segment and the next), and a line says how many were left out."""
+    lines = text.splitlines()
+    full = [bool(re.match(r"\[D\d+\]\s*\(", ln)) for ln in lines]
+    m = notes("overnight_voice_meeting")
+    dropped = 0
+    for want_full in (False, True):
+        for i in range(len(lines) - 1, -1, -1):
+            if sum(len(x) + 1 for x in lines if x is not None) + 60 <= target:
+                break
+            if lines[i] is not None and full[i] == want_full:
+                lines[i], dropped = None, dropped + 1
+    kept = [x for x in lines if x is not None]
+    return "\n".join(kept + ([_fill(m["dossier_trimmed"], n=dropped)] if dropped else []))
+
+
 def session_config(cfg: dict, mode: str, values: dict) -> dict:
+    """The session GPT-Live opens. Instructions over its limit are cut to fit, never refused: {{recent}} goes
+    first (a short note in its place), then an ask's dossier (trim_dossier)."""
     L = lcfg(cfg)
-    text = load_prompt(f"overnight_voice_{mode}", guide=load_prompt("overnight_voice_guide",
-                                                                    identity=values["identity"]), **values)
-    if len(text) / 3.5 > 16000:
+    text = _render(mode, values)
+    if len(text) > INSTRUCTIONS_LIMIT_CHARS and values.get("recent"):
+        values = {**values, "recent": notes("overnight_voice_meeting")["recent_trimmed"]}
+        text = _render(mode, values)
+    over = len(text) - INSTRUCTIONS_LIMIT_CHARS
+    if over > 0 and values.get("dossier"):
+        values = {**values, "dossier": trim_dossier(values["dossier"], len(values["dossier"]) - over)}
+        text = _render(mode, values)
+    if len(text) > INSTRUCTIONS_LIMIT_CHARS:
         raise StageError(f"The {mode} session's instructions are too long for GPT-Live ({len(text)} characters).")
     return {
         "model": L["model"],
@@ -126,8 +163,105 @@ def cost(cfg: dict, seconds: float, backend: dict | None) -> float:
 
 # --- what each mode's guide is told ------------------------------------------------------
 
-def _identity(cfg: dict) -> str:
-    return guide.identity(cfg) or "(You haven't met this listener before, or don't know your name with them. Don't make a point of names.)"
+def _fill(text: str, **fields) -> str:
+    for k, v in fields.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def _identity(cfg: dict, meet: dict) -> str:
+    m = notes("overnight_voice_meeting")
+    return guide.identity(cfg) or (m["identity_first"] if meet["first"] else m["identity_returning"])
+
+
+def meeting_text(meet: dict, mode: str = "change") -> str:
+    """{{meeting}}: whether this is a first meeting, and what the guide and listener share if not. The last
+    chapter is named for a change; for an intro it is the one before the chapter being introduced (memory.meeting
+    left that out); an ask names none (its chapter, which may be any, is in {{chapter}})."""
+    m = notes("overnight_voice_meeting")
+    if meet["first"]:
+        return m["first"]
+    known = []
+    for key, n in (("count_chapters", meet["chapters"]), ("count_talks", meet["conversations"])):
+        if n:
+            known.append(_fill(m[key], n=n, s="" if n == 1 else "s"))
+    known.append(_fill(m["named"], name=meet["guide_name"]) if meet.get("guide_name") else m["unnamed"])
+    if meet.get("last_chapter") and mode != "ask":
+        known.append(_fill(m["last_chapter_before" if mode == "intro" else "last_chapter"], title=meet["last_chapter"]))
+    return _fill(m["returning"], known="; ".join(known))
+
+
+def recent_text(cfg: dict, mode: str = "change", exclude_run: str | None = None) -> str:
+    """{{recent}}: the end of their latest conversation and the latest chapter (history.md) other than
+    `exclude_run`, the chapter this session is about; an ask gets no chapter entry (RECENT_CHARS)."""
+    from stages import memory
+    m = notes("overnight_voice_meeting")
+    got = memory.recent(cfg, exclude_run=exclude_run, max_chars=RECENT_CHARS[mode])
+    if mode == "ask":
+        got["chapter"] = ""
+    elif len(got["chapter"]) > RECENT_ENTRY_CHARS:
+        got["chapter"] = got["chapter"][:RECENT_ENTRY_CHARS - 1].rstrip() + "…"
+    parts = []
+    if got["conversation"]:
+        what = m.get(f"mode_{got['mode']}", "") if got["mode"] else ""
+        when = got["when"]
+        try:
+            when = f"{datetime.fromisoformat(when):%A %-d %B}"
+        except ValueError:
+            pass
+        parts.append(_fill(m["recent_conversation"], when=when, what=what) + "\n" + got["conversation"])
+    if got["chapter"]:
+        parts.append(m["recent_chapter_before" if exclude_run else "recent_chapter"] + "\n" + got["chapter"])
+    return "\n\n".join(parts) or m["recent_none"]
+
+
+def shared_values(cfg: dict, mode: str = "change", exclude_run: str | None = None) -> dict:
+    """What every session gets: identity, profile, {{meeting}}, {{recent}}. A returning listener with no
+    profile.md is not told "this is a first meeting" by the profile's placeholder. `exclude_run`: the chapter
+    an intro or an ask is about, never presented as "the latest chapter you made them"."""
+    from stages import memory
+    meet = memory.meeting(cfg, exclude_run=exclude_run)
+    has_profile = (common.listener_dir(cfg) / "profile.md").exists()
+    return {"identity": _identity(cfg, meet), "meeting": meeting_text(meet, mode),
+            "recent": recent_text(cfg, mode, exclude_run),
+            "profile": listener_profile(cfg) if has_profile or meet["first"]
+            else notes("overnight_voice_meeting")["profile_none"]}
+
+
+def _finished_when(root: Path, now: datetime) -> str:
+    t = profiles.finished_at(root)
+    if not t:
+        return "recently"
+    at = datetime.fromtimestamp(t)
+    days = (now.date() - at.date()).days
+    if days <= 0:
+        return "overnight" if at.hour < 6 else "this morning" if at.hour < 12 else "today"
+    if days == 1:
+        return "last night" if at.hour >= 18 else "yesterday"
+    return f"on {at:%A}" if days < 7 else f"on {at:%-d %B}"
+
+
+def _day_word(for_morning: str | None, now: datetime) -> str:
+    """'tomorrow's', 'this morning's', 'Thursday's': whose chapter the card plans."""
+    try:
+        d = datetime.fromisoformat(str(for_morning)).date()
+    except ValueError:
+        return "the next"
+    days = (d - now.date()).days
+    if days == 0:
+        return "this morning's" if now.hour < 12 else "today's"
+    if days == 1:
+        return "tomorrow's"
+    return f"{d:%A}'s"
+
+
+def change_situation(card: dict | None, can: bool, why: str, now: datetime) -> str:
+    m = notes("overnight_voice_meeting")
+    if not card or card.get("status") == "ready" or not card.get("title"):
+        return m["situation_change_none"]
+    if not can:
+        return _fill(m["situation_change_late"], title=card["title"], why=why.rstrip(". ").lower() if why else "")
+    return _fill(m["situation_change"], title=card["title"], day=_day_word(card.get("for_morning"), now))
 
 
 def _now_text(now: datetime) -> str:
@@ -140,7 +274,12 @@ def intro_values(cfg: dict, root: Path, now: datetime) -> dict:
     if not brief.exists():
         raise StageError("This chapter has no intro brief.")
     s = profiles.settings(cfg, listener=common.listener_dir(cfg))
-    return {"identity": _identity(cfg), "profile": listener_profile(cfg), "now": _now_text(now),
+    title = (profiles.read_json(root / "00_source" / "up_next.json", {}) or {}).get("title")
+    if not title:
+        from ask import aside as A
+        title = A.chapter_title(root)
+    situation = _fill(notes("overnight_voice_meeting")["situation_intro"], title=title, when=_finished_when(root, now))
+    return {**shared_values(cfg, "intro", exclude_run=root.name), "now": _now_text(now), "situation": situation,
             "brief": brief.read_text(encoding="utf-8").strip(),
             "after": ("You read the chapter aloud yourself after the intro." if s["playback"]["read_live"]
                       else "The recording of the chapter, in your own voice, plays after the intro.")}
@@ -167,7 +306,10 @@ def change_values(cfg: dict, now: datetime) -> dict:
     plan = ("(nothing planned yet)" if not card or card.get("status") == "ready" else
             f"Title: {card['title']}\nOverview: {card.get('overview', '')}\nSummary: {card.get('summary', '')}\n"
             f"Mode: {card.get('mode', '')}")
-    return {"identity": _identity(cfg), "profile": listener_profile(cfg), "now": _now_text(now),
+    if card and card.get("status") != "ready" and card.get("notes_added"):
+        plan += "\nNotes they added to it:\n" + "\n".join(f"- {n.get('text')}" for n in card["notes_added"])
+    return {**shared_values(cfg, "change"), "now": _now_text(now),
+            "situation": change_situation(card, can, why, now),
             "plan": plan, "title": (card or {}).get("title") or "nothing yet",
             "last": _chapter_line(latest) if latest else "(no chapter yet)",
             "seeds": "\n".join(f"- {x.get('text')}" + (f" (they said: \"{x['words']}\")" if x.get("words") else "")
@@ -182,8 +324,68 @@ def ask_values(cfg: dict, chapter, t: float, earlier: list[dict]) -> dict:
     """ask/aside.py's context for the moment they tapped, without the coming text word for word: told what
     comes next verbatim, GPT-Live read on from it (voice/gpt_live REPORT, check 9)."""
     v = chapter.context(t, earlier)
-    return {k: v[k] for k in ("identity", "profile", "chapter", "where", "just_said", "later", "dossier",
-                              "ledger", "earlier_asides")}
+    out = {k: v[k] for k in ("chapter", "where", "just_said", "later", "dossier", "ledger",
+                             "earlier_asides")}
+    at = f"{int(t // 60)}:{int(t % 60):02d} in"
+    situation = _fill(notes("overnight_voice_meeting")["situation_ask"], title=chapter.title, at=at)
+    return {**out, **shared_values(cfg, "ask", exclude_run=Path(chapter.run).name), "situation": situation}
+
+
+# --- notes for the next chapter ----------------------------------------------------------
+
+NOTE_MAX_CHARS = 2000
+
+
+def add_note(cfg: dict, text: str, via: str = "typed", now: datetime | None = None) -> dict:
+    """A note for the next chapter ("Add a note" under the Up next card, or set_next_chapter keep with notes).
+    Returns {"where": "card"|"tonight"|"next", "note", "message"} (overnight/DESIGN.md, Round 2):
+      card     a planned card before the cutoff, or a failed one that never started its chapter: the card's
+               notes_added, which planner.seed_text puts in seed.md when the build locks it
+      tonight  the card's chapter has started (building, or failed and waiting for its retry) and its research
+               hasn't finished: the chapter's 00_source/notes.md (which common.seed_inputs gives the research
+               judge and the outline, and overnight/write.py the writer and the editor) and the card's
+               notes_added (a Change that replaces the card carries them over)
+      next     otherwise: next_notes.jsonl, which the next planning pass takes into its card
+    All under the card lock, after runner.reconcile (a dead build is failed, not building): the planner's
+    final write reads next_notes under the same lock, so no note falls between it and the card."""
+    from . import library, locks, runner, schedule
+    text = " ".join((text or "").split())[:NOTE_MAX_CHARS]
+    if not text:
+        raise StageError("The note was empty.")
+    listener = common.listener_dir(cfg)
+    listener.mkdir(parents=True, exist_ok=True)
+    now = now or datetime.now()
+    settings = profiles.settings(cfg, listener=listener)
+    runner.reconcile(listener)
+    note = {"t": now.isoformat(timespec="seconds"), "text": text, "via": via}
+    m = notes("overnight_voice_meeting")
+    with locks.card_lock(listener):
+        card = runner.read_card(listener)
+        status = (card or {}).get("status")
+        if card and status == "planned" and schedule.can_change(card, settings, now)[0]:
+            profiles.write_json(runner.card_path(listener), {**card, "notes_added": [*(card.get("notes_added") or []), note]})
+            return {"where": "card", "note": note,
+                    "message": _fill(m["note_card"], day=_day_word(card.get("for_morning"), now))}
+        if card and status == "failed" and not card.get("chapter"):  # stopped before it started: lock reads the card
+            profiles.write_json(runner.card_path(listener), {**card, "notes_added": [*(card.get("notes_added") or []), note]})
+            return {"where": "card", "note": note, "message": m["note_retry"]}
+        if card and status in ("building", "failed") and card.get("chapter"):
+            root = listener / "chapters" / card["chapter"]
+            if not (root / "04_research" / "ledger_update.md").exists():
+                p = root / "00_source" / "notes.md"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                if not p.exists():
+                    p.write_text(load_prompt("seed_notes").strip() + "\n\n", encoding="utf-8")
+                with open(p, "a", encoding="utf-8") as f:
+                    f.write(f"- {text}\n")
+                profiles.write_json(runner.card_path(listener),
+                                    {**card, "notes_added": [*(card.get("notes_added") or []), note]})
+                return {"where": "tonight", "note": note,
+                        "message": m["note_tonight" if status == "building" else "note_retry"]}
+        rec = library.add_next_note(listener, text, via)
+        key = ("note_next" if card is None or status not in ("planned", "building", "failed") else
+               "note_next_failed" if status == "failed" else "note_next_late")
+    return {"where": "next", "note": {**note, "id": rec["id"]}, "message": m[key]}
 
 
 # --- the routes ---------------------------------------------------------------------------
@@ -205,6 +407,10 @@ class Tool(BaseModel):
     session: str
     name: str
     args: dict | None = None
+
+
+class Note(BaseModel):
+    text: str = ""
 
 
 class End(BaseModel):
@@ -387,7 +593,11 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
         listener = common.listener_dir(cfg)
         mode = args.get("mode") or "topic"
         if mode == "keep":
-            return {"kept": True}
+            said = (args.get("notes") or "").strip()
+            if not said:
+                return {"kept": True}
+            got = add_note(cfg, said, via="voice")
+            return {"kept": True, "added": got["where"], "note": got["message"]}
         request = {"mode": mode if mode in ("surprise", "continue", "topic") else "topic",
                    "topic": (args.get("topic") or "").strip(), "notes": (args.get("notes") or "").strip(),
                    "session": s["id"]}
@@ -436,6 +646,14 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             s["lines"].append({"s": round(time.monotonic() - s["t0"], 2), "who": "tool", "name": req.name,
                                "input": args, "result": out})
         return out
+
+    @app.post("/api/overnight/note")
+    def note(req: Note) -> dict:
+        """"Add a note" under the Up next card: typed, for the next chapter (add_note says where it went)."""
+        try:
+            return add_note(cfg, req.text, via="typed")
+        except StageError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.post("/api/overnight/live/end")
     def end(req: End) -> dict:

@@ -22,6 +22,10 @@
   circle brings the guide back into the same conversation, and so does the chapter being ready.
   Asking mid-chapter (docs/ask-voice.md, page/ask.js): while a chapter plays, the circle reads "Ask
   a question"; a tap pauses it and the guide answers; ?chapter=<run> opens a finished chapter.
+  The library (overnight/DESIGN.md "Round 2", page/library.js) is mounted below the orb's screen: Up next,
+  the latest chapter, every past one, a chapter view at #/chapter/<run>, and a mini player that keeps
+  playing across them. Its player and this page's #audio pause each other, and the voice guide here and
+  the library's player and live sessions never run together (window.Orb, window.Library.busy/end).
 -->
 <style>
   :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
@@ -32,6 +36,9 @@
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
          display: flex; flex-direction: column; align-items: center; }
+  /* The orb's screen fills the first screen; the library (page/library.js) sits below it, as you scroll. */
+  #screen { flex: none; width: 100%; min-height: calc(100vh - var(--lib-player-h, 0px));
+            display: flex; flex-direction: column; align-items: center; }
   main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
          gap: 22px; width: 100%; padding: 16px; }
   #orb { width: 180px; height: 180px; border: 0; padding: 0; background: none; cursor: default; position: relative; }
@@ -104,6 +111,7 @@
 </style>
 </head>
 <body class="idle">
+<div id="screen">
 <main>
   <button id="orb" aria-label="Chapter">
     <svg viewBox="0 0 180 180" aria-hidden="true">
@@ -138,6 +146,8 @@
   </div>
   <div id="transcript" aria-live="polite"></div>
 </footer>
+</div>
+<section id="library"></section>
 <script src="__VOICE_CLIENT_JS__" async></script>
 <script src="/wake.js"></script>
 <script>
@@ -524,7 +534,7 @@ function rested(why, asked = false) {
   if (!sessionId) return endConversation();
   // The chapter started (play was pressed while the connection was closing) or an aside is live: the
   // guide does not rest, since resting opens the microphone (wake.js) beside them. The conversation ends.
-  if (!$("audio").paused || (window.Ask && Ask.state())) return endConversation();
+  if (chapterPlaying() || libraryLive() || (window.Ask && Ask.state())) return endConversation();
   resting = true;
   voiceLine("page", `[The guide stepped back: ${why}.]`);
   // The limit on resting runs from the listener's last real turn, tap or typed line: sounds that
@@ -577,7 +587,8 @@ function stopListening() {  // release the microphone
 // guide is connected.
 async function wake(reason, typed = "") {
   if (!resting || starting) return false;
-  if (!$("audio").paused) return false;  // the chapter is playing: that sound is not the listener
+  if (chapterPlaying()) return false;  // a chapter is playing: that sound is not the listener
+  if (libraryLive()) return false;  // a session of the library's is live: one voice at a time
   if (window.Ask && Ask.state()) return false;  // an aside is live: the listener is talking to it
   starting = true;
   resting = false;
@@ -612,6 +623,15 @@ async function wake(reason, typed = "") {
     flushReady();
   }
 }
+
+// The library below (page/library.js) has its own player (#chapter-audio) and live sessions: the guide never
+// listens while either is on, and the library ends the guide (window.Orb) before it plays or opens the mic.
+function chapterPlaying() {
+  const c = $("chapter-audio");
+  return !$("audio").paused || !!(c && !c.paused);
+}
+function libraryLive() { return !!(window.Library && Library.busy && Library.busy()); }
+window.Orb = { busy: () => !!(voiceConv || resting || starting), end: () => endConversation() };
 
 async function endConversation() {  // over: the server updates what the guide remembers
   epoch++;  // a connection still being made is abandoned when it arrives (startVoice)
@@ -695,6 +715,9 @@ $("orb").addEventListener("click", async () => {
     if (voiceConv || resting || starting) await endConversation();  // the mic would hear it; a typed chat goes on
     return a.play();
   }
+  const c = $("chapter-audio");  // the library's player: paused, so the guide doesn't hear it
+  if (c && !c.paused) c.pause();
+  if (libraryLive()) await Library.end();  // and its conversation ends: one voice at a time
   if (voiceConv) return endConversation();  // tap again to finish talking
   if (resting) return wake("tap");
   // Tap to begin, whatever an earlier visit left behind: by voice, or typed if voice can't start.
@@ -744,5 +767,6 @@ $("toggle").addEventListener("click", () => {
 </script>
 <script src="/ask.js"></script>
 <script src="/fast.js"></script>
+<script src="/library.js"></script>  <!-- the library below the orb, and the chapter player (pauses #audio when it plays) -->
 </body>
 </html>

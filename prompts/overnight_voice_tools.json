@@ -6,9 +6,9 @@
    "description": "Record what tonight's chapter should be, once the guide has said aloud what it will make. Before the build starts the plan is rewritten (about a minute); after it, the request is saved for the next build day and the result says so.",
    "input_schema": {"type": "object", "properties": {
      "mode": {"type": "string", "enum": ["topic", "continue", "surprise", "keep"],
-              "description": "topic: a new topic or a different angle (say which in topic and notes); continue: go deeper on the last chapter; surprise: the guide picks; keep: leave the plan as it is."},
+              "description": "topic: a new topic or a different angle (say which in topic and notes); continue: go deeper on the last chapter; surprise: the guide picks; keep: leave the plan as it is (any notes are added to it)."},
      "topic": {"type": "string", "description": "The topic or angle, in a sentence, in the listener's words where possible."},
-     "notes": {"type": "string", "description": "Anything else they said to include or avoid, word for word where possible."}},
+     "notes": {"type": "string", "description": "Anything else they said to include or avoid, word for word where possible. With keep, what they want added to the plan; the result says where it went."}},
      "required": ["mode"], "additionalProperties": false}},
   {"name": "resume_chapter",
    "description": "End the aside and resume the recording, after the guide's few words leading back. Leave rewind out unless the listener seemed lost (then 'paragraph').",

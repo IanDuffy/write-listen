@@ -14,7 +14,10 @@ continue or branch, except that after three continuations in a row (each chapter
 card came from is marked used.
 
 Files: listeners/<id>/plans/<plan id>/ (log.jsonl: every call, priced; inputs.md, choice.json, scout.md,
-card.json), then up_next.json, whole. seed_text(card) is 00_source/seed.md for the build's lock stage.
+card.json), then up_next.json, whole. seed_text(card) is 00_source/seed.md for the build's lock stage, with the
+card's notes_added (typed or said after the plan: overnight/live.add_note) under their own heading. A pass takes
+the notes left for the next chapter (next_notes.jsonl) into the card it writes, and they are marked used; a plan
+that replaces one still only planned keeps that one's notes_added.
 
 Before reading, the pass brings the latest chapter's yield up to date (library.after_chapter: the
 questions asked and topics saved during its asides, which happen after the build). The final write is
@@ -129,6 +132,7 @@ def gather(cfg: dict, listener: Path, request: dict | None) -> dict:
         "seeds": library.seeds(listener)[-ps["seeds_shown"]:],
         "library": library.works(listener)[-ps["library_shown"]:],
         "profile": _text(listener / "profile.md"),
+        "next_notes": library.next_notes(listener),
     }
 
 
@@ -147,6 +151,9 @@ def render_inputs(ctx: dict) -> str:
         q = ctx["queued_mode"]
         out += [f"## What the listener asked for the next build, after a cutoff ({q['id']})", "",
                 f"Mode: {q.get('mode')}", f"Notes: {q.get('notes') or '(none)'}", ""]
+    if ctx.get("next_notes"):
+        out += ["## Notes the listener left for the next chapter (follow them)", ""]
+        out += [f"- {n['text']}" for n in ctx["next_notes"]] + [""]
     last = ctx.get("last")
     out += ["## The last chapter", ""]
     if last:
@@ -186,6 +193,7 @@ def listener_corpus(ctx: dict) -> str:
     parts += [last.get("notes") or "", last.get("words") or ""] + list(last.get("questions") or [])
     parts += [s.get("words") or "" for s in last.get("saved") or []]
     parts += [s.get("words") or "" for s in ctx["seeds"]]
+    parts += [n.get("text") or "" for n in ctx.get("next_notes") or []]
     return library._norm(" \n ".join(parts))
 
 
@@ -303,7 +311,9 @@ def write_card(r: Run, cfg: dict, ctx: dict, choice: dict, notes: str, minutes: 
         profile=ctx["profile"] or "(none yet)",
         last=f"{last['title']}: {last['summary']}" if last else "(no chapter yet)",
         past="\n".join(f"- {c['title']}" for c in ctx["past"]) or "- (none)",
-        notes=((ctx.get("request") or ctx.get("queued") or ctx.get("queued_mode") or {}).get("notes") or "(none)"),
+        notes="\n".join(x for x in [(ctx.get("request") or ctx.get("queued") or ctx.get("queued_mode") or {})
+                                     .get("notes") or ""] + [n["text"] for n in ctx.get("next_notes") or []]
+                        if x.strip()) or "(none)",
         minutes=minutes, retry=retry)
     res = llm.call(r, cfg, "overnight_plan_card", label="plan card", json_schema=CARD_SCHEMA,
                    messages=[{"role": "user", "content": prompt}])
@@ -332,7 +342,16 @@ def seed_text(card: dict) -> str:
         said=src.get("words") or req.get("topic") or "(the listener gave no words for this one; it came from "
                                                       "what the planner knew of them)",
         source=f"{card.get('decided') or card.get('mode')} ({where})",
-        notes=card.get("notes") or req.get("notes") or "(nothing)").strip() + "\n"
+        notes=card.get("notes") or req.get("notes") or "(nothing)",
+        added=added_text(card.get("notes_added"))).strip() + "\n"
+
+
+def added_text(notes: list[dict] | None) -> str:
+    """The card's notes_added as seed.md lists them: one line each, how it was left in brackets."""
+    lines = [f"- {' '.join(str(n.get('text') or '').split())}"
+             + (" (said in conversation)" if n.get("via") == "voice" else "")
+             for n in notes or [] if str(n.get("text") or "").strip()]
+    return "\n".join(lines) or "(none)"
 
 
 def _plan_id(listener: Path, now: datetime) -> str:
@@ -483,11 +502,19 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime, info: 
             print(f"  {why}")
             return current
         nb = schedule.next_build(settings, at) or schedule.next_start(settings, at)
+        # Notes the listener added: those on the plan this one replaces (still only planned, or failed: its
+        # chapter is superseded and never finished, so they were never delivered), then the ones left for the
+        # next chapter (next_notes.jsonl), which this card takes and marks used.
+        carried = (list((current or {}).get("notes_added") or [])
+                   if (current or {}).get("status") in ("planned", "failed") else [])
+        taken = library.next_notes(listener)
+        added = carried + [{"t": n.get("t"), "text": n["text"], "via": n.get("via") or "typed"} for n in taken]
         up = {"id": pid, "for_morning": nb.date().isoformat() if nb else None,
               "title": card["title"], "overview": card["overview"], "summary": card["summary"],
               "mode": mode, "decided": choice["decided"], "source": choice["source"],
               "research_questions": card["research_questions"], "angle": card["angle"],
               "request": request or None, "notes": ((request or queued or {}).get("notes") or None),
+              "notes_added": added,
               "status": "planned", "planned_at": now.isoformat(timespec="seconds"), "locked_at": None,
               "chapter": None, "error": None, "plan_dir": f"plans/{pid}"}
         profiles.write_json(listener / "up_next.json", up)
@@ -495,5 +522,7 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime, info: 
             library.mark_used(listener, [queued["id"]], pid, library.QUEUE)
         if choice["source"]["kind"] == "seed":
             library.mark_used(listener, [choice["source"]["ref"]], pid)
+        if taken:
+            library.mark_used(listener, [n["id"] for n in taken], pid, library.NEXT_NOTES)
     print(f"  planned {up['title']!r} for {up['for_morning']} ({mode}, {choice['decided']}), ${cost:.3f}")
     return up

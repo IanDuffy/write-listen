@@ -7,6 +7,8 @@ Inputs:
   request's topic)
 - {{source}}: where it came from (decided, kind and ref)
 - {{notes}}: the listener's include or avoid notes (request or queued topic), or "(nothing)"
+- {{added}}: notes the listener added to this plan afterwards (the card's notes_added: typed under the Up next
+  card, said in Change, or left for the next chapter), one "- " line each, oldest first, or "(none)"
 
 Written to 00_source/seed.md by the overnight build's lock stage (overnight/planner.seed_text). The seed-run
 prompts (scout, ledger, brief, draft) read it whole, as they read prompts/seed_file.md's shape: keep the
@@ -41,3 +43,7 @@ prompts (scout, ledger, brief, draft) read it whole, as they read prompts/seed_f
 ## Include or avoid
 
 {{notes}}
+
+## Notes the listener added to this plan (follow them: they came after the plan, and win where they differ)
+
+{{added}}

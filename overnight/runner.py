@@ -358,13 +358,14 @@ def _start_card(listener: Path, card: dict, name: str, scheduled: bool, at: date
         if now is not None and now.get("id") != card.get("id"):
             raise StageError(f"A new plan ({now.get('id')}) replaced the card for '{card.get('title')}' before "
                              "its build started; nothing was built. The next tick builds the new one if it is due.")
+        base = now or card  # the card as it is now: a note added since run() read it included
         fields = {"status": "building", "chapter": name, "error": None,
-                  "locked_at": card.get("locked_at") or _now_iso(),
-                  "attempts": int(card.get("attempts") or 0) + 1,
+                  "locked_at": base.get("locked_at") or _now_iso(),
+                  "attempts": int(base.get("attempts") or 0) + 1,
                   "attempt_at": (at or datetime.now()).isoformat(timespec="seconds"),
                   # manual builds (--now, resume) leave the scheduled tries alone (schedule._attempts)
-                  "scheduled_attempts": int(card.get("scheduled_attempts") or 0) + (1 if scheduled else 0)}
-        card = {**card, **fields}
+                  "scheduled_attempts": int(base.get("scheduled_attempts") or 0) + (1 if scheduled else 0)}
+        card = {**base, **fields}
         _update_card(listener, card, **fields)
         return card
 

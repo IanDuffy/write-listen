@@ -401,3 +401,28 @@ def test_the_brief_from_the_outline_and_again_from_the_final_script(tmp_path, cf
     write.run(r, cfg)
     promise.run(r, cfg)
     assert parse_segments(r.path("brief").read_text())[2]["title"] == "Stone that keeps growing"
+
+
+def test_notes_added_while_research_ran_reach_every_draft_and_lock(tmp_path, cfg, monkeypatch):
+    """R11: a 'tonight' note (overnight/live.add_note -> 00_source/notes.md) reached only the outline; the
+    writer and the editor got NOTES = []. Now each draft and lock gets it, as faststart's listener notes."""
+    r, cfg = chapter(tmp_path, cfg)
+    r.path("notes").write_text("## Added during the conversation, after the chapter was started\n\n"
+                               "- Don't spend long on the history\n- Mention the harbour at Caesarea\n")
+    install(monkeypatch, sections=4)
+    seen = []
+    real_draft, real_lock = sections.draft, sections.lock
+    monkeypatch.setattr(sections, "draft", lambda ctx, n, earlier, notes:
+                        seen.append(("draft", n, notes)) or real_draft(ctx, n, earlier, notes))
+    monkeypatch.setattr(sections, "lock", lambda ctx, n, text, nxt, locked, notes, mode:
+                        seen.append(("lock", n, notes)) or real_lock(ctx, n, text, nxt, locked, notes, mode))
+    ov_outline.run(r, cfg)
+    write.run(r, cfg)
+    assert len(seen) == 8
+    for _, _, notes in seen:
+        assert [(x["section"], x["text"]) for x in notes] == [(0, "Don't spend long on the history"),
+                                                             (0, "Mention the harbour at Caesarea")]
+    assert "- (note, before the chapter began) Don't spend long on the history" in \
+        sections.listener_notes.as_prompt(seen[0][2])
+    assert "Mention the harbour at Caesarea" in write.said(r, {})
+    assert write.listener_notes(r.__class__(name="x", root=tmp_path / "none")) == []

@@ -39,6 +39,10 @@ SEED_STAGES_DONE = "05_brief.md"  # once the brief exists, no later stage reads 
 NO_EARLIER = "(nothing yet: the conversation is just starting)"
 STEP_BACK_NOTE = ("You are stepping back. If you have not said your parting words"
                   " yet, say them now, in a few words, once. Otherwise produce no text.")
+RETURNING_NO_NAME = ("(You have talked with this listener before, but no name of yours is on record. This is not a "
+                     "first meeting: don't introduce yourself or say what you do. If they ask your name, choose one "
+                     "from the names below and keep it.)")
+NO_PROFILE_YET = "(nothing recorded about them yet)"  # common.listener_profile's says "first meeting"
 EARLIER_CHARS = 6000  # the end of a long conversation is what the guide needs when it comes back
 
 
@@ -146,18 +150,22 @@ class Session:
         self.messages: list[dict] = []
         self.run: str | None = None  # the chapter started in this session
         known = identity(cfg)
+        from . import memory
+        returning = not memory.meeting(cfg)["first"]  # a chapter, a past conversation or guide.md
         rng = rng or random.Random()
         # A returning guide has its name in its identity and is not offered others. (A first meeting
-        # that ended before it said a name leaves no identity: prompts/memory.md.)
+        # that ended before it said a name leaves no identity: prompts/memory.md. The names are still
+        # offered then, for when the listener asks.)
         names = self.names = [] if known else draw_names(cfg, rng)
         self.voice_conversations: list[str] = []  # ElevenLabs conversation ids: one per connection
         # The prompt's values: the typed chat renders them here; the voice agent (stages/voice.py) gets
         # them as dynamic variables, since its prompt is prompts/guide.md with the same {{placeholders}}.
         self.values = {
-            "identity": known or "(none: this is your first meeting)",
+            "identity": known or (RETURNING_NO_NAME if returning else "(none: this is your first meeting)"),
             "names": ", ".join(names) or "(you already have a name: see above)",
             "sparks": ", ".join(draw_sparks(cfg, rng)),
-            "profile": listener_profile(cfg), "history": recent_history(cfg),
+            "profile": listener_profile(cfg) if not returning or (listener_dir(cfg) / "profile.md").exists()
+            else NO_PROFILE_YET, "history": recent_history(cfg),
             "chapter_now": chapter_now(status() or {}, self._plain),
             "minutes": str(round(sum((cfg.get("status_minutes") or {}).values())) or 25),
             "now": day_part(), "earlier": NO_EARLIER,
@@ -165,7 +173,7 @@ class Session:
         if fast is not None:  # fast chapters: the minutes to the first audio when measured, else no figure
             self.values["minutes"] = fast.minutes()
         self.system = load_prompt("guide", **self.values)
-        self.record("session", names=names, returning=bool(known))
+        self.record("session", names=names, returning=returning)
 
     def resume_values(self) -> dict:
         """The prompt's values for a new voice connection in the same conversation (the guide stepped

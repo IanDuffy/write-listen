@@ -8,9 +8,17 @@ Inputs:
 - {{entries}}: the dossier entries for those rows, and the entries the outline gives this section
 - {{other_entries}}: the rest of the dossier (overnight/write.py Dossier: row L00 stands for all of it)
 - {{target_words}}: this section's length
-- {{position}}: overnight_draft_first.md, overnight_draft_middle.md or fast_draft_last.md
-- {{notes}}, {{note_entries}}: supplied by faststart/sections.py and not used here (no listener
-  notes arrive overnight)
+- {{position}}
+
+Notes the listener added after the plan was locked; follow them where they bear on this section:
+
+<notes>
+{{notes}}
+</notes>: overnight_draft_first.md, overnight_draft_middle.md or fast_draft_last.md
+- {{notes}}: notes the listener typed or said after the plan was locked, while research ran
+  (00_source/notes.md via overnight/write.py; "(none yet)" when there are none). Notes added before the
+  lock are in the seed, which the system prompt carries.
+- {{note_entries}}: supplied by faststart/sections.py and not used here
 
 System prompt: overnight_context.md. Sent after overnight_earlier.md and one block per earlier section
 holding its full text. The overnight counterpart of fast_draft.md: keep the two in step. The first

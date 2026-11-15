@@ -102,3 +102,53 @@ lines; a `[pause]` line ends a paragraph with a beat. The same split the pause r
 - Prompts only in `prompts/*.md` (`load_prompt`), inputs above `---`.
 - No listener is waiting: no fast-start shortcuts (holds, solo locks, opening from the scout alone).
 - Tests offline: fake Claude (`tests/fakes.py` patterns), a fake GPT-Live session, real ffmpeg.
+
+## Round 2 (Ian's notes after the demo, 2026-11-15)
+
+**One home page, one player.** The library is no longer a page of its own: it is a module mounted below the
+main page's orb (scroll down: Up next, the latest chapter, then every past chapter). The module is
+`page/library.js` with its markup built by script into `<section id="library">` and a fixed mini player
+`<div id="player">` at the bottom; `page/index.html` (this branch's `/`) mounts it with
+`<section id="library"></section>` and `<script src="/library.js"></script>`, and the live-voice page will do the
+same when that branch lands. `/library` stays as a standalone shell around the same module.
+- **Persistent playback:** the module owns one `<audio>` (`#chapter-audio`). Navigation inside the app is
+  client-side (`location.hash`): `#/` home, `#/chapter/<run>` the chapter view (read-along transcript with the
+  current sentence highlighted, click a sentence to seek, reference cards), built from
+  `/runs/<run>/11_episode/episode.json`. Moving between them never touches the audio. Links to the old
+  standalone episode page are replaced by `#/chapter/<run>`. When the page's own `#audio` (the orb's chapter)
+  starts, the chapter player pauses, and the other way round.
+- **History:** `GET /api/library` adds `history`: every finished chapter, newest first by when it finished
+  (`profiles.chapters` + `_chapter_info`), each `{run, title, overview, date, minutes, audio, episode, intro}`.
+  Any chapter plays; only the latest offers the live intro.
+- **Play and the mic:** Play on the latest chapter opens the live intro (the guide needs the mic so the listener
+  can answer); a "Skip the intro" link plays the recording at once. Every other Play just plays.
+
+**Notes for the next chapter.** "Add a note" on the Up next card opens a text box. `POST /api/overnight/note
+{"text"}` -> `{"where": "card"|"tonight"|"next", "note": {...}, "message": "..."}`:
+- a planned card (before the cutoff): appended to the card's `notes_added` `[{"t", "text", "via": "typed"|"voice"}]`;
+  `planner.seed_text` puts them in `00_source/seed.md` at lock, so research, outline and writing see them;
+- the build has started but research hasn't finished: appended to the chapter's `00_source/notes.md` (which
+  `common.seed_inputs` already reads) and to the listener's card;
+- otherwise (too late tonight, or no card yet): `listeners/<id>/next_notes.jsonl`; the next planning pass takes
+  them into its card's `notes_added` and marks them used.
+`/api/library`'s card carries `notes_added`; the card shows them under the summary. Change by voice:
+`set_next_chapter` with mode `keep` and notes adds them the same way (via "voice").
+
+**Every live session knows the situation.** `stages/memory.meeting(cfg) -> {"first": bool, "chapters": n,
+"conversations": n, "guide_name": str|None, "last_chapter": title|None}`: a first meeting only when the listener
+has no chapter, no past conversation in which they spoke, and no guide.md. Every GPT-Live session (intro,
+change, ask) gets `{{meeting}}` (a returning listener is never greeted as new: no "nice to meet you", no
+introducing itself) and `{{situation}}` (why this session was opened: "They tapped Change on tomorrow's plan
+..."; "They pressed Play on this morning's chapter ..."; "They tapped to ask during ...") and `{{recent}}` (the
+last few lines of their latest conversation and the latest history entry). The opening notes say what to do
+first in that situation, not "say hello". The onboarding guide (`stages/guide.py`) uses the same `meeting()` for
+its returning flag. The page posts any line still being heard before it ends a session.
+
+After the round-2 review: the orb's voice guide and the library's player and live sessions never run together
+(`window.Orb.busy/end` from index.html, `window.Library.busy/end` from library.js); the chapter view takes over
+the orb's `#audio` when it is playing the same chapter; Ask is offered only on chapters with a timed transcript
+(`asks`). `{{recent}}` leaves out the session's own chapter and is capped (an ask gets no history entry);
+`session_config` trims `{{recent}}`, then the dossier, rather than refusing; a conversation in which the
+listener asked to forget something is marked `sessions/<id>.forgot` and never quoted back. Notes cover failed
+cards too, a replaced planned or failed card's notes carry over, and notes added while research ran reach the
+writer and the editor (`overnight/write.py` reads `00_source/notes.md`).

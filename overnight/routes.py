@@ -1,8 +1,11 @@
 """The library page and its API (docs/overnight-chapters.md, "Library page"; the morning flow and
 Change by voice add their live-session routes here).
 
-    GET  /library        page/library.html: Up next on top, the latest chapter below
-    GET  /api/library    what the page shows (the card, its state line, the latest chapter, settings)
+    GET  /library        page/library.html: a standalone shell around page/library.js (the same module
+                         page/index.html mounts below the orb: Up next, the latest chapter, history)
+    GET  /library.js     the module: its markup, the mini player, the chapter view (#/chapter/<run>)
+    GET  /api/library    what the page shows (the card, its state line, the latest chapter, every
+                         finished chapter newest first as history, settings)
     POST /api/settings   {"overnight": {...}, "chapter": {...}, "playback": {...}} -> settings.json
 """
 
@@ -25,19 +28,31 @@ LIBRARY_JS = ROOT / "page" / "library.js"
 
 
 def _chapter_info(root: Path) -> dict:
-    """The latest chapter card: title, overview, date, length, and where its page is."""
+    """A chapter as the library shows it: title, overview, date, length, its audio and its chapter view
+    (`#/chapter/<run>`, the page's in-page read-along, when it has an episode.json)."""
     card = profiles.read_json(root / "00_source" / "up_next.json", {}) or {}
     ep = profiles.read_json(root / "11_episode" / "episode.json", {}) or {}
     timing = profiles.read_json(root / "11_episode" / "timing.json", {}) or {}
     title = card.get("title") or ep.get("title") or root.name
     overview = card.get("overview") or ep.get("angle") or ""
     day = root.name[:10] if len(root.name) > 10 and root.name[4] == "-" else None
+    if day is None:  # a seed or fast run (<slug>-YYYYMMDD): the day it finished
+        t = profiles.finished_at(root)
+        day = datetime.fromtimestamp(t).strftime("%Y-%m-%d") if t else None
     secs = ep.get("duration") or timing.get("duration")
     return {"run": root.name, "title": title, "overview": overview, "date": day,
             "minutes": round(secs / 60) if secs else None,
             "audio": f"/api/chapters/{root.name}/audio",
-            "episode": f"/episode/index.html?run=/runs/{root.name}" if (root / "11_episode" / "episode.json").exists() else None,
-            "intro": (root / "intro_brief.md").exists()}
+            "episode": f"#/chapter/{root.name}" if (root / "11_episode" / "episode.json").exists() else None,
+            "intro": (root / "intro_brief.md").exists(),
+            "asks": (root / "11_episode" / "timing.json").exists()}
+
+
+def history(listener: Path) -> list[dict]:
+    """Every finished chapter, newest first by when it finished (the order latest_chapter uses)."""
+    done = [p for p in profiles.chapters(listener=listener) if profiles.finished(p)]
+    done.sort(key=lambda p: (profiles.finished_at(p), p.name), reverse=True)
+    return [_chapter_info(p) for p in done]
 
 
 def state_line(card: dict | None, settings: dict, now: datetime, build: dict | None) -> tuple[str, str]:
@@ -106,6 +121,7 @@ def library_state(cfg: dict, now: datetime | None = None) -> dict:
                         "change": state in ("planned", "failed"), "can_change": can,
                         "change_note": why, "plan_failed": (failed or {}).get("reason")},
             "latest": _chapter_info(latest) if latest else None,
+            "history": history(listener),
             "settings": settings}
 
 

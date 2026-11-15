@@ -4,7 +4,8 @@ Plain files in the listener's folder (listeners/<id>/, common.listener_dir), rea
 
     profile.md         what the listener has said about themselves, in their words; under a page
     guide.md           the guide's identity for this listener: name, how it chose it, when they met
-    sessions/<id>.jsonl  each conversation's transcript, written during it (stages/guide.py)
+    sessions/<id>.jsonl  each conversation's transcript, written during it (stages/guide.py); <id>.done once
+                       its pass has run, <id>.forgot when the listener asked to forget something in it
     seeds/<run>.md     the seed of each chapter, saved when start_chapter is called
     history.md         chapters made so far: title, angle, the ledger's parked ideas
     library.jsonl, seeds.jsonl  works and topics they mentioned, questions and ideas for future chapters
@@ -16,7 +17,10 @@ mentioned for the library and seeds (Overnight Chapters, "Change by voice" step 
 listener said, keep it small, honour "forget that"). record_chapter() appends a
 finished seed run to history.md, by code. The guide reads profile.md, guide.md and
 the last few history.md entries at the start of each conversation, which is what
-makes a returning conversation different from a first one.
+makes a returning conversation different from a first one. meeting() says whether it is
+one (a first meeting only with no finished chapter, no conversation in which the listener
+spoke and no guide.md), and recent() what happened last; the guide and every library page
+session use them (Overnight Chapters round 2).
 """
 
 from __future__ import annotations
@@ -34,10 +38,12 @@ from .common import ROOT, Run, StageError, listener_dir, load_prompt, parse_json
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["profile", "guide", "forget_chapters", "library", "seeds"],
+    "required": ["profile", "guide", "forget_chapters", "forgot", "library", "seeds"],
     "properties": {
         "profile": {"type": "string"}, "guide": {"type": "string"},
         "forget_chapters": {"type": "array", "items": {"type": "string"}},
+        # the listener asked to forget something: memory.recent() never quotes this conversation back
+        "forgot": {"type": "boolean"},
         # Overnight Chapters: what the listener mentioned, for library.jsonl and seeds.jsonl (overnight/library.py)
         "library": {"type": "array", "items": {
             "type": "object", "additionalProperties": False, "required": ["kind", "title", "creator", "note"],
@@ -126,7 +132,10 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
             tmp = p.with_name(f"{name}.md.{transcript.stem}.tmp")
             tmp.write_text(text + "\n", encoding="utf-8")
             tmp.replace(p)
-    forget_chapters(cfg, [x for x in data.get("forget_chapters") or [] if isinstance(x, str)])
+    gone = [x for x in data.get("forget_chapters") or [] if isinstance(x, str)]
+    forget_chapters(cfg, gone)
+    if data.get("forgot") is True or gone:  # before .done: recent() reads the marker once the pass has run
+        transcript.with_suffix(".forgot").write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     remember_library(d, data, transcript)
     done.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     return True
@@ -210,6 +219,114 @@ def record_chapter(cfg: dict, r: Run) -> None:
         entry.append("- Parked, for a later chapter: " + "; ".join(x for x in parked if x))
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text.rstrip() + "\n" + "\n".join(entry) + "\n", encoding="utf-8")
+
+
+def _guide_name(text: str) -> str | None:
+    """The guide's name as guide.md records it ("- Name: Wren.", "**Name:** Wren"), or None."""
+    m = re.search(r"(?im)^[\s*#-]*name\b[^:\n]*:\s*\**\s*([A-Z][A-Za-z'-]+)", text) or \
+        re.search(r"\bmy name is ([A-Z][A-Za-z'-]+)", text)
+    return m.group(1) if m else None
+
+
+def _history_entries(d: Path) -> list[str]:
+    """history.md's '## ' entries, oldest first, each as written (heading line first)."""
+    p = d / "history.md"
+    if not p.exists():
+        return []
+    return [part.strip() for part in p.read_text(encoding="utf-8").split("\n## ")[1:] if part.strip()]
+
+
+def _entry_title(entry: str) -> str:
+    head = entry.splitlines()[0].strip().lstrip("#").strip()
+    m = re.match(r"(.+?)\s+\([^()]*,\s*\d{4}-\d{2}-\d{2}\)$", head)
+    return (m.group(1) if m else head).strip()
+
+
+def conversations(cfg: dict, exclude: str | None = None) -> list[Path]:
+    """Past conversations in which the listener spoke (sessions/<id>.jsonl), oldest first. Only sessions/:
+    a reset listener's archive is not this listener's past."""
+    s = listener_dir(cfg) / "sessions"
+    if not s.exists():
+        return []
+    return sorted((p for p in s.glob("*.jsonl") if p.stem != "log" and p.stem != exclude and had_listener(p)),
+                  key=lambda p: p.stem)
+
+
+def _entries_but(d: Path, exclude_run: str | None) -> list[str]:
+    """history.md's entries without the one for `exclude_run` (the chapter a session is about)."""
+    return [e for e in _history_entries(d) if not exclude_run or f"({exclude_run}," not in e.splitlines()[0]]
+
+
+FORGET = re.compile(r"\bforget\b|\bdon'?t (remember|keep)\b", re.I)
+
+
+def asked_to_forget(transcript: Path) -> bool:
+    """Did the listener ask to forget something in this conversation? Its memory pass says so (<id>.forgot);
+    before the pass has run (or for an aside, which has none), any listener line asking to forget counts."""
+    if transcript.with_suffix(".forgot").exists():
+        return True
+    if transcript.with_suffix(".done").exists():
+        return False
+    for raw in transcript.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("who") == "listener" and FORGET.search(str(rec.get("text") or "")):
+            return True
+    return False
+
+
+def meeting(cfg: dict, exclude_run: str | None = None) -> dict:
+    """Has the guide met this listener? {"first", "chapters", "conversations", "guide_name", "last_chapter"}.
+    A first meeting only when there is no finished chapter, no past conversation in which they spoke and no
+    guide.md: the memory the app has, not a flag per screen (Overnight Chapters round 2). last_chapter is the
+    latest history.md entry other than `exclude_run` (the chapter being introduced or asked about), and only
+    from history.md: a chapter the listener asked to forget is gone from it, so it is never named again."""
+    from overnight import profiles
+    d = listener_dir(cfg)
+    done = [p for p in profiles.chapters(listener=d) if profiles.finished(p)]
+    talks = conversations(cfg)
+    g = d / "guide.md"
+    gtext = g.read_text(encoding="utf-8").strip() if g.exists() else ""
+    entries = _entries_but(d, exclude_run)
+    last = _entry_title(entries[-1]) if entries else None
+    return {"first": not done and not talks and not gtext, "chapters": len(done), "conversations": len(talks),
+            "guide_name": _guide_name(gtext) if gtext else None, "last_chapter": last}
+
+
+def recent(cfg: dict, lines: int = 8, exclude: str | None = None, exclude_run: str | None = None,
+           max_chars: int | None = None) -> dict:
+    """What happened last: {"conversation": the last `lines` lines said in the latest conversation in which the
+    listener spoke (the guide's as "you"), at most `max_chars` in all, "when": its day, "mode": what it was for
+    (a library page session's mode, or None), "chapter": the latest history.md entry other than `exclude_run`}.
+    Empty strings when there is none. A latest conversation in which they asked to forget something is not
+    quoted at all (asked_to_forget), and no earlier one is quoted in its place: it may hold what was forgotten."""
+    talks = conversations(cfg, exclude=exclude)
+    out = {"conversation": "", "when": "", "mode": None, "chapter": ""}
+    if talks and not asked_to_forget(talks[-1]):
+        p = talks[-1]
+        said = []
+        for raw in p.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            text = " ".join(str(rec.get("text") or "").split())
+            if rec.get("who") == "session" and rec.get("mode") and out["mode"] is None:
+                out["mode"] = rec["mode"]
+            elif rec.get("who") in ("listener", "guide") and text:
+                said.append(f"{'you' if rec['who'] == 'guide' else 'listener'}: {text}")
+        said = said[-lines:]
+        while max_chars and len(said) > 1 and len("\n".join(said)) > max_chars:
+            said.pop(0)  # the oldest line goes first
+        text = "\n".join(said)
+        out["conversation"] = text if not max_chars or len(text) <= max_chars else "…" + text[-(max_chars - 1):]
+        out["when"] = session_date(p)
+    entries = _entries_but(listener_dir(cfg), exclude_run)
+    if entries:
+        out["chapter"] = entries[-1]
+    return out
 
 
 def run_pending(cfg: dict) -> int:

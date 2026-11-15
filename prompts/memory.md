@@ -9,7 +9,8 @@ Inputs:
 - {{today}}: the date of the conversation
 
 Output: JSON (structured output; SCHEMA in stages/memory.py): the new profile.md
-and guide.md, written whole, and the run names of any chapters the listener asked
+and guide.md, written whole, whether the listener asked to forget anything (code marks the
+session so memory.recent never quotes it), and the run names of any chapters the listener asked
 to forget (code removes them from history.md and seeds/), and the works, people, topics and future-chapter
 seeds the listener mentioned (code appends them to library.jsonl and seeds.jsonl, overnight/library.py, and
 keeps a seed's words only if the listener said them). Rules from docs/phase1-onboarding.md, "Memory store";
@@ -60,8 +61,10 @@ The conversation took place on {{today}}.
 - Its name, how it chose the name (in a line), the date they met, and what it has said about itself, briefly.
 - Keep everything consistent with what is already there; add only what the guide newly said about itself.
 - If the guide has not yet chosen a name and this is not a first meeting, keep the file as it is.
-- If this was a first meeting and the guide never said a name (it no longer introduces itself up front, so a short conversation can end before it does), return an empty string: the next conversation is then a first meeting again, and the guide is offered names to choose from.
+- If this was a first meeting and the guide never said a name (it no longer introduces itself up front, so a short conversation can end before it does), return an empty string: the guide then has no name with them yet and is offered names to choose from next time. (The next conversation is still not a first meeting: they have talked.)
 - If the guide said nothing about itself and the file exists, return it unchanged.
+
+**forgot**: true if the listener asked the guide to forget anything in this conversation (something they said, a subject, a chapter), else false. Code then never quotes this conversation back to the guide.
 
 **forget_chapters**: if the listener asked the guide to forget a chapter, or a subject that a chapter in the history is about, the run names of those chapters (the name in brackets after each title, before the date). Otherwise an empty list.
 

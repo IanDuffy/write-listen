@@ -103,17 +103,17 @@
     render();
   }
 
-  // The read-along link, when the chapter has an episode page (episode/page, served at /episode).
+  // The read-along link, when the chapter has an episode page: the library's chapter view in this page
+  // (page/library.js, #/chapter/<run>), which takes the chapter over from #audio where it is.
   const read = document.createElement("a");
   read.id = "read";
   read.textContent = "Read along";
-  read.target = "_blank";
   $("line").after(read);
   function decorate() {
     const s = status;
     const on = s.state === "ready" && s.episode && !a;
     read.style.display = on ? "" : "none";
-    if (on) read.href = `/episode/index.html?run=/runs/${encodeURIComponent(s.run)}`;
+    if (on) read.href = `#/chapter/${encodeURIComponent(s.run)}`;
   }
 
   // --- the aside --------------------------------------------------------------------------------

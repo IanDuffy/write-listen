@@ -333,3 +333,70 @@ def test_a_summary_past_four_sentences_gets_one_retry(tmp_path, cfg, monkeypatch
     card = planner.plan(cfg, listener, now=datetime(2026, 11, 16, 18, 5))
     assert seen == [1, 2] and planner.sentences(card["summary"]) <= 4
     assert "had 5 sentences" in P.all_text(fake.of("card")[1])
+
+
+# --- round 2: notes for the next chapter ------------------------------------------------------------------
+
+def test_seed_text_lists_the_notes_added_to_the_card(world, cfg):
+    d, _ = world
+    up = planner.plan(cfg, d, now=TUESDAY_EVENING)
+    assert "## Notes the listener added to this plan" in planner.seed_text(up)
+    assert planner.seed_text(up).rstrip().endswith("(none)")
+    up["notes_added"] = [{"t": "2026-11-17T19:00:00", "text": "More on the fishermen", "via": "typed"},
+                         {"t": "2026-11-17T19:05:00", "text": "keep the maths light", "via": "voice"},
+                         {"t": "2026-11-17T19:06:00", "text": "  ", "via": "typed"}]
+    seed = planner.seed_text(up)
+    assert seed.rstrip().endswith("- More on the fishermen\n- keep the maths light (said in conversation)")
+
+
+def test_the_seed_with_notes_reaches_the_research_and_writing_prompts(world, cfg, tmp_path):
+    """They read 00_source/seed.md through common.seed_inputs."""
+    from stages import common
+    from stages.common import Run
+    d, _ = world
+    up = {**planner.plan(cfg, d, now=TUESDAY_EVENING),
+          "notes_added": [{"t": "x", "text": "Mention the heron colony at Richmond Park", "via": "typed"}]}
+    r = Run.open("chapter-x", create=True, runs_dir=tmp_path)
+    r.path("seed").parent.mkdir(parents=True, exist_ok=True)
+    r.path("seed").write_text(planner.seed_text(up))
+    assert "Mention the heron colony at Richmond Park" in common.seed_inputs(r, cfg)["seed"]
+
+
+def test_a_pass_takes_the_notes_left_for_the_next_chapter_and_marks_them_used(world, cfg):
+    d, fake = world
+    n1 = library.add_next_note(d, "Something about tides, please", "typed")
+    library.add_next_note(d, "not too long on history", "voice")
+    up = planner.plan(cfg, d, now=TUESDAY_EVENING)
+    assert [(n["text"], n["via"]) for n in up["notes_added"]] == [("Something about tides, please", "typed"),
+                                                                  ("not too long on history", "voice")]
+    assert "Notes the listener left for the next chapter" in all_text(fake.of("choose")[0])
+    assert "Something about tides, please" in all_text(fake.of("card")[0])
+    assert library.next_notes(d) == [] and library.next_notes(d, unused=False)[0]["id"] == n1["id"]
+    used = [r for r in profiles.read_jsonl(d / "next_notes.jsonl") if "used" in r]
+    assert {r["used"] for r in used} == {n["id"] for n in library.next_notes(d, unused=False)} and used[0]["by"] == up["id"]
+    up2 = planner.plan(cfg, d, request={"mode": "topic", "topic": "Octopus eyes", "session": "s2"},
+                       now=TUESDAY_EVENING.replace(minute=30))
+    # a Change replacing a planned card keeps its notes; the used ones are not taken again
+    assert [n["text"] for n in up2["notes_added"]] == ["Something about tides, please", "not too long on history"]
+
+
+def test_a_dropped_or_queued_pass_leaves_the_notes_unused(world, cfg, monkeypatch):
+    from overnight import schedule
+    d, _ = world
+    library.add_next_note(d, "tides", "typed")
+    monkeypatch.setattr(schedule, "can_change", lambda card, settings, now: (False, "Too late."))
+    out = planner.plan(cfg, d, request={"mode": "topic", "topic": "Octopus eyes", "session": "s2"}, now=TUESDAY_EVENING)
+    assert out["queued"] is True and [n["text"] for n in library.next_notes(d)] == ["tides"]
+
+
+def test_a_change_over_a_failed_card_keeps_the_notes_added_to_it(world, cfg):
+    """R10: the failed chapter is superseded and never finished, so its notes were never delivered."""
+    d, _ = world
+    up = planner.plan(cfg, d, now=TUESDAY_EVENING)
+    note = {"t": "2026-11-17T19:00:00", "text": "More on the fishermen", "via": "typed"}
+    profiles.write_json(d / "up_next.json", {**up, "status": "failed", "error": "write: boom", "notes_added": [note]})
+    library.add_next_note(d, "and the tides", "typed")
+    up2 = planner.plan(cfg, d, request={"mode": "topic", "topic": "Octopus eyes", "session": "s2"},
+                       now=TUESDAY_EVENING.replace(minute=30))
+    assert [n["text"] for n in up2["notes_added"]] == ["More on the fishermen", "and the tides"]
+    assert "- More on the fishermen" in planner.seed_text(up2)

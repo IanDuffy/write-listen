@@ -5,19 +5,26 @@ Inputs:
 - {{draft}}: the latest draft of section n
 - {{mode}}: fast_lock_paired.md (the draft of n+1 beside it) or fast_lock_final.md (the last section,
   read against the whole chapter). Overnight never locks solo.
-- {{plan}}: section n's part of the outline
+- {{plan}}
+
+Notes the listener added after the plan was locked (honour them; a section that ignores one that bears on it is not ready):
+
+<notes>
+{{notes}}
+</notes>: section n's part of the outline
 - {{rows}}: the ledger rows section n must land, with how their research came back, and any row an
   earlier section left thin or missing
 - {{entries}}: the whole dossier (overnight/write.py Dossier: row L00 stands for all of it)
 - {{target_words}}: section n's length
-- {{notes}}, {{note_entries}}: supplied by faststart/sections.py and not used here
+- {{notes}}: notes the listener added after the plan was locked, while research ran ("(none yet)")
+- {{note_entries}}: supplied by faststart/sections.py and not used here
 
 Output: JSON per faststart/sections.py SCHEMA: text, next_text, moved, rows, cut, title, corrections.
 
 System prompt: overnight_context.md. Sent after overnight_earlier.md and one block per locked section.
 The overnight counterpart of fast_lock.md: keep the two in step. What differs: nothing is narrated
 the moment it is returned (the whole chapter is checked once against its card's summary afterwards,
-overnight/promise.py), there are no listener notes, and no corrections (the research was finished
+overnight/promise.py), listener notes are only those added while research ran, and no corrections (the research was finished
 before the first draft). The first line must stay "Lock section N of M" (tests read it).
 ---
 Lock section {{n}} of {{total}}: {{title}}. You are its editor, seeing the draft for the first time. You did not write it and owe it nothing. The text you return for section {{n}} is final: after you, the chapter is only checked as a whole against what the listener was promised. Every word you write goes to the listener, so every fact in your wording must come from an entry below.

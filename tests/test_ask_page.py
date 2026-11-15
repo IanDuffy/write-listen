@@ -322,3 +322,26 @@ def test_start_at_a_time_from_the_address(site):
     finally:
         browser.close()
         pw.stop()
+
+
+def test_read_along_opens_the_chapter_view_in_this_page(site):
+    """Read along goes to the library's chapter view (#/chapter/<run>) in the same tab, not the old episode page
+    in a new one, and the chapter view takes the playing chapter over where it was (overnight/DESIGN.md Round 2)."""
+    from episode import bundle
+    base, root, cfg = site
+    (root / "11_episode" / "references.json").write_text("[]")
+    bundle.write(root)
+    pw, browser, page = open_page(site)
+    try:
+        play_at(page, 30.0)
+        page.wait_for_function("getComputedStyle(document.getElementById('read')).display !== 'none'")
+        assert page.get_attribute("#read", "href") == "#/chapter/synthetic"
+        assert page.get_attribute("#read", "target") is None
+        page.click("#read")
+        page.wait_for_function("location.hash === '#/chapter/synthetic'")
+        page.wait_for_function("!document.getElementById('chapter-audio').paused && document.getElementById('audio').paused")
+        assert page.evaluate("document.getElementById('chapter-audio').currentTime") >= 30
+        assert len(page.context.pages) == 1
+    finally:
+        browser.close()
+        pw.stop()
