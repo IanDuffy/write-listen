@@ -1,13 +1,16 @@
 """Overnight recording with GPT-Live (overnight/record.py; spec checks 6 and 8)."""
 
 import json
+import sys
 import threading
+import time
 
 import numpy as np
 import pytest
 
+from episode import recognize
 from overnight import record
-from overnight_record_fakes import (FakeLive, FakeServer, Killed, make_run, no_threads_left,  # noqa: F401
+from overnight_record_fakes import (FakeEar, FakeLive, FakeServer, Killed, make_run, no_threads_left,  # noqa: F401
                                     offline, silence, tone)
 from stages.common import StageError
 
@@ -88,6 +91,25 @@ def test_a_dropped_word_counts_and_a_dropped_not_fails():
     assert num["critical"] == 1 and not record.passes(num, 2)
 
 
+def test_anything_said_before_the_passage_fails_the_take():
+    d = record.deviation("The heron waits.", "Right. The heron waits.")
+    assert d["before"] == 1 and d["added"] == 1 and not record.passes(d, 2)
+    assert record.deviation("The heron waits.", "The heron waits. Okay.")["before"] == 0
+
+
+def test_a_name_whisper_spells_differently_is_forgiven_only_where_the_transcript_had_it():
+    text = "The Natural History of Pliny describes them."
+    d = record.deviation(text, "The Natural History of Plinee describes them.", vouch=text)
+    assert d["diffs"] == [] and d["forgiven"] == [["replace", "pliny", "plinee"]] and record.passes(d, 0)
+    unvouched = record.deviation(text, "The Natural History of Plinee describes them.",
+                                 vouch="The Natural History of Plenty describes them.")
+    assert unvouched["changed"] == 1 and unvouched["forgiven"] == []
+    unlike = record.deviation(text, "The Natural History of Sunday describes them.", vouch=text)
+    assert unlike["changed"] == 1 and unlike["forgiven"] == []
+    neg = record.deviation("It does not move.", "It does nut move.", vouch="It does not move.")
+    assert neg["critical"] == 1 and neg["forgiven"] == []
+
+
 def test_a_contraction_is_a_change_but_not_a_critical_one():
     d = record.deviation("They do not know.", "They don't know.")
     assert d["changed"] == 2 and d["critical"] == 0 and record.passes(d, 2)
@@ -95,15 +117,47 @@ def test_a_contraction_is_a_change_but_not_a_critical_one():
 
 # --- following and cutting -----------------------------------------------------------------------
 
-def test_follow_joins_split_words_and_ignores_what_came_before():
-    f = record.Follow("Listening is a strategy with a cost.")
-    for delta, ms in [(" Right.", 0), (" List", 600), ("ening", 800), (" is a", 1000), (" strat", 1200),
-                      ("egy with", 1400), (" a cost.", 1600)]:
+def test_follow_joins_split_words_and_keeps_what_came_before_the_opening():
+    deltas = [(" Right.", 300), (" List", 600), ("ening", 800), (" is a", 1000), (" strat", 1200),
+              ("egy with", 1400), (" a cost.", 1600)]
+    f = record.Follow("Listening is a strategy with a cost.", since_ms=0)
+    for delta, ms in deltas:
         f.push(delta, ms)
     assert f.done  # "cost." is still a partial word (no space follows the last word), and counts
     f.flush()
-    assert f.started and f.start_ms == 600 and f.done
-    assert " ".join(f.heard) == "Listening is a strategy with a cost."
+    assert f.started and f.start_ms == 300 and f.done  # the take starts at "Right.", and the check sees it
+    assert " ".join(f.heard) == "Right. Listening is a strategy with a cost."
+    late = record.Follow("Listening is a strategy with a cost.", since_ms=500)  # the last paragraph's tail
+    for delta, ms in deltas:
+        late.push(delta, ms)
+    late.flush()
+    assert late.start_ms == 600 and " ".join(late.heard) == "Listening is a strategy with a cost."
+
+
+def test_a_misheard_opening_name_is_in_the_take_and_the_check():
+    """Review C6 (a): the first word transcribed differently. The take starts at it (not partway through
+    it, at the next word), and the check sees the difference."""
+    text = "Diotima argued that love climbs a ladder."
+    f = record.Follow(text, since_ms=0)
+    for delta, ms in [(" Dee", 100), ("otima argued", 300), (" that love climbs a ladder.", 600)]:
+        f.push(delta, ms)
+    f.flush()
+    assert f.start_ms == 100 and " ".join(f.heard) == "Deeotima argued that love climbs a ladder."
+    assert record.deviation(text, " ".join(f.heard))["changed"] == 1
+
+
+def test_a_preamble_containing_an_opening_word_fails_the_take():
+    """Review C6 (b): "Here is the passage." before "The heron...": the take starts at "Here", and the
+    check fails it (the old one started at the preamble's "the" and passed it)."""
+    text = "The heron waits in the shallows for a fish."
+    f = record.Follow(text, since_ms=0)
+    for delta, ms in [(" Here is", 100), (" the passage.", 400), (" The heron waits in the shallows", 1200),
+                      (" for a fish.", 1600)]:
+        f.push(delta, ms)
+    f.flush()
+    assert f.start_ms == 100 and " ".join(f.heard).startswith("Here is the passage. The heron")
+    d = record.deviation(text, " ".join(f.heard))
+    assert d["before"] == 4 and not record.passes(d, 2)
 
 
 def test_follow_is_not_done_when_a_late_word_is_found_early():
@@ -238,7 +292,34 @@ def test_a_kill_mid_recording_resumes_without_redoing_finished_paragraphs(tmp_pa
     assert takes == 2  # the take numbers continue; nothing overwritten
 
 
-def test_a_lost_connection_opens_a_new_session(tmp_path, cfg):
+def test_ctrl_c_closes_every_session_and_no_lane_records_after(tmp_path, cfg, monkeypatch):
+    """Review C7: a KeyboardInterrupt in run()'s wait for the lanes. Every lane's session is closed from
+    the main thread and the lanes end before run() raises: nothing is read (or billed) afterwards."""
+    r = make_run(tmp_path)
+    some = threading.Event()
+
+    def slow(session, text):
+        time.sleep(0.05)
+        if len(live.reads) >= 2:
+            some.set()
+    live = FakeLive(before_read=slow)
+
+    def interrupted(self, threads):
+        assert some.wait(5)
+        raise KeyboardInterrupt
+    monkeypatch.setattr(record._Recorder, "wait", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        record.run(r, cfg, session_factory=live)
+    assert not [t for t in threading.enumerate() if t.name.startswith("record-lane")]
+    n = len(live.reads)
+    time.sleep(0.3)
+    assert len(live.reads) == n < 9
+    assert live.closed == len(live.sessions) == 4 and all(s.closed for s in live.sessions)
+    assert sum(1 for x in logged(r) if x.get("closed")) == 4  # each session's cost logged once
+    assert not (r.root / "10_audio" / "recorded.json").exists()
+
+
+def test_a_lost_connection_opens_a_new_session(tmp_path, cfg, pauses):
     r = make_run(tmp_path)
     cfg["overnight"]["record"]["sessions"] = 1
     t = texts_by_id(r)
@@ -251,14 +332,56 @@ def test_a_lost_connection_opens_a_new_session(tmp_path, cfg):
     assert len(never) == 1 and never[0]["id"] == "s3-p01" and not never[0]["passed"]
 
 
-def test_repeated_drops_stop_the_stage(tmp_path, cfg):
+@pytest.fixture
+def pauses(monkeypatch):
+    waited = []
+    monkeypatch.setattr(record._Recorder, "pause", lambda self, s: waited.append(s))
+    return waited
+
+
+def test_repeated_drops_stop_the_stage(tmp_path, cfg, pauses):
     r = make_run(tmp_path)
     cfg["overnight"]["record"]["sessions"] = 1
     t = texts_by_id(r)
     live = FakeLive({t["s1-p01"]: ["lost"] * 10})
-    with pytest.raises(StageError, match="failed 4 times"):
+    with pytest.raises(StageError, match="failed 5 times in a row"):
         record.run(r, cfg, session_factory=live)
-    assert live.closed == len(live.sessions) == 4
+    assert live.closed == len(live.sessions) == 5
+    assert pauses == list(record.BACKOFF_SECONDS)  # a growing wait before each reopen
+
+
+def test_a_session_that_fails_to_open_twice_then_opens_records_everything(tmp_path, cfg, pauses):
+    """Review S1: a network blip at 2:00. Opening fails twice (at once, like a DNS error); after a wait
+    the third try opens, and the chapter is recorded."""
+    r = make_run(tmp_path)
+    cfg["overnight"]["record"]["sessions"] = 1
+    live, tries = FakeLive(), []
+
+    def factory(c, instructions, label):
+        tries.append(1)
+        if len(tries) <= 2:
+            raise record.SessionLost("could not open a GPT-Live session: OSError: no route to host")
+        return live(c, instructions, label)
+    out = record.run(r, cfg, session_factory=factory)
+    assert out["passed"] == 9 and len(tries) == 3 and pauses == [2, 5]
+
+
+def test_drops_spread_over_a_lane_do_not_add_up(tmp_path, cfg, pauses):
+    """Review S1: only losses in a row stop the stage; a take read resets the count."""
+    r = make_run(tmp_path)
+    cfg["overnight"]["record"]["sessions"] = 1
+    t = texts_by_id(r)
+    live = FakeLive({t[pid]: ["lost"] for pid in ["s1-p01", "s1-p02", "s2-p01", "s2-p02", "s3-p01", "s4-p02"]})
+    out = record.run(r, cfg, session_factory=live)
+    assert out["passed"] == 9 and pauses == [2] * 6
+
+
+def test_the_backoff_wait_ends_when_the_stage_stops(tmp_path, cfg):
+    rec = record._Recorder(make_run(tmp_path), cfg, FakeLive())
+    rec.stop.set()
+    t0 = time.monotonic()
+    rec.pause(30)
+    assert time.monotonic() - t0 < 1
 
 
 def test_a_paragraph_never_read_stops_the_stage_unfinished(tmp_path, cfg):
@@ -268,6 +391,108 @@ def test_a_paragraph_never_read_stops_the_stage_unfinished(tmp_path, cfg):
     with pytest.raises(StageError, match="never read paragraph s1-p01"):
         record.run(r, cfg, session_factory=FakeLive({t["s1-p01"]: ["never"] * 4}))
     assert not (r.root / "10_audio" / "recorded.json").exists()
+
+
+# --- the check on Whisper's transcript of each take --------------------------------------------------
+
+def takes(r):
+    return [json.loads(x) for x in (r.root / "10_audio" / "recording.jsonl").read_text().splitlines()]
+
+
+def test_the_default_check_transcribes_each_take_with_one_shared_whisper(tmp_path, cfg, monkeypatch):
+    """Review C26: run(r, cfg) as the runner calls it loads Whisper once for all four lanes, with the
+    configured model, and decides each take on what Whisper heard."""
+    r = make_run(tmp_path)
+    made = []
+    monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: made.append(a) or FakeEar())
+    out = record.run(r, cfg, session_factory=FakeLive())
+    assert made == [("small.en",)] and out["checked_by"] == {"whisper": 9, "transcript": 0}
+    for x in takes(r):
+        assert x["check"] == "whisper" and x["whisper"] == x["heard"] and x["passed"]
+
+
+def test_audio_whisper_hears_wrong_fails_the_take_though_the_transcript_is_right(tmp_path, cfg):
+    """Review C26: the output transcript is word for word, but the audio drops three words (garbled or
+    clipped): Whisper hears that, so the take is read again."""
+    r = make_run(tmp_path)
+    t = texts_by_id(r)
+    ear = FakeEar({t["s2-p01"]: [lambda said: " ".join(said.split()[:-3])]}).for_run(r)
+    out = record.run(r, cfg, session_factory=FakeLive(), recognizer=ear)
+    s2 = [x for x in takes(r) if x["id"] == "s2-p01"]
+    assert [x["passed"] for x in s2] == [False, True] and out["passed"] == 9
+    assert s2[0]["heard"] == t["s2-p01"] and s2[0]["whisper"] != s2[0]["heard"]  # both kept
+    assert s2[0]["deviation"]["missing"] == 3
+    assert len(ear.calls) == 10
+
+
+def test_a_name_whisper_spells_its_own_way_does_not_force_a_retake(tmp_path, cfg):
+    r = make_run(tmp_path)
+    cfg["overnight"]["record"]["max_word_diffs"] = 0
+    t = texts_by_id(r)
+    ear = FakeEar({t["s2-p01"]: [lambda said: said.replace("Pliny", "Plinee")]}).for_run(r)
+    out = record.run(r, cfg, session_factory=FakeLive(), recognizer=ear)
+    s2 = [x for x in takes(r) if x["id"] == "s2-p01"]
+    assert len(s2) == 1 and s2[0]["passed"] and s2[0]["deviation"]["forgiven"] == [["replace", "pliny", "plinee"]]
+    assert out["passed"] == 9
+
+
+def test_check_transcript_never_loads_whisper(tmp_path, cfg, monkeypatch):
+    r = make_run(tmp_path)
+    cfg["overnight"]["record"]["check"] = "transcript"
+    monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: pytest.fail("Whisper was loaded"))
+    out = record.run(r, cfg, session_factory=FakeLive())
+    assert out["checked_by"] == {"whisper": 0, "transcript": 9}
+    assert all(x["check"] == "transcript" and x["whisper"] is None for x in takes(r))
+
+
+def test_whisper_failing_falls_back_to_the_transcript_and_says_so(tmp_path, cfg, monkeypatch):
+    r = make_run(tmp_path)
+    out = record.run(r, cfg, session_factory=FakeLive(), recognizer=FakeEar(fail=RuntimeError("decoder")))
+    assert out["passed"] == 9 and out["checked_by"]["transcript"] == 9
+    assert all(x["whisper_error"] == "RuntimeError: decoder" for x in takes(r))
+
+    r2 = make_run(tmp_path, name="2026-11-18-herons")
+    made = []
+
+    def broken(*a, **k):
+        made.append(1)
+        raise OSError("model not found")
+    monkeypatch.setattr(recognize, "WhisperRecognizer", broken)
+    out2 = record.run(r2, cfg, session_factory=FakeLive())
+    assert out2["passed"] == 9 and made == [1]  # tried once, not per take
+    assert all("could not load" in x["whisper_error"] for x in takes(r2))
+    assert any("could not load" in (x.get("label") or "") for x in r2.read_log())
+
+
+def test_an_unknown_check_stops_before_recording(tmp_path, cfg):
+    cfg["overnight"]["record"]["check"] = "ears"
+    live = FakeLive()
+    with pytest.raises(StageError, match="whisper or transcript"):
+        record.run(make_run(tmp_path), cfg, session_factory=live)
+    assert live.reads == []
+
+
+# --- preflight -------------------------------------------------------------------------------------
+
+def test_preflight_checks_the_whisper_model_is_cached_without_downloading(cfg, monkeypatch):
+    """Review C8: before a build spends anything."""
+    import faster_whisper.utils as fw
+    asked = []
+    monkeypatch.setattr(fw, "download_model", lambda m, **k: asked.append((m, k)) or "/cache/model")
+    record.preflight(cfg)
+    assert asked == [("small.en", {"local_files_only": True})]
+
+    def missing(m, **k):
+        raise FileNotFoundError("Cannot find an appropriate cached snapshot folder")
+    monkeypatch.setattr(fw, "download_model", missing)
+    with pytest.raises(StageError, match="small.en is not on this machine"):
+        record.preflight(cfg)
+
+
+def test_preflight_says_when_faster_whisper_is_missing(cfg, monkeypatch):
+    monkeypatch.setitem(sys.modules, "faster_whisper.utils", None)
+    with pytest.raises(StageError, match="faster-whisper is not installed"):
+        record.preflight(cfg)
 
 
 # --- the real client against a local fake server ---------------------------------------------------
@@ -300,13 +525,15 @@ def test_the_live_client_follows_reads_and_cuts_takes(server, cfg):
         assert abs(a.start_ms - (onset - record.PAD_LEAD * 1000)) <= 15
         assert abs(a.seconds - ((end - onset) / 1000 + record.PAD_LEAD + record.PAD_TAIL)) <= 0.03
 
-        b = s.read(second)  # "Right." first: not the paragraph, and not in its audio
-        assert b.status == "done" and b.heard == second
-        onset2 = next(w["start"] for w in server.words if w["w"] == "Nothing")
+        b = s.read(second)  # "Right." first: in the take, so the check fails it (the chapter never says it)
+        assert b.status == "done" and b.heard == f"Right. {second}"
+        onset2 = next(w["start"] for w in server.words if w["w"] == "Right.")
         assert abs(b.start_ms - (onset2 - record.PAD_LEAD * 1000)) <= 15
         pcm = np.frombuffer(b.pcm, np.int16)
         lead = int(record.PAD_LEAD * record.RATE)
         assert not pcm[: lead - 240].any() and pcm[lead + 240: lead + 480].any()
+        assert record.deviation(second, b.heard)["before"] == 1 and not record.passes(
+            record.deviation(second, b.heard), 2)
     finally:
         seconds = s.close()
     types = [e["type"] for e in server.received]
@@ -342,6 +569,46 @@ def test_the_live_client_ends_a_cut_take_after_a_quiet(server, cfg):
     finally:
         s.close()
     assert a.status == "quiet" and a.heard == " ".join(text.split()[:7]) and a.pcm
+    assert not record.passes(record.deviation(text, a.heard), 2)
+
+
+def test_the_live_client_cuts_from_a_misheard_first_word(server, cfg):
+    """Review C6 (a), on the real client: the transcript writes the first word differently. The cut
+    starts at that word's onset, not partway through it at the next word."""
+    text = "Mephistopheles argued that love climbs a ladder of beautiful things."
+    real = server.schedule
+
+    def misheard(t, at):
+        n = len(server.deltas)
+        real(t, at)
+        first = server.deltas[n:n + 2] if not server.deltas[n + 1][2].startswith(" ") else server.deltas[n:n + 1]
+        for d in first:  # the name's one or two deltas, written as two other words
+            server.deltas.remove(d)
+        server.deltas.insert(n, (first[0][0], first[0][1], " Mefisto feles"))
+    server.schedule = misheard
+    s = record.LiveSession(cfg, "I", "t", key="k", url=server.url)
+    try:
+        a = s.read(text)
+    finally:
+        s.close()
+    onset = next(w["start"] for w in server.words if w["w"] == "Mephistopheles")
+    assert a.heard.startswith("Mefisto feles argued")
+    assert abs(a.start_ms - (onset - record.PAD_LEAD * 1000)) <= 15
+
+
+def test_the_live_client_fails_a_preamble_with_an_opening_word(server, cfg):
+    """Review C6 (b), on the real client."""
+    text = "The heron waits in the shallows for a fish."
+    real = server.schedule
+    server.schedule = lambda t, at: real(f"Here is the passage. {t}", at)
+    s = record.LiveSession(cfg, "I", "t", key="k", url=server.url)
+    try:
+        a = s.read(text)
+    finally:
+        s.close()
+    onset = next(w["start"] for w in server.words if w["w"] == "Here")
+    assert a.heard == f"Here is the passage. {text}"
+    assert abs(a.start_ms - (onset - record.PAD_LEAD * 1000)) <= 15
     assert not record.passes(record.deviation(text, a.heard), 2)
 
 

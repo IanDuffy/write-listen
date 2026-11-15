@@ -107,12 +107,12 @@ def test_a_second_run_redoes_nothing(recorded, cfg):
 def test_whisper_is_the_default_recognizer_and_loaded_only_when_needed(recorded, cfg, monkeypatch):
     r, _ = recorded
     made = []
-    monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: made.append(1) or FakeRecognizer(r))
+    monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: made.append(a) or FakeRecognizer(r))
     assemble.run(r, cfg)
-    assert made == [1]
+    assert made == [("small.en",)]  # overnight.record.whisper_model: the model preflight checks
     (r.root / "11_episode" / "episode.json").unlink()
     assemble.run(r, cfg)
-    assert made == [1]
+    assert len(made) == 1
 
 
 def test_assembly_needs_the_recording(tmp_path, cfg):

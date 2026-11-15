@@ -6,7 +6,8 @@ narration.pronunciations, or "- (none)".
 Sent once as the GPT-Live session's `instructions` (they cannot change after the session starts; at
 most 16,384 tokens). Each paragraph then arrives as commentary: "Read this passage aloud now, word for
 word, exactly as written, with nothing before or after: <text>" (record.READ). Nobody is listening
-live: the session's audio is cut into one recording per paragraph and checked against the script.
+live: the session's audio is cut into one recording per paragraph, transcribed with Whisper and checked
+against the script; anything said before the passage fails the take.
 Live probe, 2026-11-15: no delegation backend is needed, and with the mic muted the paragraph was read
 word for word. Keep the reading rules in step with the live guide's reading part.
 ---

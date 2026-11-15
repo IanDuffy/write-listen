@@ -5,6 +5,11 @@ long as a word takes to say) with the transcript of what was "said", per paragra
 "ok", "misread" (three words dropped), "slip" (one word dropped: still passes), "cut" (stops halfway),
 "never" (never starts), "lost" (the connection drops), or a function text -> heard.
 
+FakeEar: the take check's Whisper. It hears in a take's WAV what the fake session "said" (each take's
+audio carries a serial number in its last samples, far below speech level), or what its own plan says
+(a function: what was said -> what Whisper hears, per paragraph and call). The autouse `offline` fixture
+makes it what recognize.WhisperRecognizer builds, so record.run's default Whisper check runs on it.
+
 FakeServer: a local WebSocket server speaking GPT-Live's protocol (session.start/started, muted input,
 commentary in, a continuous output audio stream with digital silence, transcript deltas in 200 ms
 steps arriving 800 ms late, words split across deltas, usage, close/closed), ten times faster than
@@ -15,15 +20,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import itertools
 import json
 import math
 import threading
 import time
+import wave
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from episode import recognize
 from overnight import record
 from stages.common import Run
 
@@ -106,6 +115,54 @@ def speech(text: str) -> bytes:
     return np.concatenate(parts).tobytes()
 
 
+# --- what was said, for the fake Whisper ---------------------------------------------------------
+
+SAID: dict[str, str] = {}       # sha1 of a take's PCM -> the words the fake session said in it
+_SERIAL = itertools.count(1)
+
+
+def marked(pcm: bytes, heard: str) -> bytes:
+    """The take's audio with a serial number in its last two samples (inaudible, under SPEECH_RMS), so
+    every take's bytes are unique; remembered with what was said."""
+    a = np.frombuffer(pcm, np.int16).copy()
+    n = next(_SERIAL)
+    a[-2:] = [n % 100, n // 100 % 100]
+    out = a.tobytes()
+    SAID[hashlib.sha1(out).hexdigest()] = heard
+    return out
+
+
+class FakeEar:
+    """recognizer(path) -> words, as episode.recognize's. plan: {paragraph text: [how, ...]} per call, how
+    a function (what the session said) -> what Whisper hears; otherwise it hears what was said. Needs
+    for_run(r) for a plan (to know a take file's paragraph)."""
+    name = "fake whisper"
+
+    def __init__(self, plan: dict | None = None, fail: Exception | None = None):
+        self.plan = {k: list(v) for k, v in (plan or {}).items()}
+        self.fail = fail
+        self.calls: list[str] = []
+        self.texts: dict[str, str] = {}
+        self.lock = threading.Lock()
+
+    def for_run(self, r: Run) -> "FakeEar":
+        self.texts = {p["id"]: p["text"] for p in record.paragraphs(r)}
+        return self
+
+    def __call__(self, path: Path) -> list[dict]:
+        with wave.open(str(path)) as w:
+            pcm = w.readframes(w.getnframes())
+        said = SAID[hashlib.sha1(pcm).hexdigest()]
+        with self.lock:
+            self.calls.append(Path(path).name)
+            if self.fail:
+                raise self.fail
+            todo = self.plan.get(self.texts.get(Path(path).name.split(".")[0]), [])
+            how = todo.pop(0) if todo else None
+        heard = how(said) if how else said
+        return [{"w": w, "start": 0.0, "end": 0.0, "p": 1.0} for w in heard.split()]
+
+
 # --- the fake session ------------------------------------------------------------------------------
 
 class Killed(BaseException):
@@ -149,7 +206,7 @@ class FakeSession:
         heard = (how(text) if callable(how) else drop_words(text, 3) if how == "misread"
                  else drop_words(text, 1) if how == "slip" else " ".join(text.split()[: len(text.split()) // 2])
                  if how == "cut" else text)
-        pcm = speech(heard)
+        pcm = marked(speech(heard), heard)
         start = int(self.seconds * 1000)
         self.seconds += len(pcm) / 2 / RATE + self.live.overhead
         return record.Take(pcm, heard, start, start + len(pcm) // 2 // record.SAMPLES_PER_MS,
@@ -322,6 +379,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(anthropic, "Anthropic", live)
     monkeypatch.setattr(elevenlabs.client, "ElevenLabs", live)
     monkeypatch.setattr(record, "api_key", live)
+    monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: FakeEar())  # never the real model
     yield
 
 

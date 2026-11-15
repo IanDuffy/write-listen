@@ -162,10 +162,14 @@ overnight:
     sessions: 4                 # in parallel, on different sections
     retakes: 3                  # re-records per paragraph before it is flagged
     max_word_diffs: 2           # a take passes with at most this many words missing, added or changed (after
-                                # normalising spelling, digits, hyphens) and none touching a negation or a number.
-                                # 2, not 0: the check reads GPT-Live's own output transcript, which respells a
-                                # name or splits a word now and then (1 diff each); "that is" read "that's" is 2
-                                # and passes. A dropped phrase, an added sentence or a changed "not" fails.
+                                # normalising spelling, digits, hyphens), none touching a negation or a number,
+                                # and nothing said before the passage. 2, not 0: a transcript splits a word or
+                                # misspells a name now and then (1 diff each); "that is" read "that's" is 2 and
+                                # passes. A dropped phrase, an added sentence or a changed "not" fails.
+    check: whisper              # whisper: each cut take transcribed locally and compared with the script; a name
+                                # Whisper spells differently (but alike) where GPT-Live's transcript had it right
+                                # is forgiven. transcript: GPT-Live's own output transcript only (no Whisper).
+    whisper_model: small.en     # faster-whisper; also assembly's timing. Must be downloaded (record.preflight)
   assemble: {}                  # overnight/assemble.py: pauses are narration.chunk/segment/beat_pause_ms
   intro: {}                     # overnight/intro.py (stages.overnight_intro; no settings of its own)
   live:                         # overnight/live.py: the library page's live sessions (intro, change, ask)

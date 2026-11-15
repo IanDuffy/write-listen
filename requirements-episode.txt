@@ -1,6 +1,7 @@
 # The episode page add-on (episode/): word timing and the browser test.
-# Install into the project venv:  uv pip install -r requirements-episode.txt
-# (a later `uv sync` removes them, since they are not in pyproject.toml; reinstall, or add them
-#  as an optional group when the branches come together: see episode/INTEGRATION.md)
+# Both are now in pyproject.toml (faster-whisper a dependency, playwright in the dev group), so
+# `uv sync` installs them; this file is kept for installing them into a venv uv does not manage:
+#   pip install -r requirements-episode.txt
+# Whisper's model is downloaded once, on first use (record.preflight checks it is there before a build).
 faster-whisper==1.2.1
 playwright==1.58.0

@@ -5,8 +5,10 @@ like any other (docs/overnight-chapters.md "Overnight runner" stage 6).
                                paragraph narration.chunk_pause_ms, a section narration.segment_pause_ms,
                                after a [pause] narration.beat_pause_ms (tts.join_to_mp3)
     10_audio/concat.txt        that join, piece by piece: the offsets timing reads
-    11_episode/timing.json     every word's time: local Whisper on each paragraph WAV at its offset,
-                               aligned to 09_script_final.md (sentence ids from episode.script)
+    11_episode/timing.json     every word's time: local Whisper (overnight.record.whisper_model, the model
+                               the take check uses; record.preflight checks it is installed) on each
+                               paragraph WAV at its offset, aligned to 09_script_final.md (sentence ids
+                               from episode.script)
     11_episode/references.json the reference cards (Sonnet, one call a section), charged to the run
     11_episode/episode.json    the episode page's one file (written last: it marks the stage done)
 
@@ -91,7 +93,7 @@ def _timing_ok(r: Run, cfg: dict) -> bool:
 def time_it(r: Run, cfg: dict, recognizer=None) -> dict:
     if _timing_ok(r, cfg):
         return json.loads(r.path("timing").read_text(encoding="utf-8"))
-    rec = recognizer or recognize.WhisperRecognizer()
+    rec = recognizer or recognize.WhisperRecognizer(record.whisper_model(cfg))
     t = timing.build(r.root, rec, cfg["narration"].get("pronunciations") or {})
     timing.write(r.root, t)
     return t
