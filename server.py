@@ -61,14 +61,13 @@ from ask import routes as ask_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
+from overnight import profiles
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages import new as new_stage
-from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
+from stages import common
+from stages.common import ROOT, Run, StageError, load_config, load_prompt
 
-# What reset moves out of listener/ (the guide's memory). voice.json, the agent's ids, stays: it holds
-# nothing about the listener.
-MEMORY_FILES = ("profile.md", "guide.md", "history.md", "seeds", "sessions")
 
 PAGE = ROOT / "page" / "index.html"
 WAKE_JS = ROOT / "page" / "wake.js"
@@ -98,14 +97,21 @@ class Pipeline:
     it holds for runs started from the terminal and across server restarts."""
 
     def __init__(self, runs_dir: Path | None = None):
-        self.runs_dir = runs_dir or RUNS_DIR
+        self._runs_dir = runs_dir  # fixed (tests), or None: the active listener's chapters
         self.run: str | None = None
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
 
+    @property
+    def runs_dir(self) -> Path:
+        return self._runs_dir or common.default_runs_dir()
+
     def start(self, args: list[str], run: str) -> None:
+        env = dict(os.environ)
+        if self._runs_dir is None and common.RUNS_DIR is None:  # the child finds the run where we put it
+            env[common.LISTENER_ENV] = common.active_listener_id()
         with open(self.runs_dir / run / "run.log", "a", encoding="utf-8") as log:  # the child keeps its own copy
-            self.proc = subprocess.Popen([sys.executable, str(ROOT / "cli.py"), *args], cwd=ROOT,
+            self.proc = subprocess.Popen([sys.executable, str(ROOT / "cli.py"), *args], cwd=ROOT, env=env,
                                          stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                          start_new_session=True)
         self.run = run
@@ -461,40 +467,21 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     @app.post("/api/reset")
     def reset() -> dict:
-        """Forget the listener and start fresh. The conversation in progress ends without a memory
-        pass (that would write some of it back), a chapter being made is stopped (it would add
-        itself to history.md when done), and listener memory, with every chapter's aside transcripts
-        (runs/<run>/12_asks/), is moved to listener/_cleared_<time>/, which nothing reads. The finished
-        chapters in runs/ stay, and so do ElevenLabs' own records of past voice calls."""
+        """Start fresh as a new demo listener (docs/overnight-chapters.md, Reset): the conversation in
+        progress ends without a memory pass (that would write it into the listener being left),
+        passes in flight finish, then listeners/demo-<date>-<letter>/ is created and made active.
+        Nothing is moved, stopped or deleted: the previous listener's folder (ian/ above all) stays
+        byte for byte, and a chapter being made for it keeps writing into its own folder."""
         with chat["lock"]:
             chat["session"] = None
-            for t in chat["passes"]:  # a pass in flight would write profile.md after the move
+            for t in chat["passes"]:
                 t.join()
             chat["passes"] = []
-            stopped = None
-            if pipe.busy():
-                status = pipe.status()
-                if status.get("run"):
-                    stopped = pipe.stop(status["run"], cfg)["run"]
             with memory.LOCK:
-                d = guide.listener_dir(cfg)
-                found = [n for n in MEMORY_FILES if (d / n).exists()]
-                has_asides = any(any((x / n).exists() for n in ask_aside.ASIDE_FILES) or any(x.glob("*.voice.json"))
-                                 for x in pipe.runs_dir.glob(f"*/{ask_aside.ASKS_DIR}"))
-                moved_to = None
-                if found or has_asides:
-                    moved_to = d / f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}"
-                    n = 1
-                    while moved_to.exists():
-                        n += 1
-                        moved_to = moved_to.with_name(f"_cleared_{time.strftime('%Y%m%d-%H%M%S')}-{n}")
-                    moved_to.mkdir(parents=True)
-                    for name in found:
-                        (d / name).rename(moved_to / name)
-                    # What was said in asides (runs/<run>/12_asks/), which the aside agent reads back.
-                    if ask_aside.clear_asides(pipe.runs_dir, moved_to):
-                        found.append("asides")
-        return {"forgotten": found, "moved_to": moved_to.name if moved_to else None, "stopped": stopped}
+                previous = common.listener_dir(cfg).name
+                cfg.pop("listener_dir", None)  # from now on, follow listeners/active.json
+                lid = profiles.reset()
+        return {"listener": lid, "previous": previous}
 
     @app.post("/api/chapters/{run}/retry")
     def retry(run: str) -> dict:
@@ -545,11 +532,24 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             raise HTTPException(404, "That chapter is not ready yet.")
         return FileResponse(mp3, media_type="audio/mpeg")
 
-    ask_routes.mount(app, cfg, pipe.runs_dir)
+    ask_routes.mount(app, cfg, lambda: pipe.runs_dir)
     fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
-    app.mount("/runs", StaticFiles(directory=pipe.runs_dir, check_dir=False), name="runs")
+    app.mount("/runs", _RunsFiles(pipe), name="runs")
     return app
+
+
+class _RunsFiles:
+    """/runs/<run>/... from the folder the pipeline follows now (the active listener's chapters,
+    which a reset can change), with StaticFiles' range requests."""
+
+    def __init__(self, pipe: Pipeline):
+        self.pipe, self.apps = pipe, {}
+
+    async def __call__(self, scope, receive, send):
+        d = self.pipe.runs_dir
+        app = self.apps.get(d) or self.apps.setdefault(d, StaticFiles(directory=d, check_dir=False))
+        await app(scope, receive, send)
 
 
 def _save_voice(cfg: dict, session_id: str, conversation_id: str, n: int = 1) -> None:

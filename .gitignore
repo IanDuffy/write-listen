@@ -16,6 +16,8 @@ runs/*
 
 # What the listener has said: personal, never committed.
 listener/
+listeners/
+shared/
 compare/
 
 # Generated audio

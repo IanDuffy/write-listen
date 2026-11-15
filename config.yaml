@@ -192,8 +192,22 @@ voice:
   tool_timeout_secs: 30         # start_chapter starts a run on the local server
   client_js: https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.32.1/dist/lib.iife.js  # pinned, 2026-10-29
 
-# Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
-listener_dir: listener
+# Plain files about the listener live in listeners/<id>/ (overnight/profiles.py); the active one is
+# listeners/active.json. A run or test may still pin `listener_dir: <folder>` (stages/common.listener_dir).
+
+# Each listener's settings.json starts from these (docs/overnight-chapters.md, settings.json).
+listener_settings:
+  overnight:
+    enabled: true
+    days: [mon, tue, wed, thu, fri]   # mornings the build runs on
+    start: "02:00"                    # build start, also the change cutoff
+    plan_at: "18:00"                  # when the Up next card is written (the evening before a build)
+    runaway_stop_usd: 50              # stops a build that runs away; not a budget
+  chapter:
+    minutes: 20                       # target length
+    mode: surprise                    # surprise | continue | topic: the default for the next chapter
+  playback:
+    read_live: false                  # true: after the intro the guide reads the chapter live
 
 # The single-prompt baseline: one agent, the build doc's 30-search cap.
 baseline:

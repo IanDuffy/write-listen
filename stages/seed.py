@@ -13,7 +13,10 @@ import re
 import time
 from pathlib import Path
 
-from .common import RUNS_DIR, Run, StageError, load_prompt
+from . import common
+from .common import Run, StageError, load_prompt
+
+RUNS_DIR: Path | None = None  # a fixed runs folder (tests); None: common.default_runs_dir()
 
 
 def seed_text(topic: str, why: str = "", notes: str = "", said: str = "") -> str:
@@ -31,7 +34,7 @@ def run_name(topic: str, runs_dir: Path | None = None) -> str:
     words = [w for w in re.findall(r"[a-z0-9]+", topic.lower().replace("'", "")) if w not in stop]
     base = "-".join(words[:4]) or "seed"
     name = f"{base}-{time.strftime('%Y%m%d')}"
-    root, n = runs_dir or RUNS_DIR, 2
+    root, n = runs_dir or RUNS_DIR or common.default_runs_dir(), 2
     candidate = name
     while (root / candidate).exists():
         candidate, n = f"{name}-{n}", n + 1
@@ -42,7 +45,7 @@ def find_run(text: str, runs_dir: Path | None = None, ok=None) -> str | None:
     """The newest unfinished run started from exactly this seed, so the same `new --seed ...`
     command continues a stopped run instead of paying for a second one. With `ok`, only among
     the run folders ok(folder) accepts (cli.py: the runs of the mode that was asked for)."""
-    root = runs_dir or RUNS_DIR
+    root = runs_dir or RUNS_DIR or common.default_runs_dir()
     found = [p for p in root.glob("*/00_source/seed.md")
              if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()
              and (ok is None or ok(p.parent.parent))]

@@ -1,6 +1,6 @@
 """The listener's memory (Phase 1, milestone 5; docs/phase1-onboarding.md, "Memory store").
 
-Plain files in listener/ (config.yaml listener_dir), readable and hand-editable:
+Plain files in the listener's folder (listeners/<id>/, common.listener_dir), readable and hand-editable:
 
     profile.md         what the listener has said about themselves, in their words; under a page
     guide.md           the guide's identity for this listener: name, how it chose it, when they met
@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 from . import llm
-from .common import ROOT, Run, StageError, load_prompt, parse_json
+from .common import ROOT, Run, StageError, listener_dir, load_prompt, parse_json
 
 SCHEMA = {
     "type": "object",
@@ -38,10 +38,6 @@ SCHEMA = {
 # One pass at a time: each reads the files the last one wrote, so an older pass can never
 # overwrite a newer one (or bring back something the listener asked to forget).
 LOCK = threading.Lock()
-
-
-def listener_dir(cfg: dict) -> Path:
-    return ROOT / cfg.get("listener_dir", "listener")
 
 
 def _read(p: Path, missing: str) -> str:

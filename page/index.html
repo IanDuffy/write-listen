@@ -128,7 +128,7 @@
     <button id="send">Send</button>
   </form>
   <div class="row">
-    <span><button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Reset memory</button></span>
+    <span><button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Start fresh</button></span>
     <button id="type" aria-label="Type instead" aria-pressed="false" title="Type instead">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
         <rect x="2.5" y="6" width="19" height="12" rx="2"/>
@@ -665,15 +665,11 @@ $("halt").addEventListener("click", async () => {
   catch (err) { note(err.message); $("halt").disabled = false; }
 });
 
-// Reset: the guide forgets this listener and the next conversation is a first meeting.
+// Reset: start fresh as a new demo listener; the next conversation is a first meeting. Nothing is
+// deleted: the listener being left keeps its memory and chapters (docs/overnight-chapters.md).
 $("reset").addEventListener("click", async () => {
-  // On a ?chapter= page the status shown is that chapter's, not the run being made: ask the server.
-  let current = status;
-  if (pinned) { try { current = await (await fetch("/api/status")).json(); } catch (e) { current = {}; } }
-  const making = current.state === "making";
-  if (!confirm("Reset the guide's memory? It forgets everything it knows about you and your conversations"
-               + (making ? ", and the chapter being made is stopped" : "")
-               + ". Your finished chapters stay.")) return;
+  if (!confirm("Start fresh as a new listener? The guide will meet you for the first time."
+               + " Nothing is deleted: the current listener's memory and chapters stay as they are.")) return;
   let out;
   try { out = await post("/api/reset"); }
   catch (err) { note(err.message); return; }
@@ -681,9 +677,7 @@ $("reset").addEventListener("click", async () => {
   await endConversation();
   if (!pinned) fresh = false;  // the chapter the address names stays the one this page plays
   $("transcript").textContent = "";
-  note(out.forgotten && out.forgotten.length ? "Memory reset. The next conversation is a first meeting."
-                                             : "There was nothing to forget.");
-  if (out.stopped) note("The chapter being made was stopped.");
+  note("Started fresh. The next conversation is a first meeting.");
   render();
 });
 

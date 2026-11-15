@@ -242,66 +242,45 @@ def test_a_stopped_chapter_reads_plainly_to_the_guide():
     assert "stopped by the listener" in guide.chapter_now({"run": "r", "state": "stopped"})
 
 
-def test_reset_forgets_the_listener(tmp_path, monkeypatch, cfg):
+def _tree(d):
+    import hashlib
+    return {str(p.relative_to(d)): hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "dir"
+            for p in sorted(d.rglob("*"))}
+
+
+def test_start_fresh_makes_a_new_listener_and_leaves_the_old_one_byte_for_byte(tmp_path, monkeypatch, cfg):
     from fakes import FakeAnthropic, Responder
 
-    from stages import guide, llm, memory
-    listener = tmp_path / "listener"
-    cfg["listener_dir"] = str(listener)
+    from overnight import profiles
+    from stages import common, llm, memory
     monkeypatch.setattr(llm, "_client", FakeAnthropic(Responder()))
     passes = []
     monkeypatch.setattr(memory, "after_session", lambda cfg, t: passes.append(t) or False)
-    runs = tmp_path / "runs"
-    runs.mkdir()
-    pipe = server.Pipeline(runs_dir=runs)
+    ian = profiles.create("ian")
+    profiles.set_active("ian")
+    cfg.pop("listener_dir", None)
+    pipe = server.Pipeline()  # follows the active listener's chapters
     c = TestClient(server.create_app(pipe, cfg, remember_on_start=False))
     first = c.post("/api/chat/start").json()["session"]
-    (listener / "profile.md").write_text("- Builds his own house.\n")
-    (listener / "guide.md").write_text("# The guide\n- Name: Wren.\n")
-    (listener / "history.md").write_text("# Chapters made so far\n")
-    (listener / "seeds").mkdir()
-    (listener / "seeds" / "r.md").write_text("seed")
-    (listener / "voice.json").write_text("{}")
+    (ian / "profile.md").write_text("- Builds his own house.\n")
+    (ian / "guide.md").write_text("# The guide\n- Name: Wren.\n")
+    import ask_fixture
+    from ask import aside as A
+    root = ask_fixture.build(ian / "chapters" / "2026-11-14-synthetic")
+    A.append_aside(root, {"id": "a1", "t": 10.0, "sentence_id": "seg01-s002", "ended": "closing", "transcript": []})
+    before = _tree(ian)
 
     out = c.post("/api/reset").json()
-    assert sorted(out["forgotten"]) == ["guide.md", "history.md", "profile.md", "seeds", "sessions"]
-    moved = [p for p in listener.iterdir() if p.name.startswith("_cleared_")]
-    assert len(moved) == 1 and (moved[0] / "profile.md").exists() and (moved[0] / "sessions" / f"{first}.jsonl").exists()
-    assert sorted(p.name for p in listener.iterdir()) == [moved[0].name, "voice.json"]  # the agent's ids stay
+    assert out["previous"] == "ian" and out["listener"].startswith("demo-")
+    assert _tree(ian) == before  # nothing in ian/ moved, changed or went
+    assert common.active_listener_id() == out["listener"] and pipe.runs_dir == common.LISTENERS_DIR / out["listener"] / "chapters"
     assert passes == []  # the conversation was not remembered on its way out
-    assert c.post("/api/chat/end", json={"session": first}).json()["ended"] is False  # it is already over
     assert c.post("/api/chat", json={"message": "hi", "session": first}).status_code == 409
 
-    second = c.post("/api/chat/start").json()["session"]  # a first meeting again
-    head = json.loads((listener / "sessions" / f"{second}.jsonl").read_text().splitlines()[0])
-    assert head["returning"] is False and len(head["names"]) == cfg["guide"]["name_draw"]
-    assert passes == []  # starting afresh did not fold the dropped conversation in either
-    assert c.post("/api/reset").json()["forgotten"] == ["sessions"]  # only the new conversation's file
-
-
-def test_reset_forgets_what_was_said_in_asides(tmp_path, monkeypatch, cfg):
-    """The aside agent reads earlier asides back (earlier_asides): Reset memory moves them aside too."""
-    import json as _json
-
-    from ask import aside as A
-    from stages import voice
-    listener = tmp_path / "listener"
-    cfg["listener_dir"] = str(listener)
-    monkeypatch.setattr(voice, "signed_url", lambda cfg, client=None, kind="guide": "wss://example")
-    runs = tmp_path / "runs"
-    import ask_fixture
-    root = ask_fixture.build(runs / "synthetic")
-    A.append_aside(root, {"id": "a1", "t": 10.0, "sentence_id": "seg01-s002", "ended": "closing",
-                          "transcript": [{"who": "guide", "text": "Yes?"},
-                                         {"who": "listener", "text": "My mother just died."}]})
-    (root / "12_asks" / "seeds.md").write_text("# Seeds\n")
-    (root / "12_asks" / "a1.voice.json").write_text("{}")
-    c = TestClient(server.create_app(server.Pipeline(runs_dir=runs), cfg, remember_on_start=False))
-    out = c.post("/api/reset").json()  # no listener memory at all: the asides alone are forgotten
-    assert out["forgotten"] == ["asides"]
-    moved = listener / out["moved_to"] / "asides" / "synthetic"
-    assert sorted(p.name for p in moved.iterdir()) == ["a1.voice.json", "asides.jsonl", "seeds.md"]
-    assert A.load_asides(root) == []
-    start = c.post("/api/ask/start", json={"run": "synthetic", "t": 20}).json()
-    assert start["dynamic_variables"]["earlier_asides"] == "(none)"
-    assert c.post("/api/reset").json()["forgotten"] == []  # nothing left to forget
+    second = c.post("/api/chat/start").json()["session"]  # a first meeting, in the new listener's folder
+    demo = common.LISTENERS_DIR / out["listener"]
+    head = json.loads((demo / "sessions" / f"{second}.jsonl").read_text().splitlines()[0])
+    assert head["returning"] is False
+    assert c.get("/api/ask/chapter/2026-11-14-synthetic").json()["message"] == "There's no such chapter."  # ian's chapters are not the demo's
+    again = c.post("/api/reset").json()
+    assert again["listener"] != out["listener"] and again["listener"].endswith("-b") and _tree(ian) == before

@@ -8,6 +8,7 @@ missing, and never overwrites an existing output without --force.
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -18,8 +19,19 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = ROOT / "prompts"
-RUNS_DIR = ROOT / "runs"
 CONFIG_PATH = ROOT / "config.yaml"
+
+# Listener profiles (docs/overnight-chapters.md): each listener is a folder under listeners/, and
+# everything the app makes for them lives inside it, their chapters in <listener>/chapters/.
+# listeners/active.json names the one in use. shared/ holds what belongs to no listener (voice agent
+# state, caches). Tests point both at a temporary folder (tests/conftest.py).
+LISTENERS_DIR = ROOT / "listeners"
+SHARED_DIR = ROOT / "shared"
+DEFAULT_LISTENER = "ian"
+LISTENER_ENV = "WRITE_LISTEN_LISTENER"  # pins a process (a run the server started) to one listener
+# A fixed runs folder, when set, wins over the active listener's chapters/ (tests set it; tools like
+# ping and smoketest pass their own). None: runs are the active listener's chapters.
+RUNS_DIR: Path | None = None
 
 
 _LOG_LOCK = threading.Lock()  # research agents log from several threads
@@ -90,7 +102,7 @@ class Run:
              runs_dir: Path | None = None) -> "Run":
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name):
             raise StageError(f"Run name {name!r} must be letters, digits, '.', '_' or '-'.")
-        root = (runs_dir or RUNS_DIR) / name
+        root = (runs_dir or default_runs_dir()) / name
         if not root.exists():
             if not create:
                 raise StageError(
@@ -196,6 +208,11 @@ def run_config(r: "Run", cfg: dict) -> dict:
     chapter for one run). The CLI applies it, so every stage of a run sees the same settings."""
     if is_seed(r):
         cfg = _merge(cfg, cfg.get("seed_runs") or {})
+    owner = owner_of(r.root)
+    if owner is not None and not cfg.get("listener_dir"):
+        # A chapter belongs to the listener whose folder holds it, whoever is active now: a build
+        # for one listener never reads another's profile or writes into another's memory.
+        cfg = {**cfg, "listener_dir": str(owner)}
     p = r.root / "config.yaml"
     if not p.exists():
         return cfg
@@ -216,7 +233,7 @@ def source_text(r: "Run") -> str:
 
 
 def listener_profile(cfg: dict) -> str:
-    p = ROOT / cfg.get("listener_dir", "listener") / "profile.md"
+    p = listener_dir(cfg) / "profile.md"
     return p.read_text(encoding="utf-8").strip() if p.exists() else "(no profile yet: this is a first meeting)"
 
 
@@ -228,6 +245,47 @@ def seed_inputs(r: "Run", cfg: dict) -> dict:
     if r.path("notes").exists():  # notes the guide added while the run was going (add_note)
         seed = seed.rstrip() + "\n\n" + r.path("notes").read_text(encoding="utf-8").strip() + "\n"
     return {"seed": seed, "profile": listener_profile(cfg)}
+
+
+# --- listeners -----------------------------------------------------------------
+
+def active_listener_id() -> str:
+    """The listener in use: $WRITE_LISTEN_LISTENER, else listeners/active.json, else "ian"."""
+    env = os.environ.get(LISTENER_ENV, "").strip()
+    if env:
+        return env
+    p = LISTENERS_DIR / "active.json"
+    try:
+        lid = str(json.loads(p.read_text(encoding="utf-8")).get("id") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        lid = ""
+    return lid or DEFAULT_LISTENER
+
+
+def listener_dir(cfg: dict | None = None) -> Path:
+    """The listener's folder: cfg["listener_dir"] when set (a test, a run pinned to its owner),
+    else listeners/<active>/. Reading it never creates anything."""
+    fixed = (cfg or {}).get("listener_dir")
+    return ROOT / fixed if fixed else LISTENERS_DIR / active_listener_id()
+
+
+def chapters_dir(cfg: dict | None = None) -> Path:
+    return listener_dir(cfg) / "chapters"
+
+
+def default_runs_dir(cfg: dict | None = None) -> Path:
+    """Where a run name is looked up when no folder is given: RUNS_DIR if set, else the chapters."""
+    return RUNS_DIR if RUNS_DIR is not None else chapters_dir(cfg)
+
+
+def shared_dir() -> Path:
+    return SHARED_DIR
+
+
+def owner_of(root: Path) -> Path | None:
+    """The listener folder a chapter folder sits in (<listener>/chapters/<run>), or None."""
+    root = Path(root)
+    return root.parent.parent if root.parent.name == "chapters" else None
 
 
 # --- prompts ------------------------------------------------------------------

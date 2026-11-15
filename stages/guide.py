@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from . import llm
-from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_profile, load_prompt
+from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_dir, listener_profile, load_prompt
 
 TOOLS = json.loads((PROMPTS_DIR / "guide_tools.json").read_text(encoding="utf-8"))
 # What the Messages API takes: a tool may carry more for the voice agent (expects_response).
@@ -40,10 +40,6 @@ NO_EARLIER = "(nothing yet: the conversation is just starting)"
 STEP_BACK_NOTE = ("You are stepping back. If you have not said your parting words"
                   " yet, say them now, in a few words, once. Otherwise produce no text.")
 EARLIER_CHARS = 6000  # the end of a long conversation is what the guide needs when it comes back
-
-
-def listener_dir(cfg: dict) -> Path:
-    return ROOT / cfg.get("listener_dir", "listener")
 
 
 def draw_names(cfg: dict, rng: random.Random) -> list[str]:

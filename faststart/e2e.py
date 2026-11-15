@@ -94,7 +94,7 @@ def build_spend() -> dict:
     folders: dict[str, Path] = {}
     for x in lines:
         if x.get("run"):
-            folders[x["run"]] = Path(x["dir"]) if x.get("dir") else folders.get(x["run"], common.RUNS_DIR / x["run"])
+            folders[x["run"]] = Path(x["dir"]) if x.get("dir") else folders.get(x["run"], common.default_runs_dir() / x["run"])
     for name, root in folders.items():
         if (root / PATHS["log"]).exists():
             now, had = run_costs(Run(name=name, root=root)), recorded(name, lines)
@@ -254,7 +254,7 @@ def e2e(cfg: dict, *, seed_text: str | None = None, why: str = "", name: str | N
     `narrate` None: sim for a new run, and for a run that is continued the mode it began with."""
     if narrate is not None and narrate not in NARRATE:
         raise StageError(f"--narrate is one of {', '.join(NARRATE)}.")
-    runs_dir = common.RUNS_DIR
+    runs_dir = common.default_runs_dir()
     cap = max_usd if max_usd is not None else base.settings(cfg)["max_run_usd"]
     if name and (runs_dir / name / "00_source" / "seed.md").exists():
         r = Run.open(name, runs_dir=runs_dir)
@@ -308,7 +308,7 @@ def overnight(cfg: dict, *, seed_text: str | None = None, why: str = "", name: s
     log whatever happens. Returns {"run", "run_dir", "script", "costs"}."""
     from stages import new
 
-    runs_dir = common.RUNS_DIR
+    runs_dir = common.default_runs_dir()
     cap = max_usd if max_usd is not None else cfg["unattended"]["max_run_usd"]
     if name and (runs_dir / name / "00_source" / "seed.md").exists():
         r = Run.open(name, runs_dir=runs_dir)

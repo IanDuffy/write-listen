@@ -41,7 +41,7 @@ def open_run(name: str) -> Run:
     p = Path(name).expanduser()
     if p.is_dir():
         return Run(name=p.resolve().name, root=p.resolve())
-    return Run.open(name, runs_dir=common.RUNS_DIR)
+    return Run.open(name, runs_dir=common.default_runs_dir())
 
 
 def main(argv: list[str] | None = None) -> int:

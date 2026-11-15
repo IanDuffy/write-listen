@@ -71,7 +71,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from stages.common import ROOT, PATHS, Run, StageError, is_seed, load_config, run_config
+from stages.common import ROOT, PATHS, Run, StageError, is_seed, load_config, run_config, shared_dir
 
 STAGES_IN_ORDER = [
     ("transcript", "ingest"), ("map", "map"), ("angles", "angles"), ("angle", "choose"),
@@ -205,6 +205,10 @@ def new_run(args, cfg: dict) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("listener", "overnight"):  # listener profiles and the nightly build
+        from overnight.cli import main as overnight_main
+        return overnight_main(argv)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage")
     ap.add_argument("run", nargs="?")
@@ -236,11 +240,11 @@ def main(argv: list[str] | None = None) -> int:
         st = args.stage
         if st == "ping":
             from stages import ping
-            ping.run(Run.open(args.run or "ping", create=True, yes=args.yes), cfg)
+            ping.run(Run.open(args.run or "ping", create=True, yes=args.yes, runs_dir=shared_dir() / "runs"), cfg)
             return 0
         if st == "smoketest":
             from stages import smoketest
-            smoketest.run(Run.open(args.run or "smoketest", create=True, yes=args.yes), cfg)
+            smoketest.run(Run.open(args.run or "smoketest", create=True, yes=args.yes, runs_dir=shared_dir() / "runs"), cfg)
             return 0
         if st == "estimate":
             from stages import estimate

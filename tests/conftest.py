@@ -6,10 +6,19 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from stages import llm, tts  # noqa: E402
+from stages import common, llm, tts  # noqa: E402
 from stages.common import Run, load_config  # noqa: E402
 
 from fakes import FakeAnthropic, Responder, fake_synthesize  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def own_listeners(tmp_path, monkeypatch):
+    """No test reads or writes the real listeners/ or shared/ (the resolver's defaults)."""
+    monkeypatch.setattr(common, "LISTENERS_DIR", tmp_path / "_listeners")
+    monkeypatch.setattr(common, "SHARED_DIR", tmp_path / "_shared")
+    monkeypatch.delenv(common.LISTENER_ENV, raising=False)
+    return tmp_path / "_listeners"
 
 
 @pytest.fixture

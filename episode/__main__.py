@@ -15,12 +15,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from stages.common import ROOT, StageError, load_config
+from stages.common import ROOT, StageError, default_runs_dir, load_config
 
 
 def run_dir(name: str) -> Path:
     p = Path(name)
-    for cand in (p, ROOT / "runs" / name):
+    for cand in (p, default_runs_dir() / name, ROOT / "runs" / name):
         if (cand / "09_script_final.md").exists():
             return cand.resolve()
     raise SystemExit(f"No finished run at {name!r} (looked for 09_script_final.md).")

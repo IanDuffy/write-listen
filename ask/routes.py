@@ -105,13 +105,16 @@ def with_extras(status: dict, runs_dir: Path) -> dict:
     return status
 
 
-def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
+def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
+    """runs_dir: a folder, or a function returning the current one (the server's follows the
+    active listener, which a reset can change)."""
     state = {"open": {}, "chapters": {}}
     lock = threading.Lock()
+    where = runs_dir if callable(runs_dir) else (lambda: runs_dir)
 
     def folder(run: str) -> Path:
         try:
-            return Run.open(run, runs_dir=runs_dir).root
+            return Run.open(run, runs_dir=where()).root
         except StageError:
             raise HTTPException(404, "No such chapter.") from None
 
@@ -119,7 +122,7 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
         root = folder(run)
         if not A.can_ask(root):
             raise HTTPException(400, "This chapter has no timed transcript, so it can't be asked about yet.")
-        key = (run, (root / A.TIMING).stat().st_mtime)
+        key = (str(root), (root / A.TIMING).stat().st_mtime)
         if key not in state["chapters"]:
             state["chapters"] = {key: A.Chapter(root, cfg)}  # one chapter at a time is plenty
         return state["chapters"][key]
@@ -218,7 +221,7 @@ def mount(app: FastAPI, cfg: dict, runs_dir: Path) -> None:
 
     @app.get("/api/ask/chapter/{run}")
     def ask_chapter(run: str) -> dict:
-        return chapter_status(runs_dir, run)
+        return chapter_status(where(), run)
 
     @app.post("/api/ask/start")
     def ask_start(req: AskStart) -> dict:

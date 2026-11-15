@@ -22,7 +22,7 @@ import json
 import time
 from pathlib import Path
 
-from .common import PROMPTS_DIR, ROOT, StageError
+from .common import PROMPTS_DIR, ROOT, StageError, shared_dir
 from .guide import STEP_BACK_NOTE, TOOLS, listener_dir
 
 PLACEHOLDERS = ("identity", "names", "sparks", "profile", "history", "chapter_now", "minutes", "now", "earlier")
@@ -113,7 +113,9 @@ def platform_settings() -> dict:
 
 
 def state_path(cfg: dict, kind: str = "guide") -> Path:
-    return listener_dir(cfg) / KINDS[kind]["state"]
+    """The agent's ids on the account: shared/voice/, not the listener's folder, so a new listener
+    (a reset) reuses the same agents rather than creating more on the account."""
+    return shared_dir() / "voice" / KINDS[kind]["state"]
 
 
 def _client():

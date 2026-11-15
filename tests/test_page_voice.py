@@ -21,7 +21,7 @@ import pytest
 from fakes import FakeAnthropic, Responder
 
 import server
-from stages import guide, llm, voice
+from stages import common, guide, llm, voice
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
@@ -310,8 +310,8 @@ def test_pressing_play_while_the_guide_is_reconnecting_never_talks_over_the_chap
 
 
 def test_the_stop_and_reset_buttons(site):
-    """Stop shows only while a chapter is being made and asks first; Reset asks, ends the
-    conversation without remembering it, and moves the memory aside."""
+    """Stop shows only while a chapter is being made and asks first; Start fresh asks, ends the
+    conversation without remembering it, and switches to a new listener, leaving the old one as it was."""
     import subprocess
     import sys
 
@@ -341,11 +341,12 @@ def test_the_stop_and_reset_buttons(site):
             msgs = []
             page.once("dialog", lambda d: (msgs.append(d.message), d.accept()))
             page.click("#reset")
-            page.wait_for_function("document.getElementById('transcript').innerText.includes('Memory reset')")
-            assert "forgets everything it knows about you" in msgs[0]
+            page.wait_for_function("document.getElementById('transcript').innerText.includes('Started fresh')")
+            assert "Start fresh as a new listener" in msgs[0] and "Nothing is deleted" in msgs[0]
             cls = page.get_attribute("body", "class")
             assert "resting" not in cls and "voice" not in cls and page.inner_text("#line") == "Tap to begin"
-            assert not (listener / "profile.md").exists() and any(x.name.startswith("_cleared_") for x in listener.iterdir())
+            assert (listener / "profile.md").read_text() == "- Builds his own house.\n"  # left as it was
+            assert common.active_listener_id().startswith("demo-")
             assert _sessions(page)[0]["ended"]
             browser.close()
     finally:
@@ -395,7 +396,7 @@ def test_play_pressed_while_the_guide_steps_back_never_leaves_the_mic_open(site)
         browser.close()
 
 
-def test_reset_on_a_chapter_page_says_it_stops_the_chapter_being_made(site):
+def test_start_fresh_on_a_chapter_page_keeps_the_chapter_and_stops_nothing(site):
     import subprocess
     import sys
 
@@ -416,12 +417,12 @@ def test_reset_on_a_chapter_page_says_it_stops_the_chapter_being_made(site):
             page.goto(site.url + "/?chapter=synthetic")
             page.wait_for_function("document.body.classList.contains('ready')")
             page.click("#reset")
-            page.wait_for_function("document.getElementById('transcript').textContent.includes('was stopped')")
-            assert "the chapter being made is stopped" in dialogs[0]  # the run being made, not the chapter shown
+            page.wait_for_function("document.getElementById('transcript').textContent.includes('Started fresh')")
+            assert "Nothing is deleted" in dialogs[0]
             cls = page.get_attribute("body", "class")
             assert "ready" in cls and "past" not in cls  # still the chapter this address names
             browser.close()
-        proc.wait(10)  # the run being made was stopped
+        assert proc.poll() is None  # the chapter being made, for the listener left behind, goes on
     finally:
         if proc.poll() is None:
             proc.kill()
