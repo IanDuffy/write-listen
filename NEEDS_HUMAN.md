@@ -67,4 +67,4 @@ The aside is logged in the chapter's `12_asks/asides.jsonl` with its restart poi
 ## Costs to expect
 
 GPT-Live bills $0.05 per connected minute: about 5 cents per intro and a few cents per Change or question.
-A nightly build was about $X in the live check (see `PROGRESS.md`).
+A nightly build was about $8-10 in the live check (`overnight/REPORT.md`).

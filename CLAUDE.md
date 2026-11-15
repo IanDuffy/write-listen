@@ -366,6 +366,43 @@ and Ian's live-try script: `faststart/REPORT.md`. Code in `faststart/`, tests in
 - Prompts `prompts/fast_*.md` were tuned once after a blind comparison (commit `e4b37ac`); the
   diagnosis and what remains are in the report.
 
+## Overnight Chapters (branch `feature/overnight`, 2026-11-15)
+
+Spec: `docs/overnight-chapters.md` (Ian). Every weeknight the app builds the listener's next 20-minute chapter;
+an Up next card shows tonight's plan, which the listener can change by voice until 2:00; in the morning Play
+opens a short live intro by the guide, then the recording. Report, live results and costs:
+`overnight/REPORT.md`; contracts: `overnight/DESIGN.md`; checks for Ian: `NEEDS_HUMAN.md`. Code in `overnight/`.
+
+- **Listener profiles.** Everything for a listener lives in `listeners/<id>/` (gitignored): `profile.md`,
+  `guide.md`, `settings.json` (over config.yaml `listener_settings`), `library.jsonl`, `seeds.jsonl`,
+  `up_next.json` (the card), `queue.jsonl`, `plans/`, `sessions/`, `chapters/<date>-<slug>/`, `archive/`.
+  `listeners/active.json` names the active one. One resolver: `stages/common.listener_dir(cfg)` and
+  `chapters_dir` (a `listener_dir` in cfg still wins: tests, e2e); `Run.open` with no folder looks in the active
+  listener's chapters; a run in `<listener>/chapters/` is pinned to that listener by `run_config`, whoever is
+  active. Voice agent ids moved to `shared/voice/`. **Start fresh** (the page's old Reset memory, `POST
+  /api/reset`, `wl listener reset`) makes `demo-<date>-<letter>` active and touches nothing else.
+  `wl listener migrate` copies the old `runs/` and `listener/` in (never moves).
+- **The build:** `wl overnight run [--now]` (a script `wl` at the root runs `cli.py` with the venv). Stages, each
+  resumable by its file: lock (card into `00_source/up_next.json`, `seed.md` from it) → research (the seed
+  pipeline's scout, ledger, research, ledger update; the card's angle replaces angles/choose) → write (outline
+  from the full dossier, then fast start's paired edit through `faststart.sections` with overnight prompts) →
+  promise (check against the card's summary, one revision) → record (GPT-Live server-side, `overnight/record.py`)
+  → assemble (Whisper timing, references, `episode.json`) → intro brief → finish (library, seeds, history, card
+  ready). `status.json`, `cost.json`; the runaway stop is `settings.json` `overnight.runaway_stop_usd` as the run's cap.
+- **Recording facts (live).** No `delegation` needed server-side; mic muted, one passage outstanding, sent as
+  commentary. **Never cut takes by the transcript's `start_ms`**: its clock runs seconds behind the audio over a
+  session (34 of 50 paragraphs lost their openings). A take is everything audible since the last, trimmed. Each
+  take is checked by local Whisper (`overnight.record.check`), GPT-Live's transcript as a tie-breaker for names;
+  numbers in digits normalised; a passage it always stops short gets a pickup of the missing sentences.
+- **Scheduling:** `wl overnight tick` (launchd every quarter hour: `wl overnight schedule install`, Ian's call)
+  plans at `plan_at`, builds at `start` on build days (`overnight/schedule.py` is pure). A card lock
+  (`overnight/locks.py`) keeps the tick and the server's Change from crossing; a dead build counts as failed
+  (`runner.reconcile`); a failed card is retried once on the next build day; failed planning passes back off.
+- **The library page** `/library` (`page/library.html`, `page/library.js`, `overnight/routes.py`,
+  `overnight/live.py`): GPT-Live sessions opened through the server (intro, change, ask), prompts
+  `prompts/overnight_voice_*.md`. Written apart from the live-voice switchover (uncommitted when this was built):
+  merge the two GPT-Live clients and personas when it lands.
+
 ## Local setup
 
 ```bash
