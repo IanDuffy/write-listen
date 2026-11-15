@@ -208,3 +208,31 @@ def test_a_queued_surprise_me_sets_the_mode_and_is_used(world, cfg):
     up = planner.plan(cfg, d, now=TUESDAY_EVENING)
     assert up["mode"] == "continue" and up["decided"] == "continue" and up["notes"] == "more on the fish"
     assert "Mode: continue" in all_text(fake.of("choose")[0]) and library.queue(d) == []
+
+
+def test_a_summary_past_four_sentences_gets_one_retry(tmp_path, cfg, monkeypatch):
+    """Live, the card's summary ran to five sentences once in three; the spec says three or four."""
+    import overnight_plan_fakes as P
+    from overnight import planner
+    fake = P.install(monkeypatch)
+    listener = P.listener_folder(tmp_path, cfg)
+    real = fake.__call__
+    long = "One thing. Two things. Three things. Four things. Five things."
+    seen = []
+
+    def call(kwargs):
+        out = real(kwargs)
+        if fake.calls and fake.calls[-1][0] == "card":
+            n = len(fake.of("card"))
+            seen.append(n)
+            if n == 1:
+                body = json.loads(out.content[0].text)
+                body["summary"] = long
+                out.content[0].text = json.dumps(body)
+        return out
+    from fakes import FakeAnthropic
+    from stages import llm
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(call))
+    card = planner.plan(cfg, listener, now=datetime(2026, 11, 16, 18, 5))
+    assert seen == [1, 2] and planner.sentences(card["summary"]) <= 4
+    assert "had 5 sentences" in P.all_text(fake.of("card")[1])

@@ -182,6 +182,11 @@ def _title_words(t: str) -> set[str]:
     return {w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words}
 
 
+def sentences(text: str) -> int:
+    """Sentences in a summary: ends of . ! ? before a capital or the end (decimals like 2.5 don't count)."""
+    return len([x for x in re.split(r"(?<=[.!?])\s+(?=[A-Z\"'])", (text or "").strip()) if x.strip()])
+
+
 def near_duplicate(title: str, past: list[str]) -> str | None:
     """The past title this one repeats (case and punctuation aside, or nearly), or None."""
     a, wa = library._norm(title), _title_words(title)
@@ -391,6 +396,11 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime) -> dic
     if clash:
         card = write_card(r, cfg, ctx, choice, notes, minutes,
                           retry=load_prompt("overnight_plan_card_retry", title=card["title"], clash=clash))
+        tries.append(card["title"])
+        clash = near_duplicate(card["title"], past_titles)
+    if not clash and sentences(card["summary"]) > 4:  # the spec: three or four sentences
+        card = write_card(r, cfg, ctx, choice, notes, minutes,
+                          retry=load_prompt("overnight_plan_card_long", n=str(sentences(card["summary"]))))
         tries.append(card["title"])
         clash = near_duplicate(card["title"], past_titles)
     cost = round(r.spent(), 4)
