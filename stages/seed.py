@@ -44,11 +44,12 @@ def run_name(topic: str, runs_dir: Path | None = None) -> str:
 def find_run(text: str, runs_dir: Path | None = None, ok=None) -> str | None:
     """The newest unfinished run started from exactly this seed, so the same `new --seed ...`
     command continues a stopped run instead of paying for a second one. With `ok`, only among
-    the run folders ok(folder) accepts (cli.py: the runs of the mode that was asked for)."""
+    the run folders ok(folder) accepts (cli.py: the runs of the mode that was asked for). Never an
+    overnight build (its plan locked in 00_source/up_next.json): that is the overnight runner's."""
     root = runs_dir or RUNS_DIR or common.default_runs_dir()
     found = [p for p in root.glob("*/00_source/seed.md")
              if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()
-             and (ok is None or ok(p.parent.parent))]
+             and not p.with_name("up_next.json").exists() and (ok is None or ok(p.parent.parent))]
     return max(found, key=lambda p: p.stat().st_mtime).parent.parent.name if found else None
 
 

@@ -61,6 +61,12 @@ MONEY = ("claude_usd", "elevenlabs_chars", "elevenlabs_usd", "cost_usd")
 STARTED = "started"  # a line's state when a run begins: it names the run and its folder, and costs nothing
 
 
+def harness_runs_dir() -> Path:
+    """Where these dev harnesses make their runs: shared/runs, as ping and smoketest do, never a
+    listener's chapters (a test run there would become their latest chapter). RUNS_DIR for tests."""
+    return common.RUNS_DIR if common.RUNS_DIR is not None else common.shared_dir() / "runs"
+
+
 # --- the build's money ------------------------------------------------------------------
 
 def run_costs(r: Run) -> dict:
@@ -94,7 +100,7 @@ def build_spend() -> dict:
     folders: dict[str, Path] = {}
     for x in lines:
         if x.get("run"):
-            folders[x["run"]] = Path(x["dir"]) if x.get("dir") else folders.get(x["run"], common.default_runs_dir() / x["run"])
+            folders[x["run"]] = Path(x["dir"]) if x.get("dir") else folders.get(x["run"], harness_runs_dir() / x["run"])
     for name, root in folders.items():
         if (root / PATHS["log"]).exists():
             now, had = run_costs(Run(name=name, root=root)), recorded(name, lines)
@@ -254,7 +260,7 @@ def e2e(cfg: dict, *, seed_text: str | None = None, why: str = "", name: str | N
     `narrate` None: sim for a new run, and for a run that is continued the mode it began with."""
     if narrate is not None and narrate not in NARRATE:
         raise StageError(f"--narrate is one of {', '.join(NARRATE)}.")
-    runs_dir = common.default_runs_dir()
+    runs_dir = harness_runs_dir()
     cap = max_usd if max_usd is not None else base.settings(cfg)["max_run_usd"]
     if name and (runs_dir / name / "00_source" / "seed.md").exists():
         r = Run.open(name, runs_dir=runs_dir)
@@ -308,7 +314,7 @@ def overnight(cfg: dict, *, seed_text: str | None = None, why: str = "", name: s
     log whatever happens. Returns {"run", "run_dir", "script", "costs"}."""
     from stages import new
 
-    runs_dir = common.default_runs_dir()
+    runs_dir = harness_runs_dir()
     cap = max_usd if max_usd is not None else cfg["unattended"]["max_run_usd"]
     if name and (runs_dir / name / "00_source" / "seed.md").exists():
         r = Run.open(name, runs_dir=runs_dir)

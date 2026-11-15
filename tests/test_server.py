@@ -284,3 +284,61 @@ def test_start_fresh_makes_a_new_listener_and_leaves_the_old_one_byte_for_byte(t
     assert c.get("/api/ask/chapter/2026-11-14-synthetic").json()["message"] == "There's no such chapter."  # ian's chapters are not the demo's
     again = c.post("/api/reset").json()
     assert again["listener"] != out["listener"] and again["listener"].endswith("-b") and _tree(ian) == before
+
+
+# --- review fixes (overnight chapters) ---------------------------------------------------------
+
+def test_status_names_the_folder_it_was_read_from(client):
+    """Review C17: a migrated copy's status.json named its old run, and the page's audio address 404'd."""
+    c, _, _, runs = client
+    write_status(runs, "2026-11-14-herons", run="herons-20261114", state="ready", title="Herons")
+    assert c.get("/api/status").json()["run"] == "2026-11-14-herons"
+
+
+def test_overnight_builds_are_not_the_pages_and_cannot_be_retried_as_seed_runs(client):
+    """Review C19: the page followed a nightly build, and its Retry ran the seed pipeline over it."""
+    import os
+
+    from stages import seed
+    c, pipe, started, runs = client
+    write_status(runs, "lesson", state="ready", title="Concrete")
+    build = runs / "2026-11-18-why-bridges-sway"
+    (build / "00_source").mkdir(parents=True)
+    (build / "00_source" / "up_next.json").write_text('{"summary": "Bridges."}')
+    (build / "00_source" / "seed.md").write_text("Why bridges sway\n")
+    write_status(runs, build.name, mode="overnight", state="making", label="Recording", pid=os.getpid())
+    assert c.get("/api/status").json()["run"] == "lesson"  # not the build, though it is newer
+    assert not pipe.busy()
+    res = c.post(f"/api/chapters/{build.name}/retry")
+    assert res.status_code == 400 and "wl overnight resume" in res.json()["detail"] and started == []
+    write_status(runs, build.name, mode="overnight", state="problem", retryable=True)
+    (build / "00_source" / "up_next.json").unlink()  # the status alone says so too
+    assert c.get("/api/status").json()["run"] == "lesson"
+    assert c.post(f"/api/chapters/{build.name}/retry").status_code == 400 and started == []
+    (build / "00_source" / "up_next.json").write_text('{"summary": "Bridges."}')
+    assert seed.find_run("Why bridges sway\n", runs) is None  # the seed pipeline never continues one
+    assert c.post("/api/chapters", json={"seed": "Roman concrete"}).status_code == 200
+
+
+def test_start_fresh_detaches_the_previous_listeners_run(tmp_path, monkeypatch, cfg):
+    """Review C20: after a reset the new listener's page showed the old listener's run, and 409'd."""
+    from overnight import profiles
+    from stages import common
+    profiles.create("ian")
+    profiles.set_active("ian")
+    cfg.pop("listener_dir", None)
+    pipe = server.Pipeline()
+    started = []
+
+    def start(args, run):
+        started.append(run)
+        pipe.proc, pipe.run = FakeProc(), run  # still running
+
+    monkeypatch.setattr(pipe, "start", start)
+    c = TestClient(server.create_app(pipe, cfg, remember_on_start=False))
+    ian_run = c.post("/api/chapters", json={"seed": "Japanese joinery"}).json()["run"]
+    assert (common.LISTENERS_DIR / "ian" / "chapters" / ian_run).is_dir() and pipe.busy()
+    lid = c.post("/api/reset").json()["listener"]
+    assert c.get("/api/status").json() == {"state": "idle"} and not pipe.busy()
+    demo_run = c.post("/api/chapters", json={"seed": "Roman concrete"}).json()["run"]
+    assert (common.LISTENERS_DIR / lid / "chapters" / demo_run).is_dir() and started == [ian_run, demo_run]
