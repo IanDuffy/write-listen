@@ -2,7 +2,8 @@
 (docs/overnight-chapters.md "Overnight runner" stage 5; checks 6 and 10 of the One Live Voice spec).
 
     10_audio/takes/<id>.t<k>.wav + .json   every take: the audio cut from the session, what the voice
-                                           said (its output transcript), the check, the session's times
+                                           said (its output transcript), what Whisper heard in the cut
+                                           take, the check, the session's times
     10_audio/paragraphs/<id>.wav + .json   the take kept for the chapter (the first that passed, else the
                                            best, flagged); its WAV marks the paragraph done
     10_audio/recording.jsonl               one line per take
@@ -18,21 +19,29 @@ A session (`LiveSession`): wss .../v1/live/sessions, `session.start` with these 
 paragraph sent as commentary. GPT-Live sends no event at the end of a response, so a paragraph is
 followed word by word in the output transcript (`Follow`, a port of page/align.js) and is done when
 every word is heard and the audio has gone quiet; else after a quiet with most words heard, or a longer
-quiet. Every threshold is measured on the session's own audio clock (its output audio is a continuous
-real-time stream, silence included), so the logic runs the same against a fast local fake server. The
-take is cut from the session audio at start_ms * 24 samples and trimmed to speech by energy, with a
+quiet. Words said after the passage was sent but before its opening word are part of the take, in the
+cut and in the check: a misheard first word, or a preamble, which fails it. Every threshold is
+measured on the session's own audio clock (its output audio is a continuous real-time stream, silence
+included), so the logic runs the same against a fast local fake server. The take is cut from the session audio at start_ms * 24 samples and trimmed to speech by energy, with a
 small, fixed pad.
 
-The check (`deviation`) compares the output transcript with the text after normalising what a
-transcript may write differently (case, punctuation, hyphens, apostrophes, numbers in digits, British
-and American spellings). A take passes with at most `record.max_word_diffs` words missing, added or
-changed and no difference touching a negation or a number. A failing paragraph is read again in the
+The check (`deviation`): each cut take is transcribed with local Whisper (`record.check: whisper`, the
+default; `record.whisper_model`, one model shared by the lanes, loaded at the first take) and that
+transcript is compared with the text, after normalising what a transcript may write differently (case,
+punctuation, hyphens, apostrophes, numbers in digits, British and American spellings). GPT-Live's own
+output transcript breaks ties: a word Whisper spells differently but similarly (a name), where the output
+transcript had the script's word, is not a difference. If Whisper can't load or fails on a take, that
+take is checked on the output transcript (`check: transcript` always does), and the take's JSON says so.
+A take passes with at most `record.max_word_diffs` words missing, added or changed, nothing said before
+the passage, and no difference touching a negation or a number. A failing paragraph is read again in the
 same session up to `record.retakes` times; the best take is kept and flagged if none passed.
 
 Up to `record.sessions` sessions run in parallel, each on a contiguous run of sections. Each session's
 connected seconds are logged to the run's log.jsonl as they accrue (after every paragraph, the rest at
 close), so Run.spent() sees them and the runaway stop (Run.max_usd), checked before every take, holds.
-A paragraph whose WAV exists is never recorded again (resume).
+A paragraph whose WAV exists is never recorded again (resume). A lost session is reopened after a
+growing wait (BACKOFF_SECONDS); only MAX_RECONNECTS failures in a row stop the stage. If the stage is
+interrupted (Ctrl-C), every lane's session is closed before the exception goes on.
 """
 
 from __future__ import annotations
@@ -51,6 +60,7 @@ from pathlib import Path
 
 import numpy as np
 
+from episode import recognize
 from faststart.narrate import BRACKET, _fit
 from stages import tts
 from stages.common import LEFTOVER_MARKER, ROOT, Run, StageError, load_prompt, spoken_text, split_script_segments
@@ -81,7 +91,13 @@ PAD_LEAD, PAD_TAIL = 0.06, 0.15   # kept before the first and after the last spe
 # Reopening a session before it runs out (sessions expire after about 2 hours; context 128k).
 REOPEN_USAGE_RATIO = 0.8
 REOPEN_EXPIRY_SECONDS = 600
-MAX_RECONNECTS = 3            # lost connections tolerated per session lane before the stage stops
+MAX_RECONNECTS = 4            # lost connections in a row tolerated per lane before the stage stops
+BACKOFF_SECONDS = (2, 5, 15, 30)  # the wait before reopening after the 1st, 2nd... loss in a row (~1 min in all)
+JOIN_SECONDS = 15             # interrupted: how long to wait for the lanes once their sessions are closed
+
+# The check.
+SIMILAR = 0.5                 # Whisper's word and the script's this alike (difflib ratio) is a spelling, when the
+                              # output transcript had the script's word
 
 _FILE_LOCK = threading.Lock()
 
@@ -209,35 +225,51 @@ def _contraction(a: list[str], b: list[str]) -> bool:
     return x == y
 
 
-def deviation(text: str, heard: str) -> dict:
+def deviation(text: str, heard: str, vouch: str | None = None) -> dict:
     """How the take differs from the text, word by word: {"words", "missing", "added", "changed",
-    "critical" (differences touching a negation or a number), "diffs": [[op, text words, heard words]]}.
-    Not differences: the same letters run together or apart ("check in" / "checkin"), a number in digits."""
+    "critical" (differences touching a negation or a number), "before" (words said before the passage's
+    first word), "diffs": [[op, text words, heard words]], "forgiven": the same, not counted}.
+    Not differences: the same letters run together or apart ("check in" / "checkin"), a number in digits.
+    `vouch` (GPT-Live's output transcript, when `heard` is Whisper's): a word changed into a similar one
+    (SIMILAR), where `vouch` has the text's word, is a spelling (a name), forgiven."""
     a, b = norm_words(text), norm_words(heard)
-    diffs, missing, added, changed, critical = [], 0, 0, 0, 0
+    vouched: set[int] = set()
+    if vouch is not None:
+        for i, _, n in difflib.SequenceMatcher(a=a, b=norm_words(vouch), autojunk=False).get_matching_blocks():
+            vouched.update(range(i, i + n))
+    diffs, forgiven, missing, added, changed, critical, before = [], [], 0, 0, 0, 0, 0
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
         x, y = a[i1:i2], b[j1:j2]
         if op == "equal" or (op == "replace" and ("".join(x) == "".join(y) or _same_number(x, y))):
+            continue
+        touchy = any(w in NEGATIONS or _numeric(w) for w in x + y)
+        if (op == "replace" and not touchy and all(i in vouched for i in range(i1, i2))
+                and difflib.SequenceMatcher(a="".join(x), b="".join(y), autojunk=False).ratio() >= SIMILAR):
+            forgiven.append([op, " ".join(x), " ".join(y)])
             continue
         diffs.append([op, " ".join(x), " ".join(y)])
         if op == "delete":
             missing += len(x)
         elif op == "insert":
             added += len(y)
+            if i1 == 0:
+                before += len(y)
         else:
             changed += max(len(x), len(y))
-        if any(w in NEGATIONS or _numeric(w) for w in x + y) and not (op == "replace" and _contraction(x, y)):
+        if touchy and not (op == "replace" and _contraction(x, y)):
             critical += 1
     return {"words": len(a), "missing": missing, "added": added, "changed": changed, "critical": critical,
-            "diffs": diffs}
+            "before": before, "diffs": diffs, "forgiven": forgiven}
 
 
 def passes(d: dict, max_diffs: int) -> bool:
-    return d["critical"] == 0 and d["missing"] + d["added"] + d["changed"] <= max_diffs
+    """At most max_diffs words different, none touching a negation or a number, nothing said before the
+    passage (the take would start with it: "Sure." is one word, and must not be in the chapter)."""
+    return d["critical"] == 0 and not d.get("before") and d["missing"] + d["added"] + d["changed"] <= max_diffs
 
 
 def _score(d: dict) -> tuple:
-    return (d["critical"], d["missing"] + d["added"] + d["changed"])
+    return (d["critical"], d.get("before", 0), d["missing"] + d["added"] + d["changed"])
 
 
 # --- following a reading (a port of page/align.js) ---------------------------------------------
@@ -295,17 +327,22 @@ def opens(words: list[str], w: str, k: int = 6) -> bool:
 
 
 class Follow:
-    """One paragraph followed through the transcript: started (an opening word heard; anything said
-    before it is not this paragraph), the words matched so far, and what was heard from the opening on."""
+    """One paragraph followed through the transcript: started (an opening word heard), the words matched
+    so far, and what was heard. Words said before the opening word (since `since_ms`, when the passage was
+    sent: earlier ones are the last paragraph's late transcript) belong to the take: a misheard first word
+    ("Dee-oh-tima" for "Diotima") or a preamble ("Here is the passage."). The take then starts at the
+    first of them, so the check sees them and the cut keeps no half word."""
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, since_ms: float | None = None):
         self.words = norm_words(text)
         self.tokens = Tokens()
+        self.since_ms = since_ms
         self.pos = 0
         self.started = False
         self.start_ms: int | None = None
-        self.count = 0          # words heard since the opening
+        self.count = 0          # words heard since the take's start
         self.heard: list[str] = []
+        self.before: list[tuple[str, int]] = []  # raw words said before the opening word
 
     def push(self, delta: str, start_ms: int) -> None:
         self._take(self.tokens.push(delta, start_ms))
@@ -318,14 +355,19 @@ class Follow:
             for w in norm_words(tok):
                 if not self.started:
                     if not opens(self.words, w):
-                        continue  # said before the paragraph opened: not this paragraph
-                    self.started, self.start_ms = True, ms
+                        continue
+                    self.started = True
+                    self.start_ms = self.before[0][1] if self.before else ms
+                    self.heard += [t for t, _ in self.before]
+                    self.count += sum(len(norm_words(t)) for t, _ in self.before)
                 self.count += 1
                 j = match(self.words, self.pos, w)
                 if j >= 0:
                     self.pos = j
             if self.started:
                 self.heard.append(tok)
+            elif norm_words(tok) and (self.since_ms is None or ms >= self.since_ms):
+                self.before.append((tok, ms))
 
     @property
     def done(self) -> bool:
@@ -612,7 +654,7 @@ class LiveSession:
             pass
 
     async def _read(self, text: str) -> Take:
-        follow, k = Follow(text), len(self._deltas)
+        follow, k = Follow(text, since_ms=self._now_ms()), len(self._deltas)
         content = f"{READ} {text}"
         await self._send("session.commentary.append", delegation_id=None, content=content)
         first_sent = sent = self._now_ms()
@@ -706,33 +748,42 @@ class _Lane:
     label: str
     session: object = None
     logged: float = 0.0
-    reconnects: int = 0
+    reconnects: int = 0       # lost sessions in a row (reset by a take read)
     opened: list = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)  # the lane's thread, or the main one stopping it
 
 
 class _Recorder:
-    def __init__(self, r: Run, cfg: dict, factory):
+    def __init__(self, r: Run, cfg: dict, factory, recognizer=None):
         self.r, self.cfg, self.factory = r, cfg, factory
         self.rc = cfg["overnight"]["record"]
         self.retakes = int(self.rc.get("retakes", 3))
         self.max_diffs = int(self.rc.get("max_word_diffs", 2))
         self.price = float(self.rc.get("price_per_minute", 0.05))
+        self.check = self.rc.get("check", "whisper")
+        if self.check not in ("whisper", "transcript"):
+            raise StageError(f"overnight.record.check is {self.check!r}: it must be whisper or transcript.")
         self.audio = r.path("audio_dir")
         self.instructions = instructions(cfg)
         self.stop = threading.Event()
         self.errors: list[BaseException] = []
+        self.lanes: list[_Lane] = []
+        self._lanes_lock = threading.Lock()
+        self._ear = recognizer            # Whisper: one for every lane, behind _ear_lock, loaded at first use
+        self._ear_lock = threading.Lock()
+        self._ear_error: str | None = None
 
     # costs ---------------------------------------------------------------------------------------
 
-    def log_cost(self, lane: _Lane, final: bool = False, what: str | None = None) -> None:
-        s = lane.session
+    def log_cost(self, lane: _Lane, s, final: bool = False, what: str | None = None) -> None:
         if s is None:
             return
         total = s.seconds
-        delta = max(0.0, total - lane.logged)
-        if not delta and not final:
-            return
-        lane.logged += delta
+        with lane.lock:
+            delta = max(0.0, total - lane.logged)
+            if not delta and not final:
+                return
+            lane.logged += delta
         rec = {"stage": STAGE, "provider": "openai", "model": self.rc["model"], "session": s.id or lane.label,
                "seconds": round(delta, 2), "cost_usd": round(delta / 60 * self.price, 5)}
         if what:
@@ -749,20 +800,71 @@ class _Recorder:
 
     # sessions ------------------------------------------------------------------------------------
 
-    def open(self, lane: _Lane) -> None:
-        lane.session = self.factory(self.cfg, self.instructions, lane.label)
-        lane.logged = 0.0
-        lane.opened.append(getattr(lane.session, "id", None))
+    def open(self, lane: _Lane):
+        s = self.factory(self.cfg, self.instructions, lane.label)
+        with lane.lock:
+            lane.session, lane.logged = s, 0.0
+            lane.opened.append(getattr(s, "id", None))
+        if self.stop.is_set():  # stopped while it opened: never read on it
+            self.close(lane)
+            raise SessionLost("the stage is stopping")
+        return s
 
     def close(self, lane: _Lane) -> None:
-        s = lane.session
+        """Close the lane's session and log what it cost; safe from either thread, and twice."""
+        with lane.lock:
+            s, lane.session = lane.session, None
         if s is None:
             return
         try:
             s.close()
         finally:
-            self.log_cost(lane, final=True)
-            lane.session = None
+            self.log_cost(lane, s, final=True)
+
+    def pause(self, seconds: float) -> None:
+        """The wait before reopening a lost session; a stop ends it at once."""
+        self.stop.wait(seconds)
+
+    def abort(self) -> None:
+        """Stop every lane: no new take starts, and every open session is closed now (from this thread)."""
+        self.stop.set()
+        with self._lanes_lock:
+            lanes = list(self.lanes)
+        for lane in lanes:
+            try:
+                self.close(lane)
+            except Exception:
+                pass
+
+    # the check -----------------------------------------------------------------------------------
+
+    def whisper(self, wav: Path) -> str:
+        """What Whisper hears in the take's WAV. Raises if it can't load or transcribe."""
+        with self._ear_lock:
+            if self._ear is None:
+                if self._ear_error:
+                    raise RuntimeError(self._ear_error)
+                try:
+                    self._ear = recognize.WhisperRecognizer(self.rc.get("whisper_model", "small.en"))
+                except Exception as e:  # noqa: BLE001 - every take then falls back to the output transcript
+                    self._ear_error = f"Whisper could not load: {type(e).__name__}: {e}"
+                    self.r.log({"stage": STAGE, "label": self._ear_error + " (takes checked on GPT-Live's transcript)"})
+                    raise RuntimeError(self._ear_error) from None
+            return " ".join(w["w"] for w in self._ear(wav))
+
+    def judge(self, p: dict, take: Take, wav: Path | None) -> dict:
+        """The check's part of the take's record: check (whisper or transcript), whisper (its text),
+        whisper_error, deviation."""
+        out: dict = {"check": "transcript", "whisper": None}
+        if self.check == "whisper" and wav is not None:
+            try:
+                out["whisper"] = self.whisper(wav)
+                out["check"] = "whisper"
+            except Exception as e:  # noqa: BLE001 - one take checked on the transcript beats a lost night
+                out["whisper_error"] = f"{type(e).__name__}: {e}"
+        out["deviation"] = (deviation(p["text"], out["whisper"], vouch=take.heard) if out["check"] == "whisper"
+                            else deviation(p["text"], take.heard))
+        return out
 
     # one paragraph -------------------------------------------------------------------------------
 
@@ -779,27 +881,34 @@ class _Recorder:
                 return
             self.check_cap()
             try:
-                if lane.session is None or lane.session.needs_new():
+                s = lane.session
+                if s is None or s.needs_new():
                     self.close(lane)
-                    self.open(lane)
-                take = lane.session.read(p["text"])
+                    s = self.open(lane)
+                take = s.read(p["text"])
             except SessionLost as e:
-                lane.reconnects += 1
                 self.close(lane)
+                if self.stop.is_set():
+                    return
+                lane.reconnects += 1
                 if lane.reconnects > MAX_RECONNECTS:
-                    raise StageError(f"GPT-Live failed {lane.reconnects} times in one lane (last at paragraph "
-                                     f"{p['id']}: {e}).") from None
+                    raise StageError(f"GPT-Live failed {lane.reconnects} times in a row in one lane (last at "
+                                     f"paragraph {p['id']}: {e}).") from None
+                self.pause(BACKOFF_SECONDS[min(lane.reconnects, len(BACKOFF_SECONDS)) - 1])
                 continue
+            lane.reconnects = 0  # a take was read: only losses in a row stop the stage
             attempts += 1
-            d = deviation(p["text"], take.heard)
-            ok = bool(take.pcm) and passes(d, self.max_diffs)
             k = self.next_take(p["id"])
-            info = {"id": p["id"], "take": k, "session": lane.session.id, "status": take.status,
-                    "heard": take.heard, "deviation": d, "passed": ok, "resent": take.resent,
+            wav = self.audio / "takes" / f"{p['id']}.t{k}.wav"
+            if take.pcm:
+                write_wav(wav, take.pcm)
+            judged = self.judge(p, take, wav if take.pcm else None)
+            d = judged["deviation"]
+            ok = bool(take.pcm) and passes(d, self.max_diffs)
+            info = {"id": p["id"], "take": k, "session": s.id, "status": take.status,
+                    "heard": take.heard, **judged, "passed": ok, "resent": take.resent,
                     "times": {"start_ms": take.start_ms, "end_ms": take.end_ms},
                     "seconds": round(take.seconds, 3), "t": time.strftime("%Y-%m-%dT%H:%M:%S")}
-            if take.pcm:
-                write_wav(self.audio / "takes" / f"{p['id']}.t{k}.wav", take.pcm)
             write_json(self.audio / "takes" / f"{p['id']}.t{k}.json", info)
             with _FILE_LOCK:
                 with open(self.audio / "recording.jsonl", "a", encoding="utf-8") as f:
@@ -810,7 +919,7 @@ class _Recorder:
                 break
             if take.status == "never_started":  # the session may be stuck: the next attempt gets a new one
                 self.close(lane)
-        self.log_cost(lane, what=p["id"])
+        self.log_cost(lane, lane.session, what=p["id"])
         if best is None:
             raise StageError(f"GPT-Live never read paragraph {p['id']} ({attempts} attempts).")
         take, info = best
@@ -820,6 +929,8 @@ class _Recorder:
 
     def lane(self, label: str, group: list[dict]) -> None:
         lane = _Lane(label)
+        with self._lanes_lock:
+            self.lanes.append(lane)
         try:
             for p in group:
                 if self.stop.is_set():
@@ -834,6 +945,10 @@ class _Recorder:
             except Exception:
                 pass
 
+    def wait(self, threads: list[threading.Thread]) -> None:
+        for t in threads:
+            t.join()
+
 
 def result(r: Run, paras: list[dict]) -> dict:
     """recorded.json: from the paragraph files and every take and session logged, this run and earlier."""
@@ -843,10 +958,12 @@ def result(r: Run, paras: list[dict]) -> dict:
     if (audio / "recording.jsonl").exists():
         takes = sum(1 for line in (audio / "recording.jsonl").read_text(encoding="utf-8").splitlines() if line.strip())
     costs = [x for x in r.read_log() if x.get("stage") == STAGE and x.get("provider") == "openai"]
+    checked = [c.get("check", "transcript") for c in chosen]
     return {
         "paragraphs": len(paras),
         "passed": sum(1 for c in chosen if c["passed"]),
         "flagged": [{"id": c["id"], "diffs": c["deviation"]["diffs"]} for c in chosen if not c["passed"]],
+        "checked_by": {"whisper": checked.count("whisper"), "transcript": checked.count("transcript")},
         "retakes_total": max(0, takes - len(paras)),
         "sessions": len({x.get("session") for x in costs}),
         "seconds": round(sum(x.get("seconds", 0) or 0 for x in costs), 1),
@@ -855,8 +972,31 @@ def result(r: Run, paras: list[dict]) -> dict:
     }
 
 
-def run(r: Run, cfg: dict, session_factory=None) -> dict:
-    """Record every paragraph not yet recorded; write recorded.json once all are. Returns it."""
+def whisper_model(cfg: dict) -> str:
+    """The Whisper model the take check and assembly's timing use."""
+    return ((cfg.get("overnight") or {}).get("record") or {}).get("whisper_model", "small.en")
+
+
+def preflight(cfg: dict) -> None:
+    """Before a build spends anything: faster-whisper imports and the Whisper model is already on this
+    machine (the take check and assembly's timing both need it; nothing is downloaded here)."""
+    model = whisper_model(cfg)
+    try:
+        from faster_whisper.utils import download_model
+    except ImportError as e:
+        raise StageError(f"faster-whisper is not installed ({e}): run `uv sync` in the project.") from None
+    try:
+        download_model(model, local_files_only=True)
+    except Exception:  # noqa: BLE001 - huggingface_hub's not-cached error, or a broken cache
+        raise StageError(
+            f"The Whisper model {model} is not on this machine. Download it once with: .venv/bin/python -c "
+            f"\"from faster_whisper.utils import download_model; download_model('{model}')\"") from None
+
+
+def run(r: Run, cfg: dict, session_factory=None, recognizer=None) -> dict:
+    """Record every paragraph not yet recorded; write recorded.json once all are. Returns it.
+    `recognizer`: anything with the episode.recognize interface, for the check (default: local Whisper,
+    loaded at the first take when `record.check` is whisper)."""
     done_path = r.path("audio_dir") / "recorded.json"
     if done_path.exists():
         return json.loads(done_path.read_text(encoding="utf-8"))
@@ -864,16 +1004,22 @@ def run(r: Run, cfg: dict, session_factory=None) -> dict:
     ids = [p["id"] for p in paras]
     if len(set(ids)) != len(ids):
         raise StageError("Two paragraphs share an id: the script's segment markers repeat a number.")
-    rec = _Recorder(r, cfg, session_factory or LiveSession)
+    rec = _Recorder(r, cfg, session_factory or LiveSession, recognizer)
     todo = [p for p in paras if not (rec.audio / "paragraphs" / f"{p['id']}.wav").exists()]
     if todo:
         groups = _groups(todo, int(rec.rc.get("sessions", 4)))
-        threads = [threading.Thread(target=rec.lane, args=(f"{i + 1}", g), name=f"record-lane-{i + 1}")
+        threads = [threading.Thread(target=rec.lane, args=(f"{i + 1}", g), name=f"record-lane-{i + 1}", daemon=True)
                    for i, g in enumerate(groups)]
         for t in threads:
             t.start()
-        for t in threads:
-            t.join()
+        try:
+            rec.wait(threads)
+        except BaseException:  # Ctrl-C: no lane goes on recording (and billing) once this has raised
+            rec.abort()
+            deadline = time.monotonic() + JOIN_SECONDS
+            for t in threads:
+                t.join(max(0.0, deadline - time.monotonic()))
+            raise
         if rec.errors:
             raise rec.errors[0]
     out = result(r, paras)

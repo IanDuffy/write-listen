@@ -14,10 +14,11 @@ dependencies = [
     "websockets>=14",  # overnight/record.py: GPT-Live, server-side
     "numpy>=2",        # overnight/record.py: cutting takes
     "httpx>=0.27",     # overnight/live.py: opening GPT-Live sessions (also an anthropic dependency)
+    "faster-whisper==1.2.1",  # episode/recognize.py: overnight take checks and timing.json (local Whisper)
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "playwright==1.58.0"]  # playwright: the browser tests (then `playwright install chromium`)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
