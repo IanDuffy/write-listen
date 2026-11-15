@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library</title>
+<!--
+  The library page (docs/overnight-chapters.md, "Library page"): two cards, Up next on top and the
+  latest chapter below, in the same look as the rest of the app (system font, one accent colour).
+  Up next: title, overview, summary, a small line for when it will be ready or its state, and one
+  button, Change (hidden while building). Latest chapter: title, overview, date, length, Play and a
+  link to the episode page. Settings is a small link under the cards. Play and Change open the
+  guide's live sessions (page/library.js).
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; --card: #ffffff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; --card: #1c1c1a; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 36em; margin: 0 auto; padding: 32px 16px 48px; display: flex; flex-direction: column; gap: 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
+  .kicker { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  h2 { font-size: 20px; line-height: 1.25; margin: 0 0 6px; }
+  .overview { margin: 0 0 10px; color: var(--fg); }
+  .summary { margin: 0 0 12px; color: var(--muted); }
+  .line { font-size: 14px; color: var(--muted); margin: 0; }
+  .row { display: flex; align-items: center; gap: 14px; margin-top: 14px; flex-wrap: wrap; }
+  button.pill { font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
+                border-radius: 999px; padding: 6px 18px; cursor: pointer; }
+  button.pill.solid { background: var(--accent); color: var(--bg); }
+  button.pill:disabled { opacity: .5; cursor: default; }
+  a { color: var(--muted); text-underline-offset: 3px; font-size: 14px; }
+  .meta { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+  body.building #up .line { color: var(--accent); }
+  body.failed #up .line { color: var(--fg); font-weight: 600; }
+  #live { display: none; font-size: 14px; color: var(--muted); }
+  body.live #live { display: block; }
+  #settings-link { align-self: center; font-size: 14px; color: var(--muted); background: none; border: 0;
+                   text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-family: inherit; }
+  #settings { display: none; }
+  body.settings #settings { display: block; }
+  #settings label { display: block; margin: 8px 0; font-size: 15px; }
+  #settings .days label { display: inline-block; margin-right: 10px; }
+  #settings input[type=time] { font: inherit; }
+  #settings .note { font-size: 13px; color: var(--muted); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <section class="card" id="up" aria-live="polite">
+    <p class="kicker" id="up-kicker">Up next</p>
+    <h2 id="up-title"></h2>
+    <p class="overview" id="up-overview"></p>
+    <p class="summary" id="up-summary"></p>
+    <p class="line" id="up-line"></p>
+    <div class="row"><button class="pill" id="change" hidden>Change</button></div>
+  </section>
+
+  <section class="card" id="latest">
+    <p class="kicker">Latest chapter</p>
+    <div id="latest-body">
+      <h2 id="latest-title"></h2>
+      <p class="overview" id="latest-overview"></p>
+      <p class="meta" id="latest-meta"></p>
+      <div class="row">
+        <button class="pill solid" id="play">Play</button>
+        <a id="episode" href="#" hidden>Episode page</a>
+      </div>
+    </div>
+    <p class="empty" id="latest-empty" hidden>No chapter yet.</p>
+    <p id="live" aria-live="polite"></p>
+    <audio id="audio" preload="none"></audio>
+  </section>
+
+  <button id="settings-link">Settings</button>
+  <section class="card" id="settings">
+    <p class="kicker">Overnight chapters</p>
+    <label><input type="checkbox" id="s-enabled"> Build a chapter overnight</label>
+    <div class="days" id="s-days"></div>
+    <label>Build starts <input type="time" id="s-start"> <span class="note">(changes after this go to the next build)</span></label>
+    <label>Plan written <input type="time" id="s-plan"></label>
+    <div class="row"><button class="pill" id="s-save">Save</button><span class="note" id="s-note"></span></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const NAMES = {mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun"};
+let state = null;
+
+function show(el, on) { el.hidden = !on; }
+
+function render(s) {
+  state = s;
+  const up = s.up_next, card = up.card;
+  document.body.classList.remove("planned", "building", "failed", "waiting", "none", "off");
+  document.body.classList.add(up.state);
+  $("up-title").textContent = card ? card.title : (up.state === "off" ? "Overnight chapters are off" : "Nothing planned yet");
+  $("up-overview").textContent = card ? (card.overview || "") : "";
+  $("up-summary").textContent = card ? (card.summary || "") : "";
+  $("up-line").textContent = up.line || "";
+  show($("change"), !!up.change);
+  const l = s.latest;
+  show($("latest-body"), !!l);
+  show($("latest-empty"), !l);
+  if (l) {
+    $("latest-title").textContent = l.title;
+    $("latest-overview").textContent = l.overview || "";
+    const bits = [];
+    if (l.date) bits.push(new Date(l.date + "T12:00:00").toLocaleDateString(undefined, {weekday: "long", month: "long", day: "numeric"}));
+    if (l.minutes) bits.push(`${l.minutes} min`);
+    $("latest-meta").textContent = bits.join(" · ");
+    show($("episode"), !!l.episode);
+    if (l.episode) $("episode").href = l.episode;
+  }
+  if (!document.body.classList.contains("settings")) fillSettings(s.settings);
+}
+
+function fillSettings(st) {
+  const o = st.overnight;
+  $("s-enabled").checked = !!o.enabled;
+  $("s-start").value = o.start;
+  $("s-plan").value = o.plan_at;
+  $("s-days").innerHTML = DAYS.map((d) =>
+    `<label><input type="checkbox" value="${d}" ${o.days.includes(d) ? "checked" : ""}> ${NAMES[d]}</label>`).join("");
+}
+
+async function load() {
+  try {
+    const res = await fetch("/api/library");
+    if (res.ok) render(await res.json());
+  } catch (e) { /* the server may be restarting; the next poll tries again */ }
+}
+
+$("settings-link").addEventListener("click", () => {
+  document.body.classList.toggle("settings");
+  if (state) fillSettings(state.settings);
+});
+
+$("s-save").addEventListener("click", async () => {
+  const days = [...$("s-days").querySelectorAll("input:checked")].map((x) => x.value);
+  const body = {overnight: {enabled: $("s-enabled").checked, days, start: $("s-start").value, plan_at: $("s-plan").value}};
+  const res = await fetch("/api/settings", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const out = await res.json().catch(() => ({}));
+  $("s-note").textContent = res.ok ? "Saved." : (out.detail || "Couldn't save that.");
+  if (res.ok) { document.body.classList.remove("settings"); load(); }
+});
+
+// Play and Change: the guide's live sessions (page/library.js adds them). Without it, Play plays the recording.
+window.Library = { state: () => state, reload: load };
+$("play").addEventListener("click", () => {
+  if (window.Morning && window.Morning.play) return window.Morning.play(state.latest);
+  const a = $("audio");
+  if (!a.src) a.src = state.latest.audio;
+  a.paused ? a.play() : a.pause();
+});
+$("change").addEventListener("click", () => {
+  if (window.Change && window.Change.open) return window.Change.open(state.up_next);
+});
+
+load();
+setInterval(load, 15000);
+</script>
+<script src="/library.js"></script>
+</body>
+</html>

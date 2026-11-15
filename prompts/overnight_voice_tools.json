@@ -1,0 +1,25 @@
+[
+  {"name": "start_chapter",
+   "description": "Start the chapter: the recording plays (or the reading begins) as soon as the guide finishes its lead-in line. Reply with an empty message.",
+   "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}},
+  {"name": "set_next_chapter",
+   "description": "Record what tonight's chapter should be, once the guide has said aloud what it will make. Before the build starts the plan is rewritten (about a minute); after it, the request is saved for the next build day and the result says so.",
+   "input_schema": {"type": "object", "properties": {
+     "mode": {"type": "string", "enum": ["topic", "continue", "surprise", "keep"],
+              "description": "topic: a new topic or a different angle (say which in topic and notes); continue: go deeper on the last chapter; surprise: the guide picks; keep: leave the plan as it is."},
+     "topic": {"type": "string", "description": "The topic or angle, in a sentence, in the listener's words where possible."},
+     "notes": {"type": "string", "description": "Anything else they said to include or avoid, word for word where possible."}},
+     "required": ["mode"], "additionalProperties": false}},
+  {"name": "resume_chapter",
+   "description": "End the aside and resume the recording, after the guide's few words leading back. Leave rewind out unless the listener seemed lost (then 'paragraph').",
+   "input_schema": {"type": "object", "properties": {
+     "reason": {"type": "string", "enum": ["listener", "closing", "silence", "never_mind", "other"]},
+     "rewind": {"type": "string", "enum": ["sentence", "previous", "paragraph"]}},
+     "required": ["reason"], "additionalProperties": false}},
+  {"name": "save_seed",
+   "description": "Keep a topic for a future chapter, when a question deserves real research beyond this chapter.",
+   "input_schema": {"type": "object", "properties": {
+     "topic": {"type": "string", "description": "The topic, as a chapter could take it on, in a sentence."},
+     "why": {"type": "string", "description": "Why it matters to the listener, in their words where possible."}},
+     "required": ["topic", "why"], "additionalProperties": false}}
+]

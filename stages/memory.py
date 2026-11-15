@@ -7,9 +7,12 @@ Plain files in the listener's folder (listeners/<id>/, common.listener_dir), rea
     sessions/<id>.jsonl  each conversation's transcript, written during it (stages/guide.py)
     seeds/<run>.md     the seed of each chapter, saved when start_chapter is called
     history.md         chapters made so far: title, angle, the ledger's parked ideas
+    library.jsonl, seeds.jsonl  works and topics they mentioned, questions and ideas for future chapters
+                       (overnight/library.py; the pass appends to them, never rewrites)
 
 after_session() is the pass after a conversation: Opus reads the transcript and
-rewrites profile.md and guide.md under the doc's rules (record only what the
+rewrites profile.md and guide.md under the doc's rules, and lists what the listener
+mentioned for the library and seeds (Overnight Chapters, "Change by voice" step 5) (record only what the
 listener said, keep it small, honour "forget that"). record_chapter() appends a
 finished seed run to history.md, by code. The guide reads profile.md, guide.md and
 the last few history.md entries at the start of each conversation, which is what
@@ -31,9 +34,20 @@ from .common import ROOT, Run, StageError, listener_dir, load_prompt, parse_json
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["profile", "guide", "forget_chapters"],
-    "properties": {"profile": {"type": "string"}, "guide": {"type": "string"},
-                   "forget_chapters": {"type": "array", "items": {"type": "string"}}},
+    "required": ["profile", "guide", "forget_chapters", "library", "seeds"],
+    "properties": {
+        "profile": {"type": "string"}, "guide": {"type": "string"},
+        "forget_chapters": {"type": "array", "items": {"type": "string"}},
+        # Overnight Chapters: what the listener mentioned, for library.jsonl and seeds.jsonl (overnight/library.py)
+        "library": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["kind", "title", "creator", "note"],
+            "properties": {"kind": {"type": "string", "enum": ["work", "person", "topic"]},
+                           "title": {"type": "string"}, "creator": {"type": "string"}, "note": {"type": "string"}}}},
+        "seeds": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False, "required": ["kind", "text", "words"],
+            "properties": {"kind": {"type": "string", "enum": ["question", "idea"]},
+                           "text": {"type": "string"}, "words": {"type": "string"}}}},
+    },
 }
 # One pass at a time: each reads the files the last one wrote, so an older pass can never
 # overwrite a newer one (or bring back something the listener asked to forget).
@@ -94,9 +108,12 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
         done.write_text("skipped: older than a conversation already remembered\n", encoding="utf-8")
         return False
     d = listener_dir(cfg)
+    from overnight import library  # the listener's library and seeds (overnight/library.py)
+    known = [f"- ({w['kind']}) {w['title']}" for w in library.works(d)[-60:]] + \
+            [f"- (seed, {s['kind']}) {s['text']}" for s in library.seeds(d)[-40:]]
     prompt = load_prompt("memory", profile=_read(d / "profile.md", "(none yet)"),
                          guide=_read(d / "guide.md", "(none yet: this was a first meeting)"),
-                         history=_read(d / "history.md", "(none yet)"),
+                         history=_read(d / "history.md", "(none yet)"), known="\n".join(known) or "(nothing yet)",
                          transcript=transcript_text(transcript), today=session_date(transcript))
     log_run = Run(name="sessions", root=transcript.parent)
     res = llm.call(log_run, cfg, "memory", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA,
@@ -110,8 +127,31 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
             tmp.write_text(text + "\n", encoding="utf-8")
             tmp.replace(p)
     forget_chapters(cfg, [x for x in data.get("forget_chapters") or [] if isinstance(x, str)])
+    remember_library(d, data, transcript)
     done.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     return True
+
+
+def remember_library(d: Path, data: dict, transcript: Path) -> None:
+    """Append the works, people, topics and seeds the pass found to library.jsonl and seeds.jsonl.
+    A seed keeps the listener's words only if they are in the transcript as the listener said them."""
+    from overnight import library
+    src = {"session": transcript.stem}
+    said = []
+    for ln in transcript.read_text(encoding="utf-8").splitlines():
+        try:
+            rec = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("who") == "listener":
+            said.append(rec.get("text") or "")
+    said = library._norm(" ".join(said))
+    items = [x for x in data.get("seeds") or [] if isinstance(x, dict)]
+    for x in items:
+        if x.get("words") and library._norm(x["words"]) not in said:
+            x["words"] = ""
+    library.add_seeds(d, items, source=src)
+    library.add_works(d, [x for x in data.get("library") or [] if isinstance(x, dict)], source=src)
 
 
 def forget_chapters(cfg: dict, runs: list[str]) -> None:

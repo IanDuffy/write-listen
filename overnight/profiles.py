@@ -178,7 +178,8 @@ def save_settings(cfg: dict, changes: dict, lid: str | None = None, *, listener:
                 v = bool(v)
             elif isinstance(allowed[group][k], (int, float)):
                 try:
-                    v = type(allowed[group][k])(v)
+                    v = float(v)  # a whole number stays whole (minutes: 20, not 20.0)
+                    v = int(v) if v.is_integer() and isinstance(allowed[group][k], int) else v
                 except (TypeError, ValueError):
                     raise StageError(f"{group}.{k} must be a number.") from None
                 if v <= 0:

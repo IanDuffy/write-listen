@@ -59,7 +59,7 @@ The seed-run layout, so the episode page and ask-by-voice read it unchanged:
 
 | Stage (status label) | Done when this exists | Writes |
 | --- | --- | --- |
-| 1 lock ("Locking the plan") | `00_source/up_next.json` | the card copy, `00_source/seed.md` (from the card, `prompts/overnight_seed.md`), card status building |
+| 1 lock ("Locking the plan") | `00_source/up_next.json` | the card copy, `00_source/seed.md` (from the card, `prompts/overnight_seed_file.md`: a `*_seed.md` name would read as a seed-run prompt variant), card status building |
 | 2 research ("Researching") | `04_research/ledger_update.md` | `01_map.md` (scout), `03_angle.md` (from the card), `ledger.json`, `04_research/`, `04_dossier.md` |
 | 3 write ("Writing") | `07_script_draft.md` | `05_outline.json/.md`, `05_brief.md`, `06_segments/`, `07_script_draft.md` |
 | 4 promise ("Checking it against the card") | `09_script_final.md` | `08_promise.json` (and one revision) |

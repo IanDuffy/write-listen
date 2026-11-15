@@ -62,6 +62,7 @@ from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
 from overnight import profiles
+from overnight import routes as overnight_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages import new as new_stage
@@ -533,6 +534,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return FileResponse(mp3, media_type="audio/mpeg")
 
     ask_routes.mount(app, cfg, lambda: pipe.runs_dir)
+    overnight_routes.mount(app, cfg, pipe, chat)
     fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
     app.mount("/runs", _RunsFiles(pipe), name="runs")

@@ -24,6 +24,9 @@ while the listener listens (dossier entries, listener notes) travels in the last
 
 Files: 06_segments/drafts/segNN.dK.md (every draft, K counting up), 06_segments/segNN.md (the
 locked text; its existence is what "locked" means), fast/locks/segNN.json (the whole Lock).
+
+Overnight chapters (overnight/write.py) are written by draft, lock and apply too, with their own
+prompts named in Ctx.prompts and section 1 drafted and locked paired like the rest.
 """
 
 from __future__ import annotations
@@ -62,6 +65,15 @@ class Ctx:
     outline: dict
     led: dict
     dossier: "Dossier"
+    # Prompt names to use in place of the fast ones ({"fast_context": "overnight_context", ...}): an
+    # overnight chapter is written by this same code with nobody listening yet (overnight/write.py).
+    # "fast_draft_first" names the position note for drafting section 1, which a fast run never
+    # does (its opening is write_opening); without it section 1 gets fast_draft_middle.
+    prompts: dict = field(default_factory=dict)
+
+
+def _p(ctx: Ctx, name: str) -> str:
+    return ctx.prompts.get(name, name)
 
 
 @dataclass
@@ -163,6 +175,8 @@ def outline_text(outline: dict) -> str:
     lines = [f"Title: {_one(outline.get('title'))}", f"Angle: {_one(outline.get('angle'))}",
              f"Why this angle: {_one(outline.get('why'))}", f"Through-line: {_one(outline.get('through_line'))}",
              f"Closing idea: {_one(outline.get('closing_idea'))}"]
+    if _one(outline.get("promise")):  # an overnight outline: the Up next card's summary, which the chapter keeps
+        lines.insert(1, f"What the listener was promised: {_one(outline['promise'])}")
     for s in outline["sections"]:
         lines += ["", f"Section {s['n']}: {_one(s.get('title'))} (about {s.get('target_words')} words)",
                   *_plan_lines(s)]
@@ -185,9 +199,15 @@ def _system(ctx: Ctx) -> str:
     r = ctx.r
     seed = r.path("seed").read_text(encoding="utf-8").strip() if r.path("seed").exists() else ""
     words = sum(int(s.get("target_words") or 0) for s in ctx.outline["sections"])
-    return load_prompt("fast_context", seed=seed or "(not recorded)", outline=outline_text(ctx.outline),
+    return load_prompt(_p(ctx, "fast_context"), seed=seed or "(not recorded)", outline=outline_text(ctx.outline),
                        style_guide=load_prompt("style_guide"), source_tiers=load_prompt("source_tiers_seed"),
                        total=len(ctx.outline["sections"]), minutes=round(base.minutes(words, ctx.cfg)))
+
+
+def system_prompt(ctx: Ctx) -> str:
+    """The system prompt every writing and editing call of this chapter shares (overnight/promise.py's
+    revision uses it too, so the same rules hold for a revised section)."""
+    return _system(ctx)
 
 
 def _ledger(ctx: Ctx) -> dict:
@@ -280,14 +300,14 @@ def _clean(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _earlier_blocks(earlier: list[tuple[int, str, bool]]) -> list[dict]:
+def _earlier_blocks(earlier: list[tuple[int, str, bool]], preamble: str = "fast_earlier") -> list[dict]:
     """The chapter so far as message blocks: the preamble, then one block per section in order.
     The cache breakpoint sits on the last locked section: a prefix no later call changes. A
     draft's block gets none: it is edited before any later call could read it, so a breakpoint
     there would pay the cache-write rate for nothing."""
     if not earlier:
         return []
-    blocks = [{"type": "text", "text": load_prompt("fast_earlier")}]
+    blocks = [{"type": "text", "text": load_prompt(preamble)}]
     last_locked = None
     for n, text, locked in earlier:
         state = "locked" if locked else "draft"
@@ -447,15 +467,20 @@ def draft(ctx: Ctx, n: int, earlier: list[tuple[int, str, bool]], notes: list[di
     own, carried = rows_for(led, n), _carried(led, n)
     every = ctx.dossier.entries()
     mine = dict(ctx.dossier.for_rows([row["id"] for row in own + carried]))
-    mine.update({d: every[d] for d in sec.get("scout_entries") or [] if d in every})
+    # A fast outline plans scout entries for a section; an overnight one, written after the research,
+    # any dossier entries ("entries").
+    mine.update({d: every[d] for d in sec.get("scout_entries") or sec.get("entries") or [] if d in every})
     other = {d: every[d] for d in _scout_numbers(ctx) if d in every and d not in mine}
+    position = "fast_draft_last" if n == total else "fast_draft_first" if n == 1 else "fast_draft_middle"
+    if position not in ctx.prompts and position == "fast_draft_first":
+        position = "fast_draft_middle"
     prompt = load_prompt(
-        "fast_draft", n=n, total=total, title=_one(sec.get("title")), plan=plan_text(sec),
+        _p(ctx, "fast_draft"), n=n, total=total, title=_one(sec.get("title")), plan=plan_text(sec),
         rows=rows_text(ctx, own, carried), entries=_entries_text(mine), other_entries=_entries_text(other),
         notes=listener_notes.as_prompt(notes), note_entries=_note_entries(ctx), target_words=sec["target_words"],
-        position=load_prompt("fast_draft_last" if n == total else "fast_draft_middle").strip())
-    res = _call(ctx, "fast_draft", _earlier_blocks(earlier) + [{"type": "text", "text": prompt}],
-                f"fast draft seg{n:02d}", n)
+        position=load_prompt(_p(ctx, position)).strip())
+    content = _earlier_blocks(earlier, _p(ctx, "fast_earlier")) + [{"type": "text", "text": prompt}]
+    res = _call(ctx, "fast_draft", content, f"fast draft seg{n:02d}", n)
     text = _clean(res.text)
     if not text:
         raise StageError(f"The draft of section {n} came back empty.")
@@ -510,15 +535,16 @@ def lock(ctx: Ctx, n: int, text: str, next_text: str | None, locked: list[tuple[
 
     if paired:
         nxt = section(ctx.outline, n + 1)
-        about = load_prompt("fast_lock_paired", n=n, next_n=n + 1, next_draft=next_text, next_plan=plan_text(nxt),
-                            next_target=nxt["target_words"])
+        about = load_prompt(_p(ctx, "fast_lock_paired"), n=n, next_n=n + 1, next_draft=next_text,
+                            next_plan=plan_text(nxt), next_target=nxt["target_words"])
     else:
-        about = load_prompt(f"fast_lock_{mode}", n=n)
-    prompt = load_prompt("fast_lock", n=n, total=total, title=_one(sec.get("title")), draft=text, mode=about.strip(),
-                         plan=plan_text(sec), rows=rows_text(ctx, own, carried), entries=_entries_text(entries),
-                         notes=listener_notes.as_prompt(notes), note_entries=_note_entries(ctx),
-                         target_words=sec["target_words"])
-    content = _earlier_blocks([(k, t, True) for k, t in locked]) + [{"type": "text", "text": prompt}]
+        about = load_prompt(_p(ctx, f"fast_lock_{mode}"), n=n)
+    prompt = load_prompt(_p(ctx, "fast_lock"), n=n, total=total, title=_one(sec.get("title")), draft=text,
+                         mode=about.strip(), plan=plan_text(sec), rows=rows_text(ctx, own, carried),
+                         entries=_entries_text(entries), notes=listener_notes.as_prompt(notes),
+                         note_entries=_note_entries(ctx), target_words=sec["target_words"])
+    content = (_earlier_blocks([(k, t, True) for k, t in locked], _p(ctx, "fast_earlier"))
+               + [{"type": "text", "text": prompt}])
     label = f"fast lock seg{n:02d}"
     said = _said(ctx, notes)
 

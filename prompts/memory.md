@@ -4,12 +4,16 @@ Inputs:
 - {{profile}}: listener/profile.md as it stands (or a note that there is none)
 - {{guide}}: listener/guide.md as it stands (or a note that there is none)
 - {{history}}: listener/history.md, the chapters made so far, each with its run name
+- {{known}}: what library.jsonl and seeds.jsonl already hold (recent items), so nothing is added twice
 - {{transcript}}: the conversation just ended, from listener/sessions/<id>.jsonl
 - {{today}}: the date of the conversation
 
 Output: JSON (structured output; SCHEMA in stages/memory.py): the new profile.md
 and guide.md, written whole, and the run names of any chapters the listener asked
-to forget (code removes them from history.md and seeds/). Rules from docs/phase1-onboarding.md, "Memory store".
+to forget (code removes them from history.md and seeds/), and the works, people, topics and future-chapter
+seeds the listener mentioned (code appends them to library.jsonl and seeds.jsonl, overnight/library.py, and
+keeps a seed's words only if the listener said them). Rules from docs/phase1-onboarding.md, "Memory store";
+library and seeds from docs/overnight-chapters.md.
 Model: config.yaml models.writer (Opus 5.5), for a careful reading.
 ---
 You keep the memory of a guide who makes narrated audio chapters for one listener. A conversation between them has just ended. Update two short files from it.
@@ -31,6 +35,12 @@ The chapters made for them so far:
 <history>
 {{history}}
 </history>
+
+Already in their library and seeds (do not list these again):
+
+<known>
+{{known}}
+</known>
 
 The conversation (who: listener, guide, page, tool), in order:
 
@@ -55,4 +65,8 @@ The conversation took place on {{today}}.
 
 **forget_chapters**: if the listener asked the guide to forget a chapter, or a subject that a chapter in the history is about, the run names of those chapters (the name in brackets after each title, before the date). Otherwise an empty list.
 
-Both files are plain markdown, no headings beyond one title line, written to be read by the guide at the start of the next conversation.
+**library**: works (books, films, podcasts, articles, pieces of music), people and topics the listener mentioned in this conversation as something they read, watched, love or are curious about. Only what the listener brought up or took up with interest, not everything the guide named. `kind` is work, person or topic; `title` as they would say it; `creator` the author or maker if known (else empty); `note` a few words on what they said about it. Leave out anything already known (above) and anything they asked to forget. Often an empty list.
+
+**seeds**: questions and ideas the listener raised that could become a future chapter: something they wondered about, asked and did not get to the bottom of, or said they'd like to hear more about. `kind` is question or idea; `text` the subject as a plain line; `words` their exact words from the transcript (copied, not paraphrased), or empty. Leave out the topic of a chapter started in this conversation (the start_chapter tool call), anything already known (above) and anything they asked to forget. Often an empty list.
+
+profile and guide are plain markdown, no headings beyond one title line, written to be read by the guide at the start of the next conversation.
