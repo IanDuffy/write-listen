@@ -22,7 +22,10 @@ moment the session starts; notes go as instructions with the mic open; the voice
 backend when it says "Generate <|SpawnThinking|>" (OpenAI's delegation policy wording).
 
 Every conversation is saved to the listener's sessions/<id>.jsonl in the format the memory pass reads,
-and its cost (GPT-Live's connected seconds, the backend's tokens) to sessions/log.jsonl.
+its audio (the page's recording of both sides, when the browser can make one) to sessions/<id>.webm, and
+its cost (GPT-Live's connected seconds, the backend's tokens) to sessions/log.jsonl. A session the page
+never ended (a closed tab whose beacon was lost) is ended when the next one starts, once it has been
+quiet for live.stale_minutes.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from fastapi import Request  # module level: the audio route's annotation is resolved from here
 from pydantic import BaseModel
 
 from stages import common, guide
@@ -242,10 +246,75 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             raise HTTPException(409, "That conversation has ended.")
         return s
 
+    def close(s: dict, page_seconds: float, backend: dict | None, how: str, seconds: float | None = None) -> dict:
+        """End a session: log its cost, keep an aside, start the memory pass. GPT-Live's seconds are the
+        page's last usage figure or the wall clock since the start, whichever is more (the page's lags)."""
+        if seconds is None:
+            seconds = time.monotonic() - s["t0"]
+        billed = round(max(page_seconds or 0.0, seconds), 1)
+        usd = cost(cfg, billed, backend)
+        log = Run(name="sessions", root=common.listener_dir(cfg) / "sessions")
+        log.log({"stage": "voice", "session": s["id"], "mode": s["mode"], "provider": "openai",
+                 "live_id": s["live_id"], "seconds": billed, "page_seconds": page_seconds, "backend": backend,
+                 "cost_usd": usd, "ended": how})
+        out: dict = {"ended": True, "cost_usd": usd}
+        if s["mode"] == "ask":
+            ch = s["chapter"]
+            rewind = (s.get("resume") or {}).get("rewind")
+            reason = (s.get("resume") or {}).get("reason") or how
+            restart = ch.restart_point(s["t"], seconds, rewind)
+            if s["lines"]:  # nothing said (a tap back while it connected): no aside to keep
+                A.append_aside(s["root"], {"id": s["aside"], "kind": "ask", "voice": "gpt-live", "t": round(s["t"], 3),
+                                           "sentence_id": s["sentence_id"], "segment": ch.sents[ch.locate(s["t"])].seg + 1,
+                                           "transcript": s["lines"], "ended": reason, "seconds": round(seconds, 1),
+                                           "restart": restart, "rewind_asked": rewind, "seeds": s["seeds"],
+                                           "live_id": s["live_id"], "cost_usd": usd})
+                aside_seeds(s)
+            out["restart"] = restart
+        write_line(s, {"who": "session", "ended": how, "seconds": billed, "cost_usd": usd})
+        if s["mode"] != "ask" and chat is not None:  # the usual after-conversation pass (profile, library, seeds)
+            from stages import memory
+            t = threading.Thread(target=memory.after_session, args=(cfg, s["path"]), name="overnight-memory",
+                                 daemon=True)
+            chat["passes"].append(t)
+            t.start()
+        return out
+
+    def aside_seeds(s: dict) -> None:
+        """An aside's saved topics (kind idea) and the listener's questions (in their words) into seeds.jsonl:
+        after_chapter ran when the chapter was built, before any morning aside existed."""
+        items, last = [], None
+        for ln in s["lines"]:
+            text = (ln.get("text") or "").strip()
+            if ln.get("who") == "listener" and text:
+                last = text
+                if library.is_question(text):
+                    items.append({"kind": "question", "text": text, "words": text})
+            elif ln.get("who") == "tool" and ln.get("name") == "save_seed":
+                args = ln.get("input") or {}
+                topic, why = (args.get("topic") or "").strip(), (args.get("why") or "").strip()
+                if topic:  # the text after_chapter gives a saved seed, so the two dedupe
+                    items.append({"kind": "idea", "text": topic + (f" ({why})" if why else ""), "words": last})
+        if items:
+            library.add_seeds(common.listener_dir(cfg), items,
+                              source={"chapter": s["run"], "aside": s["aside"], "session": s["id"]})
+
+    def sweep() -> None:
+        """End sessions the page never ended once they have been quiet for stale_minutes, counting
+        GPT-Live up to their last line or tool call."""
+        limit = float(lcfg(cfg).get("stale_minutes", 30)) * 60
+        now = time.monotonic()
+        with lock:
+            stale = [open_.pop(sid) for sid, s in list(open_.items()) if now - s["last"] > limit]
+        for s in stale:
+            print(f"  live: ending stale session {s['id']} ({s['mode']})")
+            close(s, 0.0, None, "stale", seconds=s["last"] - s["t0"])
+
     @app.post("/api/overnight/live/start")
     def start(req: Start) -> dict:
         if req.mode not in MODES:
             raise HTTPException(400, "Unknown mode.")
+        sweep()
         now = datetime.now()
         extra: dict = {}
         try:
@@ -274,6 +343,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             raise HTTPException(503, str(e)) from None
         sid = new_id()
         s = {"id": sid, "mode": req.mode, "run": req.run, "live_id": got["id"], "t0": time.monotonic(),
+             "last": time.monotonic(),
              "path": common.listener_dir(cfg) / "sessions" / f"{sid}.jsonl", "tools": [], **extra}
         write_line(s, {"who": "session", "mode": req.mode, "run": req.run, "live_id": got["id"],
                        "voice": session["audio"]["output"]["voice"], "model": session["model"]})
@@ -304,6 +374,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
     @app.post("/api/overnight/live/line")
     def line(req: Line) -> dict:
         s = get(req.session)
+        s["last"] = time.monotonic()
         if req.text.strip() and req.who in ("listener", "guide", "page"):
             write_line(s, {"who": req.who, "text": req.text.strip()})
             if s["mode"] == "ask":
@@ -329,9 +400,10 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
 
         def replan():
             try:
-                planner.plan(cfg, listener, request=request)
-            except Exception as e:  # the card keeps the old plan; the page shows it unchanged
-                print(f"  replanning failed: {type(e).__name__}: {e}")
+                planner.plan(cfg, listener, request=request)  # past the cutoff mid-pass, it queues it itself
+            except Exception as e:  # the card keeps the old plan; the request waits for the next pass
+                print(f"  replanning failed: {type(e).__name__}: {e}; the request goes to the queue")
+                library.queue_add(listener, request)
 
         t = threading.Thread(target=replan, name="overnight-replan", daemon=True)
         planning["thread"] = t
@@ -341,6 +413,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
     @app.post("/api/overnight/live/tool")
     def tool(req: Tool) -> dict:
         s = get(req.session)
+        s["last"] = time.monotonic()
         args = dict(req.args or {})
         if req.name not in MODE_TOOLS[s["mode"]]:
             out = {"error": f"No tool named {req.name}."}
@@ -368,31 +441,23 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             s = open_.pop(req.session, None)
         if s is None:
             raise HTTPException(409, "That conversation has ended.")
-        usd = cost(cfg, req.seconds, req.backend)
-        log = Run(name="sessions", root=common.listener_dir(cfg) / "sessions")
-        log.log({"stage": "voice", "session": s["id"], "mode": s["mode"], "provider": "openai",
-                 "live_id": s["live_id"], "seconds": req.seconds, "backend": req.backend, "cost_usd": usd})
-        out: dict = {"ended": True, "cost_usd": usd}
-        if s["mode"] == "ask":
-            ch = s["chapter"]
-            seconds = time.monotonic() - s["t0"]
-            rewind = (s.get("resume") or {}).get("rewind")
-            how = (s.get("resume") or {}).get("reason") or req.how
-            restart = ch.restart_point(s["t"], seconds, rewind)
-            A.append_aside(s["root"], {"id": s["aside"], "kind": "ask", "voice": "gpt-live", "t": round(s["t"], 3),
-                                       "sentence_id": s["sentence_id"], "segment": ch.sents[ch.locate(s["t"])].seg + 1,
-                                       "transcript": s["lines"], "ended": how, "seconds": round(seconds, 1),
-                                       "restart": restart, "rewind_asked": rewind, "seeds": s["seeds"],
-                                       "live_id": s["live_id"], "cost_usd": usd})
-            out["restart"] = restart
-        write_line(s, {"who": "session", "ended": req.how, "seconds": req.seconds, "cost_usd": usd})
-        if s["mode"] != "ask" and chat is not None:  # the usual after-conversation pass (profile, library, seeds)
-            from stages import memory
-            t = threading.Thread(target=memory.after_session, args=(cfg, s["path"]), name="overnight-memory",
-                                 daemon=True)
-            chat["passes"].append(t)
-            t.start()
-        return out
+        return close(s, req.seconds, req.backend, req.how)
+
+    @app.post("/api/overnight/live/audio/{session}")
+    async def audio(session: str, request: Request) -> dict:
+        """The page's recording of one conversation (both sides), kept beside its transcript. It arrives
+        after /end, so the session is known by its transcript, not by open_."""
+        sessions = common.listener_dir(cfg) / "sessions"
+        if not re.fullmatch(r"\d{8}-\d{6}(-\d+)?", session) or not (sessions / f"{session}.jsonl").exists():
+            raise HTTPException(404, "No such conversation.")
+        body = await request.body()
+        if not body:
+            raise HTTPException(400, "No audio.")
+        if len(body) > float(lcfg(cfg).get("audio_max_mb", 200)) * 1e6:
+            raise HTTPException(413, "That recording is too long to keep.")
+        ext = "ogg" if "ogg" in (request.headers.get("content-type") or "") else "webm"
+        (sessions / f"{session}.{ext}").write_bytes(body)
+        return {"saved": f"{session}.{ext}", "bytes": len(body)}
 
 
 def page_settings(cfg: dict) -> dict:

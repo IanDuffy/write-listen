@@ -19,19 +19,24 @@ from stages import memory
 sync_api = pytest.importorskip("playwright.sync_api")
 
 STUB = """
-window.__rtc = { sent: [], channels: [], closed: 0 };
+window.__rtc = { sent: [], channels: [], pcs: [], closed: 0, mics: 0, stopped: 0 };
 class FakeDC { constructor() { this.readyState = 'open'; window.__rtc.channels.push(this); }
   send(x) { window.__rtc.sent.push(JSON.parse(x)); } close() {} }
-class FakePC { constructor() { this.iceGatheringState = 'complete'; this.connectionState = 'new'; }
+class FakePC { constructor() { this.iceGatheringState = 'complete'; this.connectionState = 'new'; window.__rtc.pcs.push(this); }
   addTrack() {} createDataChannel() { this.dc = new FakeDC(); return this.dc; }
   async createOffer() { return { type: 'offer', sdp: 'offer-sdp' }; }
   async setLocalDescription(d) { this.localDescription = d; }
-  async setRemoteDescription(d) { this.remote = d; }
+  async setRemoteDescription(d) { if (window.__failRemote) throw new Error('bad answer'); this.remote = d; }
   addEventListener() {} close() { window.__rtc.closed++; } }
 window.RTCPeerConnection = FakePC;
-navigator.mediaDevices.getUserMedia = async () => { const t = { enabled: true, stop() {} };
+navigator.mediaDevices.getUserMedia = async () => {
+  if (window.__micDelay) await new Promise((r) => setTimeout(r, window.__micDelay));
+  if (window.__realMic) return window.__realMic();
+  window.__rtc.mics++;
+  const t = { enabled: true, stop() { window.__rtc.stopped++; } };
   return { getAudioTracks: () => [t], getTracks: () => [t] }; };
 window.__emit = (m) => { const ch = window.__rtc.channels[window.__rtc.channels.length - 1]; ch.onmessage({ data: JSON.stringify(m) }); };
+window.__emitTo = (i, m) => window.__rtc.channels[i].onmessage({ data: JSON.stringify(m) });
 window.__types = () => window.__rtc.sent.map((m) => m.type);
 """
 
@@ -91,7 +96,8 @@ def page(site):
         pg.on("pageerror", lambda e: errors.append(str(e)))
         pg.add_init_script(STUB)
         ends = []
-        pg.on("request", lambda r: ends.append(json.loads(r.post_data)) if r.url.endswith("/api/overnight/live/end") else None)
+        pg.on("request", lambda r: ends.append(json.loads(r.post_data)) if r.url.endswith("/api/overnight/live/end")
+              and r.post_data else None)  # a beacon's body is not shown: the server's log has it
         pg.goto(site.url + "/library")
         pg.wait_for_function("document.getElementById('latest-title').textContent.length > 0")
         yield NS(p=pg, errors=errors, ends=ends)
@@ -111,6 +117,7 @@ def tool(pg, name, call_id, args=None):
 def start_session(pg):
     pg.wait_for_function("window.__rtc.channels.length > 0")
     pg.evaluate("window.__emit({type: 'session.started', session: {id: 'live_x'}})")
+    pg.wait_for_function("window.__library.session")  # connected: tool calls now reach the server
 
 
 def test_the_cards(site, page):
@@ -221,3 +228,211 @@ def test_read_live_reads_the_chapter_in_the_same_session(site, page):
     pg.click("#play")  # "Stop"
     pg.wait_for_function("window.__types().includes('session.close')")
     assert page.ends[-1]["how"] == "read-live-stopped" and page.errors == []
+
+
+# --- the session lifecycle (review findings C9, C10, C12, C13, C14, C16, C29) ----------------------------
+
+def server_log(site):
+    p = site.listener / "sessions" / "log.jsonl"
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def wait_for(fn, timeout=8.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        got = fn()
+        if got:
+            return got
+        time.sleep(0.05)
+    raise AssertionError("timed out waiting")
+
+
+def playing(pg):
+    pg.wait_for_function("!document.getElementById('audio').paused", timeout=8000)
+
+
+def into_the_recording(pg):
+    pg.click("#play")
+    start_session(pg)
+    tool(pg, "start_chapter", "c1")
+    say(pg, "Here it is.")
+    playing(pg)
+
+
+def test_a_tap_while_the_intro_connects_abandons_it(site, page):
+    """C9: the server had opened GPT-Live; the tap goes straight to the chapter and ends that session."""
+    pg = page.p
+    pg.click("#play")
+    pg.wait_for_function("window.__library.opening")  # /start returned; not started yet
+    pg.click("#play")  # "Skip to the chapter"
+    playing(pg)
+    pg.evaluate("window.__emitTo(0, {type: 'session.started'})")  # the abandoned session starting late
+    pg.wait_for_timeout(700)
+    assert "session.commentary.append" not in pg.evaluate("window.__types()")  # its intro never speaks
+    assert pg.evaluate("[window.__rtc.closed, window.__rtc.mics, window.__rtc.stopped]") == [1, 1, 1]
+    ended = wait_for(lambda: server_log(site))
+    assert ended[-1]["ended"] == "abandoned" and ended[-1]["mode"] == "intro"
+    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+
+
+def test_a_tap_before_the_server_opened_anything_opens_nothing(site, page):
+    pg = page.p
+    pg.evaluate("window.__micDelay = 800")
+    pg.click("#play")
+    pg.click("#play")
+    playing(pg)
+    pg.wait_for_timeout(1300)
+    assert site.posts == [] and pg.evaluate("[window.__rtc.mics, window.__rtc.stopped]") == [1, 1]
+    assert pg.evaluate("window.__library.pc === null && window.__library.stream === null") and page.errors == []
+
+
+def test_back_to_the_chapter_while_the_aside_connects(site, page):
+    from ask import aside as A
+    pg = page.p
+    into_the_recording(pg)
+    pg.click("#play")  # "Ask a question"
+    pg.wait_for_function("window.__library.opening")
+    pg.click("#play")  # "Back to the chapter"
+    playing(pg)
+    pg.evaluate("window.__emitTo(1, {type: 'session.started'})")
+    pg.wait_for_timeout(500)
+    assert "session.instructions.append" not in pg.evaluate("window.__types()")
+    ended = wait_for(lambda: [x for x in server_log(site) if x["mode"] == "ask"])
+    assert ended[-1]["ended"] == "abandoned" and A.load_asides(site.root) == []
+    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+
+
+def test_one_conversation_at_a_time(site, page):
+    """C10: Change waits while the intro is on; Change pauses the recording; Play ends Change first."""
+    pg = page.p
+    pg.click("#play")
+    start_session(pg)
+    pg.click("#change")
+    pg.wait_for_timeout(500)
+    assert len(site.posts) == 1  # no second session over the intro
+    tool(pg, "start_chapter", "c1")
+    say(pg, "Here it is.")
+    playing(pg)
+    pg.click("#change")
+    pg.wait_for_function("document.getElementById('audio').paused")  # the recording waits
+    pg.wait_for_function("window.__rtc.channels.length > 1")
+    start_session(pg)
+    pg.wait_for_function("document.getElementById('change').textContent === 'Done'")
+    assert len(site.posts) == 2
+    pg.click("#play")  # Play: Change ends first, then the recording goes on
+    playing(pg)
+    ended = wait_for(lambda: [x for x in server_log(site) if x["mode"] == "change"])
+    assert ended[-1]["ended"] == "button" and pg.inner_text("#change") == "Change"
+    assert pg.evaluate("window.__library.pc === null && window.__library.session === null")
+    assert pg.evaluate("window.__rtc.closed") == 2 and page.errors == []
+
+
+def test_a_failed_start_releases_the_microphone(site, page, monkeypatch):
+    """C14: GPT-Live refuses (no key): the chapter plays and nothing stays captured."""
+    from stages.common import StageError
+
+    def refuse(*a, **k):
+        raise StageError("No OpenAI key: set OPENAI_API_KEY in .env.")
+    monkeypatch.setattr(live, "create_webrtc", refuse)
+    pg = page.p
+    pg.click("#play")
+    playing(pg)
+    assert pg.evaluate("[window.__rtc.closed, window.__rtc.mics, window.__rtc.stopped]") == [1, 1, 1]
+    assert pg.evaluate("window.__library.pc === null && window.__library.stream === null") and page.errors == []
+
+
+def test_a_start_that_fails_after_the_server_opened_it_is_ended(site, page):
+    """C13: the server's side of a session that never connected is ended (its cost logged)."""
+    pg = page.p
+    pg.evaluate("window.__failRemote = true")
+    pg.click("#play")
+    playing(pg)
+    ended = wait_for(lambda: server_log(site))
+    assert ended[-1]["ended"] == "failed" and pg.evaluate("window.__rtc.stopped") == 1 and page.errors == []
+
+
+def test_closing_the_page_ends_the_session(site, page):
+    """C13: pagehide sends the end as a beacon."""
+    pg = page.p
+    pg.click("#play")
+    start_session(pg)
+    pg.wait_for_function("window.__types().includes('session.commentary.append')")
+    pg.goto("about:blank")
+    ended = wait_for(lambda: server_log(site))
+    assert ended[-1]["ended"] == "pagehide" and ended[-1]["mode"] == "intro"
+
+
+def test_a_lead_in_right_after_they_ask_to_skip_starts_the_chapter(site, page):
+    """C12: 'just play it' and 'Here it is.' at a few seconds: honoured inside intro_min_secs."""
+    pg = page.p
+    site.cfg["overnight"]["live"]["page"]["intro_min_secs"] = 20
+    pg.click("#play")
+    start_session(pg)
+    pg.evaluate("window.__emit({type: 'session.input_transcript.delta', delta: 'Just play it.'})")
+    pg.wait_for_timeout(500)
+    say(pg, "Sure. Here it is.")
+    playing(pg)
+    assert page.ends[-1]["how"] == "lead-in"
+
+
+def test_a_lead_in_needs_them_to_ask_before_the_minimum(site, page):
+    pg = page.p
+    site.cfg["overnight"]["live"]["page"]["intro_min_secs"] = 20
+    pg.click("#play")
+    start_session(pg)
+    say(pg, "Morning. Here it is.")
+    pg.wait_for_timeout(2000)
+    assert pg.evaluate("document.getElementById('audio').paused")
+
+
+def test_a_stray_enjoy_or_a_lead_in_mid_line_does_not_cut_the_guide_off(site, page):
+    pg = page.p
+    assert "enjoy" not in site.cfg["overnight"]["live"]["page"]["lead_in"]
+    pg.click("#play")
+    start_session(pg)
+    say(pg, "I think you'll enjoy this one. Have you ever watched a heron fish?")
+    pg.wait_for_timeout(1800)
+    say(pg, "Here it is, the odd part: herons wait because the water bends the light they hunt by.")
+    pg.wait_for_timeout(2200)
+    assert pg.evaluate("document.getElementById('audio').paused") and page.errors == []
+
+
+def test_a_second_change_ended_by_done_is_not_taken_for_the_first(site, page):
+    """C16: the first Change's set_next_chapter result no longer makes Done poll for a new card."""
+    pg = page.p
+    pg.click("#change")
+    start_session(pg)
+    tool(pg, "set_next_chapter", "c9", {"mode": "topic", "topic": "Octopus eyes"})
+    pg.wait_for_function("document.getElementById('up-title').textContent === 'Octopus Eyes'", timeout=15000)
+    pg.wait_for_function("document.getElementById('change').textContent === 'Change'")
+    pg.click("#change")
+    pg.wait_for_function("window.__rtc.channels.length > 1")
+    start_session(pg)
+    pg.wait_for_function("document.getElementById('change').textContent === 'Done'")
+    pg.click("#change")  # Done, before any tool
+    wait_for(lambda: len(page.ends) == 2)
+    assert page.ends[-1]["how"] == "button"
+    assert pg.inner_text("#up-line") != "Rewriting the card…" and page.errors == []
+
+
+def test_a_conversation_is_recorded_and_kept(site, page):
+    """C29: the mic and the guide's voice, mixed, recorded and uploaded to sessions/<id>.webm."""
+    pg = page.p
+    pg.evaluate("""window.__realMic = async () => {
+      const ac = new AudioContext();
+      const tone = (hz) => { const o = ac.createOscillator(), d = ac.createMediaStreamDestination();
+                             o.frequency.value = hz; o.connect(d); o.start(); return d.stream; };
+      window.__guideVoice = () => tone(660);
+      return tone(440); }""")
+    pg.click("#play")
+    start_session(pg)
+    pg.evaluate("window.__rtc.pcs[0].ontrack({ streams: [window.__guideVoice()] })")
+    pg.wait_for_function("window.__library.rec && window.__library.rec.mr && window.__library.rec.mr.state === 'recording'")
+    assert pg.evaluate("window.__library.rec.nodes.length") == 2  # both sides
+    pg.wait_for_timeout(1500)
+    tool(pg, "start_chapter", "c1")
+    say(pg, "Here it is.")
+    playing(pg)
+    sid = page.ends[-1]["session"]
+    path = site.listener / "sessions" / f"{sid}.webm"
+    assert wait_for(lambda: path.exists() and path.stat().st_size > 0) and page.errors == []

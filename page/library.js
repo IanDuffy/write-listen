@@ -6,19 +6,24 @@
 //           (or its lead-back line, or "Back to the chapter") and the recording resumes from the restart
 //           point the server picks (ask/aside.py's rewind rules).
 //   Change  a conversation about tonight's chapter, ending in set_next_chapter; the card refreshes.
-// One WebRTC session at a time. The session is opened through our server (GPT-Live has no client keys).
+// One WebRTC session at a time: Change waits while another conversation is on (and pauses the recording);
+// Play ends a Change conversation first; a tap while one is still connecting abandons it, and the server's
+// side of it is ended too. The session is opened through our server (GPT-Live has no client keys). Each
+// conversation's audio (both sides) is recorded when the browser can, and kept beside its transcript.
 (() => {
   const $ = (id) => document.getElementById(id);
   const now = () => Date.now();
-  const L = { pc: null, dc: null, stream: null, mic: null, session: null, mode: null, started: false, startedAt: 0,
+  const L = { pc: null, dc: null, stream: null, mic: null, session: null, opening: null, connecting: false,
+              mode: null, started: false, startedAt: 0,
               out: "", outAt: 0, inp: "", inAt: 0, spokeAt: 0, heardAt: 0, lastGuideAt: 0, lastListenerAt: 0,
               seconds: 0, backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(),
-              pending: null, notes: {}, S: {}, how: null, ending: false, toolAt: 0, wrapped: false,
-              run: null, playing: false, aside: null, read: null, epoch: 0 };
+              pending: null, notes: {}, S: {}, how: null, ending: false, toolAt: 0, wrapped: false, startAsked: false,
+              run: null, playing: false, aside: null, read: null, epoch: 0, changed: null, rec: null, ac: null };
   window.__library = L;  // for tests
   const audio = $("audio");
   const remote = new Audio();
   remote.autoplay = true;
+  const SUPERSEDED = "superseded";
 
   function line(text) { const el = $("live"); el.textContent = text || ""; document.body.classList.toggle("live", !!text); }
   async function post(url, body) {
@@ -27,6 +32,7 @@
     return res.json();
   }
   const quiet = (url, body) => post(url, body).catch(() => {});
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // --- the session ------------------------------------------------------------------------------
   let seq = 0;
@@ -51,33 +57,100 @@
     });
   }
 
+  // --- the recording of each conversation (sessions/<id>.webm): never in the conversation's way ------
+  function recOpen() {  // before any await: an AudioContext needs the tap's activation
+    try {
+      if (!window.MediaRecorder || !window.AudioContext) return null;
+      L.ac = L.ac || new AudioContext();
+      if (L.ac.state === "suspended") L.ac.resume().catch(() => {});
+      return { dest: L.ac.createMediaStreamDestination(), nodes: [], mr: null, chunks: [] };
+    } catch (e) { return null; }
+  }
+  function recAdd(rec, stream) {  // the mic, then the guide's voice, mixed into one track
+    if (!rec || !stream) return;
+    try { const n = L.ac.createMediaStreamSource(stream); n.connect(rec.dest); rec.nodes.push(n); } catch (e) {}
+  }
+  function recStart(rec) {
+    if (!rec || !rec.nodes.length) return;
+    try {
+      rec.mr = new MediaRecorder(rec.dest.stream);
+      rec.mr.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+      rec.mr.start(1000);
+    } catch (e) { rec.mr = null; }
+  }
+  function recClose(rec, sid) {  // stop; with a session id, upload what was recorded
+    if (!rec) return;
+    const drop = () => rec.nodes.forEach((n) => { try { n.disconnect(); } catch (e) {} });
+    if (!rec.mr || rec.mr.state === "inactive") { drop(); return; }
+    rec.mr.onstop = () => {
+      drop();
+      if (!sid || !rec.chunks.length) return;
+      const blob = new Blob(rec.chunks, { type: rec.mr.mimeType || "audio/webm" });
+      fetch(`/api/overnight/live/audio/${encodeURIComponent(sid)}`,
+            { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob }).catch(() => {});
+    };
+    try { rec.mr.stop(); } catch (e) { drop(); }
+  }
+
+  // A tap while a session is still connecting: the connect in flight sees the epoch move on at its next
+  // await, closes its own pieces and ends the server's side if it was opened.
+  function abandon() { L.epoch++; L.connecting = false; L.mode = null; L.pending = null; }
+
   async function connect(mode, body) {
+    if (L.connecting) abandon();
+    if (L.session) finish("superseded");  // one session at a time (its synchronous part ends it at once)
     const mine = ++L.epoch;
-    Object.assign(L, { mode, started: false, out: "", inp: "", spokeAt: 0, heardAt: 0, lastGuideAt: 0, lastListenerAt: 0,
-                       seconds: 0, backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(),
-                       pending: null, how: null, ending: false, toolAt: 0, wrapped: false });
-    if (!L.stream) {
-      L.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      L.mic = L.stream.getAudioTracks()[0];
+    const gone = () => mine !== L.epoch;
+    Object.assign(L, { mode, connecting: true, opening: null, started: false, out: "", inp: "", spokeAt: 0, heardAt: 0,
+                       lastGuideAt: 0, lastListenerAt: 0, seconds: 0, backend: { model: null, input: 0, output: 0, cached: 0 },
+                       calls: new Set(), pending: null, how: null, ending: false, toolAt: 0, wrapped: false,
+                       startAsked: false, changed: null });
+    const rec = recOpen();
+    let stream = null, pc = null, sid = null;
+    const check = () => { if (gone()) throw new Error(SUPERSEDED); };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      check();
+      L.stream = stream; L.mic = stream.getAudioTracks()[0];
+      recAdd(rec, stream);
+      pc = new RTCPeerConnection();
+      L.pc = pc;
+      pc.ontrack = (e) => { if (L.pc !== pc) return; remote.srcObject = e.streams[0]; recAdd(rec, e.streams[0]); };
+      pc.addTrack(L.mic, stream);
+      const dc = pc.createDataChannel("oai-events");
+      L.dc = dc;
+      dc.onmessage = (e) => { if (L.dc !== dc) return; try { onEvent(JSON.parse(e.data)); } catch (err) { /* a malformed event: skip it */ } };
+      await pc.setLocalDescription(await pc.createOffer());
+      check();
+      await iceDone(pc, 2500);
+      check();
+      const got = await post("/api/overnight/live/start", { mode, sdp: pc.localDescription.sdp, ...body });
+      sid = got.session;
+      check();
+      L.opening = sid; L.notes = got.notes || {}; L.S = got.settings || {};
+      await pc.setRemoteDescription({ type: "answer", sdp: got.sdp });
+      check();
+      const t0 = now();
+      while (!L.started && !gone() && now() - t0 < 10000) await sleep(50);
+      check();
+      if (!L.started) throw new Error("Voice couldn't start.");
+      Object.assign(L, { session: sid, opening: null, connecting: false, startedAt: now(), rec });
+      recStart(rec);
+      return got;
+    } catch (e) {  // this attempt's pieces only: a newer session may own L's by now
+      if (pc) { try { pc.close(); } catch (x) {} }
+      if (stream) stream.getTracks().forEach((x) => x.stop());
+      if (pc && L.pc === pc) { L.pc = null; L.dc = null; }
+      if (stream && L.stream === stream) { L.stream = null; L.mic = null; }
+      recClose(rec, null);
+      if (sid) {
+        if (L.opening === sid) L.opening = null;
+        quiet("/api/overnight/live/end", { session: sid, seconds: 0, backend: null, how: gone() ? "abandoned" : "failed" });
+      }
+      if (gone()) throw new Error(SUPERSEDED);
+      L.connecting = false;
+      throw e;
     }
-    const pc = new RTCPeerConnection();
-    L.pc = pc;
-    pc.ontrack = (e) => { remote.srcObject = e.streams[0]; };
-    pc.addTrack(L.mic, L.stream);
-    const dc = pc.createDataChannel("oai-events");
-    L.dc = dc;
-    dc.onmessage = (e) => { try { onEvent(JSON.parse(e.data)); } catch (err) { /* a malformed event: skip it */ } };
-    await pc.setLocalDescription(await pc.createOffer());
-    await iceDone(pc, 2500);
-    const got = await post("/api/overnight/live/start", { mode, sdp: pc.localDescription.sdp, ...body });
-    if (mine !== L.epoch) { pc.close(); throw new Error("superseded"); }
-    L.session = got.session; L.notes = got.notes || {}; L.S = got.settings || {};
-    await pc.setRemoteDescription({ type: "answer", sdp: got.sdp });
-    const t0 = now();
-    while (!L.started && now() - t0 < 10000) await new Promise((r) => setTimeout(r, 50));
-    if (!L.started) { hangUp(); throw new Error("Voice couldn't start."); }
-    L.startedAt = now();
-    return got;
   }
 
   function hangUp() {
@@ -92,12 +165,27 @@
     L.ending = true;
     send("session.close");
     const sid = L.session;
+    const rec = L.rec; L.rec = null;
+    recClose(rec, sid);
     hangUp();
     L.session = null;
     const b = L.backend.model ? { ...L.backend } : null;
     try { return await post("/api/overnight/live/end", { session: sid, seconds: L.seconds, backend: b, how }); }
     catch (e) { return null; }
   }
+
+  // Closing the tab or leaving the page mid-conversation: end it on the server (cost, aside, memory pass).
+  window.addEventListener("pagehide", () => {
+    const sid = L.session || L.opening;
+    if (!sid) return;
+    const b = L.backend.model ? { ...L.backend } : null;
+    try {
+      navigator.sendBeacon("/api/overnight/live/end",
+        new Blob([JSON.stringify({ session: sid, seconds: L.seconds, backend: b, how: "pagehide" })], { type: "application/json" }));
+    } catch (e) {}
+    L.epoch++; L.session = null; L.opening = null; L.connecting = false;
+    hangUp();
+  });
 
   // --- events -------------------------------------------------------------------------------------
   function onEvent(m) {
@@ -132,12 +220,13 @@
     let args = {};
     try { args = JSON.parse(item.arguments || "{}"); } catch (err) {}
     const sid = L.session;
+    if (!sid) return;
     let out;
     try { out = await post("/api/overnight/live/tool", { session: sid, name: item.name, args }); }
     catch (err) { out = { error: err.message }; }
+    if (sid !== L.session) return;
     send("response.item.create", { item: { type: "function_call_output", call_id: item.call_id, output: JSON.stringify(out) } });
     send("response.create");
-    if (sid !== L.session) return;
     if (item.name === "start_chapter" && L.mode === "intro") { L.toolAt = now(); afterGuide(() => (L.readLive ? readLive("tool") : pivot("tool")), 9000, L.S.intro_quiet_ms || 1500); }
     if (item.name === "resume_chapter" && L.mode === "ask") afterGuide(() => back("guide"), L.S.resume_max_ms || 8000, L.S.resume_quiet_ms || 900);
     if (item.name === "set_next_chapter" && L.mode === "change") { L.changed = out; afterGuide(() => closeChange(out), L.S.change_close_ms || 6000, 1500, 2500); }
@@ -149,12 +238,20 @@
   // result asks for (Change: "it'll be the next one").
   function afterGuide(fn, max, quietMs, min = 0) { if (!L.pending) L.pending = { fn, since: now(), max, quietMs, min }; }
 
-  const rx = (k, fallback) => { try { return new RegExp(L.S[k] || fallback, "i"); } catch (e) { return new RegExp(fallback, "i"); } };
+  const rx = (k, fallback, flags = "i") => { try { return new RegExp(L.S[k] || fallback, flags); } catch (e) { return new RegExp(fallback, flags); } };
 
   setInterval(() => {
     const t = now();
     if (!L.session) return;
     const lineQuiet = L.S.line_quiet_ms || 900;
+    if (L.inp && t - L.inAt > lineQuiet) {  // the listener's line first: a guide's reply may follow it
+      const text = L.inp.trim(); L.inp = "";
+      if (text) {
+        L.lastListenerAt = t;
+        quiet("/api/overnight/live/line", { session: L.session, who: "listener", text });
+        if (L.mode === "intro" && startAsked(text)) L.startAsked = true;
+      }
+    }
     if (L.out && t - L.outAt > lineQuiet) {
       const text = L.out.trim(); L.out = "";
       if (text) {
@@ -163,10 +260,6 @@
         if (L.aside) L.aside.lines.push(text);
         guideSaid(text, t);
       }
-    }
-    if (L.inp && t - L.inAt > lineQuiet) {
-      const text = L.inp.trim(); L.inp = "";
-      if (text) { L.lastListenerAt = t; quiet("/api/overnight/live/line", { session: L.session, who: "listener", text }); }
     }
     if (L.pending) {
       const p = L.pending;
@@ -178,8 +271,18 @@
     if (L.read) readClock(t);
   }, 100);
 
+  const startAsked = (text) => rx("start_asked", "\\b(just play|play it|skip)\\b").test(text);
+  function leadIn(text) {  // a lead-in phrase that ends the guide's line (or nearly): "... OK, let's listen."
+    const re = rx("lead_in", "\\bhere it is\\b", "gi");
+    let m, last = null;
+    while ((m = re.exec(text))) { last = m; if (!m[0]) re.lastIndex++; }
+    return !!last && text.length - (last.index + last[0].length) <= (L.S.lead_in_tail_chars ?? 40);
+  }
+
   function guideSaid(text, t) {
-    if (L.mode === "intro" && !L.pending && t - L.startedAt > (L.S.intro_min_secs ?? 20) * 1000 && rx("lead_in", "\\bhere it is\\b").test(text)) {
+    // A lead-in counts after intro_min_secs, or at any time once the listener asked to start or skip.
+    const early = !(L.startAsked || (L.inp && startAsked(L.inp))) && t - L.startedAt <= (L.S.intro_min_secs ?? 20) * 1000;
+    if (L.mode === "intro" && !L.pending && !early && leadIn(text)) {
       afterGuide(() => (L.readLive ? readLive("lead-in") : pivot("lead-in")), 6000, L.S.intro_quiet_ms || 1500);
     }
     if (L.mode === "ask" && L.aside && !L.pending && t - L.aside.t0 > 2000 && rx("lead_back", "\\banyway\\b").test(text)) {
@@ -200,6 +303,7 @@
   async function pivot(how) {
     if (L.mode !== "intro" || L.how) return;
     L.how = how; L.pending = null;
+    if (L.connecting) { abandon(); startRecording(0); return; }  // pressed while connecting: straight to the chapter
     await finish(how);
     L.mode = null;
     startRecording(0);
@@ -221,6 +325,7 @@
   async function play(latest) {
     if (!latest) return;
     if (L.mode === "ask") return back("button");
+    if (L.mode === "change") closeChange(L.changed || null);  // Play ends a Change conversation first
     if (L.playing && !audio.paused) return ask(latest);
     if (L.playing) { audio.play().catch(() => {}); setButton("Ask a question"); return; }
     if (L.mode === "read") return stopReading();
@@ -231,12 +336,13 @@
     setButton("Skip to the chapter");
     try {
       const got = await connect("intro", { run: latest.run });
+      const sid = L.session;
       line("");
-      speakable((L.notes.intro_opened || "").replace("{title}", got.title || latest.title));
-      setTimeout(() => { if (L.mode === "intro" && !L.spokeAt && L.notes.intro_opened) instruct("[" + L.notes.intro_opened.replace("{title}", got.title || latest.title) + "]"); }, L.S.greet_fallback_ms || 5000);
       L.readLive = !!got.read_live;
+      speakable((L.notes.intro_opened || "").replace("{title}", got.title || latest.title));
+      setTimeout(() => { if (L.session === sid && L.mode === "intro" && !L.spokeAt && L.notes.intro_opened) instruct("[" + L.notes.intro_opened.replace("{title}", got.title || latest.title) + "]"); }, L.S.greet_fallback_ms || 5000);
     } catch (e) {
-      if (e.message === "superseded") return;
+      if (e.message === SUPERSEDED) return;
       L.mode = null;
       startRecording(0);  // no voice: the chapter itself still plays
     }
@@ -258,6 +364,7 @@
       line("");
       instruct(L.notes.ask_opened || "[The listener tapped to ask something.]");
     } catch (e) {
+      if (e.message === SUPERSEDED) return;  // "Back to the chapter" while it connected: back() resumed it
       L.aside = null; L.mode = null; line("");
       audio.play().catch(() => {});  // no voice: back to the chapter where it paused
     }
@@ -273,16 +380,18 @@
   async function back(how) {
     if (L.mode !== "ask" || !L.aside) return;
     const a = L.aside;
-    L.pending = null;
+    L.aside = null; L.pending = null;  // a second tap while it ends does nothing
+    if (L.connecting) { abandon(); startRecording(a.t); return; }
     const out = await finish(how);
-    L.mode = null; L.aside = null;
+    L.mode = null;
     const at = out && out.restart ? out.restart.t : a.t;
     startRecording(at);
   }
 
   // --- Change: what tonight's chapter should be ---------------------------------------------------
   async function openChange(up) {
-    if (L.session) return;
+    if (L.session || L.connecting || L.mode) return;  // one conversation at a time
+    if (L.playing && !audio.paused) audio.pause();    // the recording waits while they talk it over
     const btn = $("change");
     btn.disabled = true;
     const before = up.card ? up.card.id : null;
@@ -295,6 +404,7 @@
       L.changeBefore = before;
     } catch (e) {
       btn.disabled = false;
+      if (e.message === SUPERSEDED) return;  // Play ended it while it connected; closeChange reloads the card
       $("up-line").textContent = e.message || "Voice couldn't start.";
       L.mode = null;
     }
@@ -302,15 +412,17 @@
 
   async function closeChange(out) {
     if (L.mode !== "change") return;
-    await finish(out ? "tool" : "button");
-    L.mode = null;
+    L.changed = null; L.pending = null;
+    if (L.connecting) abandon();
+    L.mode = null;  // at once: Play may start the intro straight after this call
     const btn = $("change");
-    btn.textContent = "Change";
+    btn.textContent = "Change"; btn.disabled = false;
+    await finish(out ? "tool" : "button");
     if (out && out.changing) {
       $("up-line").textContent = "Rewriting the card…";
       const t0 = now();
       while (now() - t0 < 120000) {
-        await new Promise((r) => setTimeout(r, 3000));
+        await sleep(3000);
         const s = await (await fetch("/api/library")).json().catch(() => null);
         if (s && s.up_next.card && s.up_next.card.id !== L.changeBefore) { window.Library.reload(); return; }
       }
