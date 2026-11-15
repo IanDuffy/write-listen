@@ -81,7 +81,7 @@ class FakeRecognizer:
     def __call__(self, path):
         from stages.common import Run
         r = Run(name=self.root.name, root=self.root)
-        text = {p["id"]: p["text"] for p in record.paragraphs(r)}[path.stem]
+        text = {p["id"]: p["text"] for p in record.paragraphs(r)}[path.name.split(".")[0]]
         t, out = record.PAD_LEAD, []
         for w in text.split():
             out.append({"w": w, "start": round(t, 3), "end": round(t + word_ms(w) / 1000, 3)})
@@ -107,6 +107,7 @@ def world(tmp_path, cfg, monkeypatch, own_listeners):
     monkeypatch.setattr(recognize, "WhisperRecognizer", lambda *a, **k: FakeRecognizer(chapter_root(listener)))
     monkeypatch.setattr(references, "ask", lambda r, cfg, seg, prompt: {"sentences": []})
     monkeypatch.setattr(runner, "_keep_awake", lambda: None)
+    monkeypatch.setattr(record, "preflight", lambda cfg: None)  # not this machine's model cache
     monkeypatch.setattr(builtins, "input", lambda prompt: pytest.fail(f"an unattended build asked: {prompt}"))
     return type("W", (), {"listener": listener, "cfg": cfg, "comp": comp, "plan": plan, "chain": chain,
                           "base": base, "live": live})

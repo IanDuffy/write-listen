@@ -143,7 +143,10 @@ def test_change_before_the_cutoff_rewrites_the_card(app, monkeypatch):
 
 
 def test_change_after_the_cutoff_goes_to_the_queue(app, monkeypatch):
+    import os
     card(app.listener, status="building", chapter="2026-11-17-why-herons-wait")
+    profiles.write_json(app.listener / "chapters" / "2026-11-17-why-herons-wait" / "status.json",
+                        {"state": "making", "pid": os.getpid()})  # the build is alive
     monkeypatch.setattr(planner, "plan", lambda *a, **k: pytest.fail("tonight's chapter can't change"))
     s = app.c.post("/api/overnight/live/start", json={"mode": "change", "sdp": "offer"}).json()
     assert "Anything new goes to the next build day" in app.opened[-1]["instructions"]

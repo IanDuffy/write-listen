@@ -158,7 +158,8 @@ def change_values(cfg: dict, now: datetime) -> dict:
     from . import library, schedule
     listener = common.listener_dir(cfg)
     s = profiles.settings(cfg, listener=listener)
-    card = profiles.read_json(listener / "up_next.json")
+    from . import runner
+    card = runner.reconcile(listener)  # a build that died counts as failed, not still building
     can, why = schedule.can_change(card, s, now)
     latest = profiles.latest_chapter(listener=listener)
     seeds = [x for x in library.seeds(listener)][-6:]
@@ -391,7 +392,8 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                    "topic": (args.get("topic") or "").strip(), "notes": (args.get("notes") or "").strip(),
                    "session": s["id"]}
         settings = profiles.settings(cfg, listener=listener)
-        card = profiles.read_json(listener / "up_next.json")
+        from . import runner
+        card = runner.reconcile(listener)
         can, why = schedule.can_change(card, settings, datetime.now())
         if not can:
             library.queue_add(listener, request)

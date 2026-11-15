@@ -382,6 +382,13 @@ def build(cfg: dict, listener: Path, card: dict, *, keep_awake: bool = False, sc
             r = Run.open(name, runs_dir=listener / "chapters")
             _update_card(listener, card, status="ready", chapter=r.name, error=None)
             return write_status(r, "ready", card, audio="10_audio/chapter.mp3", cost_usd=round(r.spent(), 4))
+        if not (listener / "chapters" / name / "11_episode" / "episode.json").exists():
+            from . import record as record_mod
+            try:  # before anything is spent: recording and assembly need local Whisper and its model
+                record_mod.preflight(cfg)
+            except StageError as e:
+                _update_card(listener, card, status="failed", error=f"preflight: {e}")
+                raise
         card = _start_card(listener, card, name, scheduled, at)
         attempts = card["attempts"]
         r = Run.open(name, create=True, runs_dir=listener / "chapters")
