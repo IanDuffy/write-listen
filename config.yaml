@@ -176,13 +176,17 @@ overnight:
     backend_effort: low
     price_per_minute: 0.05
     backend_prices: {gpt-6.1-terra: [1.00, 5.00, 0.05], gpt-5.6-terra: [2.00, 12.00, 0.20]}  # $/1M in, out, cached
+    stale_minutes: 30             # a session the page never ended, this long quiet, is ended when the next starts
+    audio_max_mb: 200             # the largest conversation recording kept (sessions/<id>.webm)
     page:
       line_quiet_ms: 900          # a line has ended after this much quiet
       greet_fallback_ms: 5000     # nothing said yet: the opening note again, with the mic open
       intro_quiet_ms: 1500        # the spec's fallback: the lead-in line, then about 1.5 s of silence
       intro_max_secs: 90          # ... or at 90 seconds at the latest
-      intro_min_secs: 20          # a lead-in heard before this is not the end of the intro
-      lead_in: "\\b(here it is|here we go|let's (begin|start|go|dive in|get into it)|let's listen|enjoy|over to (the|your) chapter|take a listen|have a listen|let me play|here's the chapter)\\b"
+      intro_min_secs: 20          # a lead-in heard before this is not the end of the intro, unless they asked to start
+      lead_in: "\\b(here it is|here we go|let's (begin|start|go|dive in|get into it)|let's listen|over to (the|your) chapter|take a listen|have a listen|let me play|here's the chapter)\\b"
+      lead_in_tail_chars: 40      # the lead-in counts only if it ends this close to the end of the guide's line
+      start_asked: "\\b(just play|play it|skip|start (it|the chapter)|go ahead|let's (hear|listen|go|start)|i'm ready)\\b"  # the listener asked to start
       lead_back: "\\b(anyway|where was i|back to (it|the chapter)|let's (go back|get back|pick (it|this) up))\\b"
       resume_quiet_ms: 900        # after the lead-back line, then the recording resumes
       resume_max_ms: 8000
