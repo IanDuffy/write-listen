@@ -490,3 +490,13 @@ def test_an_ask_that_cannot_start_says_why_and_the_chapter_goes_on(site, browser
     pg.wait_for_function(f"document.getElementById('player-line').textContent === {json.dumps(why)}")
     playing(pg)
     assert pg.evaluate("window.__library.mode") is None and page.errors == []
+
+
+def test_the_orb_leaves_past_chapters_to_the_library(site, browser):
+    """Demo (2026-11-15): the orb offered 'Play the last chapter: <the run touched last>' while the library
+    below named another chapter as the latest. With the library mounted, the orb shows neither link for a
+    past chapter."""
+    pg = open_page(site, browser).p
+    pg.wait_for_function("document.documentElement.classList.contains('has-library')")
+    pg.evaluate("document.body.classList.add('past'); document.getElementById('last').textContent = 'Play the last chapter: x'")
+    assert not pg.is_visible("#last")

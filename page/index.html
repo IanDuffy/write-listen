@@ -86,6 +86,9 @@
   #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
           cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
   body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
+  /* With the library mounted below (page/library.js), past chapters are its job: the orb keeps only the
+     chapter it has just made, so the two never offer different "last" chapters. */
+  html.has-library body.past #last, html.has-library body.past #read { display: none !important; }
   footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
   form { display: none; gap: 8px; }
   body.typing form { display: flex; }  /* voice couldn't start, or they asked to type */

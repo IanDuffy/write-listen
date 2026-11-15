@@ -196,6 +196,7 @@
   document.head.appendChild(style);
   let host = $("library");
   if (!host) { host = document.createElement("section"); host.id = "library"; document.body.appendChild(host); }
+  document.documentElement.classList.add("has-library");  // index.html leaves past chapters to the library
   host.innerHTML = MARKUP;
   const player = document.createElement("div");
   player.id = "player";
