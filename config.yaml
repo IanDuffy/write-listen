@@ -67,6 +67,17 @@ stages:
   fast_lock:          {max_tokens: 64000, effort: high, expected_output_tokens: 9000}
   fast_note:          {model: claude-sonnet-5-5, max_tokens: 4000, effort: low, expected_output_tokens: 300}
   fast_compare:       {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
+  # Overnight Chapters (docs/overnight-chapters.md; code in overnight/). Nobody is waiting. The planner is
+  # cheap (Sonnet, a small scout); writing reuses fast_draft and fast_lock's settings (faststart/sections.py).
+  overnight_plan_choose: {model: claude-sonnet-5-5, max_tokens: 16000, effort: medium, expected_output_tokens: 2000}
+  overnight_plan_scout:  {model: claude-sonnet-5-5, max_tokens: 32000, effort: low, expected_output_tokens: 3000, max_continuations: 3}
+  overnight_plan_card:   {model: claude-sonnet-5-5, max_tokens: 16000, effort: medium, expected_output_tokens: 2000}
+  overnight_outline:      {max_tokens: 32000, effort: high, expected_output_tokens: 6000}
+  overnight_outline_edit: {max_tokens: 32000, effort: high, expected_output_tokens: 6000}
+  overnight_promise:      {max_tokens: 32000, effort: high, expected_output_tokens: 4000}
+  overnight_revise:       {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
+  overnight_intro:        {model: claude-sonnet-5-5, max_tokens: 16000, effort: medium, expected_output_tokens: 1500}
+  overnight_library:      {model: claude-sonnet-5-5, max_tokens: 8000, effort: low, expected_output_tokens: 1000}
 
 chapter:
   target_words: 6000
@@ -120,6 +131,30 @@ seed_runs:
     coverage: {batch: false}
     edit: {batch: false}
     factcheck: {batch: false}
+
+# Overnight Chapters: a chapter folder with 00_source/up_next.json (a nightly build) takes these over
+# seed_runs (stages/common.run_config). Nobody is waiting, so the single-shot judges batch at half price.
+overnight_runs:
+  stages:
+    ledger: {batch: true}
+    ledger_update: {batch: true}
+
+# Overnight Chapters (docs/overnight-chapters.md, overnight/DESIGN.md). Each piece's own settings.
+overnight:
+  words_per_minute: 150         # GPT-Live reads about as fast as the ElevenLabs voice (chapter one: 16 chars/s)
+  total_minutes: [18, 22]       # acceptance check 7
+  sections: [4, 6]
+  plan: {}                      # overnight/planner.py
+  write: {}                     # overnight/outline.py, write.py, promise.py
+  record:                       # overnight/record.py: GPT-Live, server-side
+    url: wss://api.openai.com/v1/live/sessions
+    model: gpt-live-1
+    voice: gleam
+    price_per_minute: 0.05      # per connected second, silence and muted included
+    sessions: 4                 # in parallel, on different sections
+    retakes: 3                  # re-records per paragraph before it is flagged
+  assemble: {}                  # overnight/assemble.py
+  intro: {}                     # overnight/intro.py
 
 # The scout maps the territory around a seed and finds candidate sources: the role the
 # episode map plays for a transcript. One agent, these budgets (its web tools' max_uses).

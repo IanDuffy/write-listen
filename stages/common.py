@@ -208,6 +208,8 @@ def run_config(r: "Run", cfg: dict) -> dict:
     chapter for one run). The CLI applies it, so every stage of a run sees the same settings."""
     if is_seed(r):
         cfg = _merge(cfg, cfg.get("seed_runs") or {})
+    if (r.root / "00_source" / "up_next.json").exists():  # a nightly build (overnight/runner.py)
+        cfg = _merge(cfg, cfg.get("overnight_runs") or {})
     owner = owner_of(r.root)
     if owner is not None and not cfg.get("listener_dir"):
         # A chapter belongs to the listener whose folder holds it, whoever is active now: a build
