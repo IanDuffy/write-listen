@@ -172,6 +172,8 @@ def canon(w: str) -> str:
     -ise/-ize, -yse/-yze, -ence/-ense, -tre/-ter, -ogue/-og, travelled/traveled) and a few pairs."""
     if w in SPELLING:
         return SPELLING[w]
+    if any(w.startswith(x) for x in ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")):
+        return w  # "twentyfour" is a number, not a British -our spelling
     if m := re.fullmatch(rf"([a-z]{{2,}})our{OUR_SUFFIX}", w):
         return f"{m[1]}or{m[2]}"
     if m := re.fullmatch(r"([a-z]{2,})(i|y)s(e|es|ed|ing|er|ers|ation|ations)", w):
@@ -198,13 +200,116 @@ def norm_words(text: str) -> list[str]:
     t = t.replace("%", " percent ").replace("&", " and ")
     t = re.sub(r"(\d)\s*[–—-]\s*(?=\d)", r"\1 to ", t)  # 1914–1918
     t = re.sub(r"(\d),(?=\d{3})", r"\1", t)  # 1,000
+    t = re.sub(r"(\d)\.(?=\d)", r"\1point", t)  # 10.8 (numberize writes "ten point eight" the same)
+    t = re.sub(r"(\d)/(?=\d)", r"\1 ", t)  # 1/60th
     t = re.sub(r"([a-z0-9])-(?=[a-z0-9])", r"\1", t)
     t = t.replace("'", "")
     return [canon(w) for w in re.sub(r"[^a-z0-9 ]+", " ", t).split()]
 
 
+_UNITS = {w: i for i, w in enumerate("zero one two three four five six seven eight nine ten eleven twelve thirteen "
+                                      "fourteen fifteen sixteen seventeen eighteen nineteen".split())}
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if w != "_"}
+_SCALES = {"hundred": 100, "thousand": 1000, "million": 10 ** 6, "billion": 10 ** 9}
+_ORD = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+        "ninth": 9, "tenth": 10, "eleventh": 11, "twelfth": 12, "thirteenth": 13, "fourteenth": 14,
+        "fifteenth": 15, "sixteenth": 16, "seventeenth": 17, "eighteenth": 18, "nineteenth": 19,
+        "twentieth": 20, "thirtieth": 30, "fortieth": 40, "fiftieth": 50, "sixtieth": 60, "seventieth": 70,
+        "eightieth": 80, "ninetieth": 90, "hundredth": 100, "thousandth": 1000}
+_DECADES = {f"{w[:-1]}ies": v for w, v in _TENS.items()}  # twenties .. nineties
+_NUMWORDS = sorted(list(_UNITS) + list(_TENS) + list(_SCALES) + list(_ORD) + list(_DECADES), key=len, reverse=True)
+
+
+def _suffix(n: int) -> str:
+    return "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+
+
+def _split_joined(w: str) -> list[str]:
+    """'eightynine' -> ['eighty', 'nine'], 'sixhundredfoot' -> ['six', 'hundred', 'foot'] (hyphenated words
+    are joined by norm_words); a word that doesn't start with a number word is left alone."""
+    parts, rest = [], w
+    while rest:
+        m = next((x for x in _NUMWORDS if rest.startswith(x)), None)
+        if m is None:
+            break
+        parts.append(m)
+        rest = rest[len(m):]
+    if not parts or (rest and len(rest) < 2) or (len(parts) == 1 and rest):
+        return [w] if not (parts and rest and len(rest) >= 3 and parts[0] in _SCALES) else [w]
+    return parts + ([rest] if rest else [])
+
+
+def _cardinal(run: list[str]) -> str:
+    """Number words -> digits: 'six hundred' 600, 'ten point eight' 10point8, 'nineteen forty' 1940 (a
+    year: two groups under a hundred), 'nineteen fifties' 1950s, 'twenty first' 21st."""
+    if "point" in run:
+        i = run.index("point")
+        return _cardinal(run[:i]) + "point" + "".join(str(_UNITS.get(w, w)) for w in run[i + 1:])
+    suffix = ""
+    if run[-1] in _ORD:
+        v = _ORD[run[-1]]
+        run, suffix = run[:-1] + ([str(v)] if v < 100 else []), None
+        if v >= 100:
+            run = run + ["hundred" if v == 100 else "thousand"]
+    if run[-1] in _DECADES:
+        run, suffix = run[:-1] + [str(_DECADES[run[-1]])], "s"
+    groups, cur = [], None  # values under a hundred, for years
+    total, part, has_scale = 0, 0, False
+    for w in run:
+        v = int(w) if w.isdigit() else _UNITS.get(w, _TENS.get(w))
+        if w in _SCALES:
+            has_scale = True
+            part = (part or 1) * _SCALES[w]
+            if _SCALES[w] >= 1000:
+                total, part = total + part, 0
+            cur = None
+            continue
+        if cur is not None and cur % 10 == 0 and cur >= 20 and v < 10:
+            cur += v
+            groups[-1] = cur
+        else:
+            cur = v
+            groups.append(v)
+        part += v
+    if not has_scale and len(groups) == 2 and groups[0] >= 10 and run and run[0] != "oh":
+        n = groups[0] * 100 + groups[1]
+    else:
+        n = total + part
+    if suffix is None:
+        return f"{n}{_suffix(n)}"
+    return f"{n}{suffix}"
+
+
+def numberize(words: list[str]) -> list[str]:
+    """Numbers in words written as digits, the way Whisper writes them, so 'ten point eight' and '10.8',
+    'one sixtieth' and '1/60th', 'nineteen fifties' and '1950s' compare as the same (live, 2026-11-15)."""
+    out, run = [], []
+
+    def flush():
+        if run:
+            out.append(_cardinal(run))
+            run.clear()
+    toks = [p for w in words for p in (_split_joined(w) if not w.isdigit() else [w])]
+    for i, w in enumerate(toks):
+        nxt = toks[i + 1] if i + 1 < len(toks) else ""
+        if w in _UNITS or w in _TENS or w in _SCALES or w in _DECADES or (w == "point" and run and nxt in _UNITS):
+            run.append(w)
+        elif w in _ORD and (run or w not in ("first", "second")):
+            if run and not (run[-1] in _TENS and _ORD[w] < 10):  # "one sixtieth" is a fraction, not 61st
+                flush()
+            run.append(w)
+            flush()
+        elif w == "and" and run and (nxt in _UNITS or nxt in _TENS) and any(x in _SCALES for x in run):
+            continue  # "two hundred and five"
+        else:
+            flush()
+            out.append(w)
+    flush()
+    return out
+
+
 def _numeric(w: str) -> bool:
-    return w.isdigit() or bool(_NUM_WORD.match(w)) and w not in ("and", "oh", "a")
+    return any(c.isdigit() for c in w) or bool(_NUM_WORD.match(w)) and w not in ("and", "oh", "a")
 
 
 def _same_number(a: list[str], b: list[str]) -> bool:
@@ -232,10 +337,10 @@ def deviation(text: str, heard: str, vouch: str | None = None) -> dict:
     Not differences: the same letters run together or apart ("check in" / "checkin"), a number in digits.
     `vouch` (GPT-Live's output transcript, when `heard` is Whisper's): a word changed into a similar one
     (SIMILAR), where `vouch` has the text's word, is a spelling (a name), forgiven."""
-    a, b = norm_words(text), norm_words(heard)
+    a, b = numberize(norm_words(text)), numberize(norm_words(heard))
     vouched: set[int] = set()
     if vouch is not None:
-        for i, _, n in difflib.SequenceMatcher(a=a, b=norm_words(vouch), autojunk=False).get_matching_blocks():
+        for i, _, n in difflib.SequenceMatcher(a=a, b=numberize(norm_words(vouch)), autojunk=False).get_matching_blocks():
             vouched.update(range(i, i + n))
     diffs, forgiven, missing, added, changed, critical, before = [], [], 0, 0, 0, 0, 0
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
@@ -693,11 +798,14 @@ class LiveSession:
         return self._cut(follow, status, resent)
 
     def _cut(self, follow: Follow, status: str, resent: bool) -> Take:
-        """The take from the session audio: from start_ms * 24 samples, trimmed to speech. Everything up
-        to now is then dropped from the buffer (the next paragraph starts after it)."""
+        """The take from the session audio: everything audible since the last take, trimmed to speech.
+        One passage is outstanding at a time and the buffer is emptied after each take, so whatever was
+        said since is this passage (and anything said before it, which the check then fails). The
+        transcript's start_ms is not used to cut: over a five-minute session its clock ran seconds behind
+        the audio (live, 2026-11-15: openings lost, more the later in a session), so cutting there kept
+        takes that began mid-sentence. Everything up to now is then dropped from the buffer."""
         samples = np.frombuffer(bytes(self._buf[: len(self._buf) // 2 * 2]), np.int16)
-        hint = int((follow.start_ms or 0) * SAMPLES_PER_MS) - self._base
-        span = trim(samples, max(0, hint))
+        span = trim(samples, 0)
         heard = " ".join(follow.heard)
         drop = len(samples)
         if span is None:

@@ -257,6 +257,7 @@ class FakeServer:
 
     def __init__(self, plan=None):
         self.plan = list(plan or [])
+        self.transcript_lag_ms = 0      # the transcript's clock behind the audio (live: seconds, late in a session)
         self.start: dict | None = None
         self.headers: dict = {}
         self.received: list[dict] = []
@@ -358,8 +359,9 @@ class FakeServer:
             self.clock += STEP_MS
             for d in [d for d in self.deltas if d[0] <= self.clock]:
                 self.deltas.remove(d)
-                await ws.send(json.dumps({"type": "session.output_transcript.delta", "start_ms": d[1],
-                                          "end_ms": d[1] + 200, "delta": d[2]}))
+                await ws.send(json.dumps({"type": "session.output_transcript.delta",
+                                          "start_ms": d[1] + self.transcript_lag_ms,
+                                          "end_ms": d[1] + 200 + self.transcript_lag_ms, "delta": d[2]}))
             if self.clock % 1000 == 0:
                 await ws.send(json.dumps({"type": "session.usage.updated", "usage": {"seconds": self.clock / 1000},
                                           "context_window": {"usage_ratio": 0.01}}))

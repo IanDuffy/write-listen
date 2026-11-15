@@ -615,3 +615,40 @@ def test_the_live_client_fails_a_preamble_with_an_opening_word(server, cfg):
 def test_a_session_that_cannot_open_is_lost_not_fatal(cfg):
     with pytest.raises(record.SessionLost, match="could not open"):
         record.LiveSession(cfg, "I", "t", key="k", url="ws://127.0.0.1:9")
+
+
+def test_a_transcript_clock_behind_the_audio_still_cuts_the_whole_passage(server, cfg):
+    """Live (2026-11-15): over a five-minute session the transcript's start_ms ran seconds behind the
+    audio, and takes cut at start_ms * 24 began mid-sentence (34 of 50 paragraphs lost their opening
+    words). The cut no longer uses the transcript's clock."""
+    text = "So why would engineers who were content to let a deck swing almost thirty feet refuse to let it twist?"
+    server.plan = ["ok"]
+    server.transcript_lag_ms = 3000
+    s = record.LiveSession(cfg, "INSTRUCTIONS", "t", key="test-key", url=server.url)
+    try:
+        take = s.read(text)
+        onset = next(w["start"] for w in server.words if w["w"] == "So")
+        end = [w for w in server.words if w["w"].startswith("twist")][-1]["end"]
+        pcm = np.frombuffer(take.pcm, np.int16)
+        assert abs(len(pcm) / record.RATE - ((end - onset) / 1000 + record.PAD_LEAD + record.PAD_TAIL)) <= 0.05
+        lead = int(record.PAD_LEAD * record.RATE)
+        assert not pcm[: lead - 240].any() and pcm[lead + 240: lead + 480].any()  # starts at "So"
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("text,heard", [
+    ("ten point eight metres", "10.8 meters"), ("one sixtieth of the real size", "1/60th of the real size"),
+    ("in the nineteen fifties", "in the 1950s"), ("a wind of eighty-nine miles", "a wind of 89 miles"),
+    ("twenty-four hours", "24 hours"), ("at eleven o'clock", "at 11 o'clock"), ("a six-hundred-foot span", "a 600-foot span"),
+    ("in nineteen ninety-one", "in 1991"), ("on the morning of the seventh", "on the morning of the 7th"),
+    ("a one-fiftieth-scale model", "a 1/50th scale model"), ("the twenty-first century", "the 21st century"),
+    ("two hundred and five", "205"), ("three point three seconds", "3.3 seconds")])
+def test_numbers_whisper_writes_in_digits_match_the_script(text, heard):
+    """The number cases from the live chapter's Whisper check (2026-11-15)."""
+    assert record.deviation(text, heard)["diffs"] == []
+
+
+def test_a_wrong_number_is_still_a_critical_difference():
+    d = record.deviation("ten point eight metres", "10.6 meters")
+    assert d["critical"] and not record.passes(d, 2)
