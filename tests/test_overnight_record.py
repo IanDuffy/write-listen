@@ -1,6 +1,7 @@
 """Overnight recording with GPT-Live (overnight/record.py; spec checks 6 and 8)."""
 
 import json
+import wave
 import sys
 import threading
 import time
@@ -652,3 +653,32 @@ def test_numbers_whisper_writes_in_digits_match_the_script(text, heard):
 def test_a_wrong_number_is_still_a_critical_difference():
     d = record.deviation("ten point eight metres", "10.6 meters")
     assert d["critical"] and not record.passes(d, 2)
+
+
+def test_a_take_that_always_stops_before_the_last_sentence_gets_a_pickup(tmp_path, cfg):
+    """Live (2026-11-15): GPT-Live ended one paragraph before its last sentence four takes running. The
+    missing sentences are read as a passage of their own and joined at the sentence break."""
+    from stages import tts
+    r = make_run(tmp_path)
+    t = texts_by_id(r)
+    text = t["s1-p01"]
+    sents = tts.split_sentences(text)
+    short = lambda x: " ".join(tts.split_sentences(x)[:-1])  # noqa: E731
+    live = FakeLive({text: [short] * 9})
+    out = record.run(r, cfg, session_factory=live)
+    assert out["passed"] == out["paragraphs"] and out["flagged"] == []
+    assert live.texts().count(text) == 4 and live.texts().count(sents[-1]) == 1  # four takes, then the pickup
+    chosen = json.loads((r.root / "10_audio" / "paragraphs" / "s1-p01.json").read_text())
+    assert chosen["status"] == "joined" and chosen["pickup"]["from_sentence"] == len(sents)
+    with wave.open(str(r.root / "10_audio" / "paragraphs" / "s1-p01.wav")) as w:
+        whole = w.getnframes()
+    take = lambda k: wave.open(str(r.root / "10_audio" / "takes" / f"s1-p01.t{k}.wav")).getnframes()  # noqa: E731
+    assert whole == take(1) + int(record.SENTENCE_GAP * record.RATE) + take(5)
+
+
+@pytest.mark.parametrize("text,heard", [
+    ("allow the deck to drop by ten point eight feet", "allow the deck to drop by 10 .8 feet"),
+    ("On the first of December, nineteen fifty-one", "On the 1st of December 1951"),
+    ("first, the wind", "First, the wind")])
+def test_whispers_split_decimals_and_ordinals_match(text, heard):
+    assert record.deviation(text, heard)["diffs"] == []

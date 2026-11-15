@@ -108,6 +108,7 @@ def run(r: Run, cfg: dict) -> Path:
              "## Findings you may mention", ""]
     lines += [f"- {f}" for f in findings]
     lines += ["", "## Why this one, for them", "", why or "(no link back was written)"]
+    words = list(dict.fromkeys(w.strip() for w in words if w and w.strip()))  # a request's topic and words can be the same
     if words:
         lines += ["", "Their words: " + " / ".join(f'"{w}"' for w in words[:2])]
     tmp = out.with_name(f".{OUT}.tmp")

@@ -15,11 +15,13 @@ was built and checked.
 | `outline.py` | the outline written **after** research, from the full dossier | `run(r, cfg) -> dict` (writes `05_outline.json`, `05_outline.md`, `05_brief.md`, sets each ledger row's `section`) |
 | `write.py` | write and edit section by section with the paired edit (reuses `faststart.sections`) | `run(r, cfg) -> Path` (writes `06_segments/segNN.md`, `07_script_draft.md`) |
 | `promise.py` | check the script against the card's summary; one revision if it drifted | `run(r, cfg) -> Path` (writes `08_promise.json`, `09_script_final.md`) |
-| `record.py` | GPT-Live, server-side, one paragraph at a time; check each take, re-record up to 3 times; up to 4 sessions in parallel | `run(r, cfg, session_factory=None) -> dict` (writes `10_audio/paragraphs/`, `10_audio/takes/`, `10_audio/recording.jsonl`, `10_audio/recorded.json`) |
+| `record.py` | GPT-Live, server-side, one paragraph at a time; each take transcribed by local Whisper and compared with the script (GPT-Live's own transcript as the tie-breaker for names), re-recorded up to 3 times; up to 4 sessions in parallel | `run(r, cfg, session_factory=None, recognizer=None) -> dict`, `preflight(cfg)` (writes `10_audio/paragraphs/`, `10_audio/takes/`, `10_audio/recording.jsonl`, `10_audio/recorded.json`) |
 | `assemble.py` | stitch the audio, time it (Whisper), references, `episode.json` | `run(r, cfg) -> Path` (writes `10_audio/chapter.mp3`, `11_episode/timing.json`, `11_episode/episode.json`) |
 | `intro.py` | `intro_brief.md`, the only things the morning intro may use | `run(r, cfg) -> Path` |
 | `runner.py` | `wl overnight run|resume|status`: lock, stages, status.json, cost.json, runaway stop | `run(cfg, listener, *, now=False, ...)`, `resume(...)` |
 | `commands.py` | the `wl overnight ...` CLI | `main(argv)` |
+| `locks.py` | the card lock (`listeners/<id>/.card.lock`, fcntl): the runner taking a card and the planner writing one never cross | `card_lock(listener)` |
+| `live.py` | the library page's GPT-Live sessions: the morning intro, Change, an aside on the recording | `mount(app, cfg, pipe, chat)` |
 | `routes.py` | `/library`, `/api/library`, `/api/settings`, the intro and change live sessions | `mount(app, cfg, pipe, chat)` |
 
 ## Listener files
@@ -74,6 +76,21 @@ Also: `status.json` (stage, stage start, cost so far, error; the server's fields
 
 Paragraph ids: `s<seg>-p<kk>` (`s1-p01`), from `09_script_final.md`: spoken text (no `[Dn]`), split at blank
 lines; a `[pause]` line ends a paragraph with a beat. The same split the pause rules use in assembly.
+
+## The card's lifecycle, across processes
+
+- The scheduler's tick (launchd, every quarter hour) and the server (Change) are different processes. The
+  runner moves a card to building, and the planner writes up_next.json, only under `locks.card_lock`; the
+  planner re-reads the card before writing: a Change whose cutoff passed during the pass is queued, not
+  written; a plain pass whose card changed meanwhile is dropped.
+- `runner.reconcile(listener)`: a card still `building` whose build process is gone (no live pid in
+  `.overnight.lock` or status.json) becomes `failed` ("the build process stopped"); the tick, the runner,
+  the planner and the library page call it first.
+- A failed card is retried once, on a later build day than its last attempt (`attempt_at`); only scheduled
+  attempts count (`scheduled_attempts`), so daytime `--now` tests never use up tonight's build.
+- A failed planning pass is recorded in `plan_failures.jsonl`; the tick tries at most once an hour and three
+  times a window, and the card says "Couldn't plan the next chapter". A queued topic that fails twice is set aside.
+- Before a build spends anything, `record.preflight` checks local Whisper and its model are on the machine.
 
 ## Rules every piece keeps
 

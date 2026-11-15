@@ -86,6 +86,7 @@ AUDIBLE_RMS = 200             # a 20 ms frame louder than this is speech (GPT-Li
 FRAME = 0.01                  # seconds per RMS frame
 SPEECH_RMS = 150
 ONSET_BACK, ONSET_FWD, ONSET_QUIET = 0.35, 0.5, 0.15
+SENTENCE_GAP = 0.35             # between a take that stopped early and its pickup, at the sentence break
 PAD_LEAD, PAD_TAIL = 0.06, 0.15   # kept before the first and after the last speech frame, every take
 
 # Reopening a session before it runs out (sessions expire after about 2 hours; context 128k).
@@ -199,6 +200,7 @@ def norm_words(text: str) -> list[str]:
     t = re.sub(r"\[[^\]]*\]", " ", t)  # "[laughs]" in a transcript
     t = t.replace("%", " percent ").replace("&", " and ")
     t = re.sub(r"(\d)\s*[–—-]\s*(?=\d)", r"\1 to ", t)  # 1914–1918
+    t = re.sub(r"(\d)\s+([.,]\d)", r"\1\2", t)  # Whisper's word tokens: "10 .8"
     t = re.sub(r"(\d),(?=\d{3})", r"\1", t)  # 1,000
     t = re.sub(r"(\d)\.(?=\d)", r"\1point", t)  # 10.8 (numberize writes "ten point eight" the same)
     t = re.sub(r"(\d)/(?=\d)", r"\1 ", t)  # 1/60th
@@ -294,7 +296,7 @@ def numberize(words: list[str]) -> list[str]:
         nxt = toks[i + 1] if i + 1 < len(toks) else ""
         if w in _UNITS or w in _TENS or w in _SCALES or w in _DECADES or (w == "point" and run and nxt in _UNITS):
             run.append(w)
-        elif w in _ORD and (run or w not in ("first", "second")):
+        elif w in _ORD:  # both sides are numberized alike, so "first" (in any sense) matches Whisper's "1st"
             if run and not (run[-1] in _TENS and _ORD[w] < 10):  # "one sixtieth" is a fraction, not 61st
                 flush()
             run.append(w)
@@ -1027,6 +1029,10 @@ class _Recorder:
                 break
             if take.status == "never_started":  # the session may be stuck: the next attempt gets a new one
                 self.close(lane)
+        if best is not None and not best[1]["passed"]:
+            joined = self.pickup(lane, p, best)
+            if joined is not None:
+                best = joined
         self.log_cost(lane, lane.session, what=p["id"])
         if best is None:
             raise StageError(f"GPT-Live never read paragraph {p['id']} ({attempts} attempts).")
@@ -1034,6 +1040,54 @@ class _Recorder:
         write_json(self.audio / "paragraphs" / f"{p['id']}.json",
                    {**info, "seg": p["seg"], "pause": p["pause"], "text": p["text"], "takes": attempts})
         write_wav(self.audio / "paragraphs" / f"{p['id']}.wav", take.pcm)  # last: it marks the paragraph done
+
+    def pickup(self, lane: _Lane, p: dict, best: tuple) -> tuple | None:
+        """A paragraph whose takes all stop early at the same place (live, 2026-11-15: GPT-Live ended one
+        before its last sentence four times running): when the best take is right up to a sentence and only
+        the sentences after it are missing, read those as a passage of their own and join the two at the
+        sentence break. Returns the joined (take, info) if it passes the check, else None."""
+        take, info = best
+        heard = info.get("whisper") if info.get("check") == "whisper" else take.heard
+        sents = tts.split_sentences(p["text"])
+        cut = next((i for i in range(1, len(sents))
+                    if passes(deviation(" ".join(sents[:i]), heard), self.max_diffs)), None)
+        if cut is None:
+            return None
+        rest = {**p, "text": " ".join(sents[cut:])}
+        for _ in range(2):
+            if self.stop.is_set():
+                return None
+            self.check_cap()
+            try:
+                s = lane.session if lane.session is not None and not lane.session.needs_new() else self.open(lane)
+                more = s.read(rest["text"])
+            except SessionLost:
+                self.close(lane)
+                return None
+            if not more.pcm:
+                continue
+            k = self.next_take(p["id"])
+            wav = self.audio / "takes" / f"{p['id']}.t{k}.wav"
+            write_wav(wav, more.pcm)
+            part = self.judge(rest, more, wav)
+            gap = np.zeros(int(SENTENCE_GAP * RATE), np.int16).tobytes()
+            whole = Take(take.pcm + gap + more.pcm, f"{take.heard} {more.heard}", take.start_ms, more.end_ms,
+                         "joined", take.matched + more.matched, take.words, take.resent or more.resent)
+            heard2 = f"{heard} {part['whisper'] if part['check'] == 'whisper' else more.heard}"
+            d = deviation(p["text"], heard2, vouch=whole.heard if part["check"] == "whisper" else None)
+            ok = passes(part["deviation"], self.max_diffs) and passes(d, self.max_diffs)
+            rec = {"id": p["id"], "take": k, "session": s.id, "status": more.status, "pickup_of": info["take"],
+                   "pickup_from_sentence": cut + 1, "heard": more.heard, **part, "passed": ok,
+                   "joined_deviation": d, "t": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            write_json(self.audio / "takes" / f"{p['id']}.t{k}.json", rec)
+            with _FILE_LOCK:
+                with open(self.audio / "recording.jsonl", "a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            if ok:
+                return whole, {**info, "take": f"{info['take']}+{k}", "status": "joined", "heard": whole.heard,
+                               "whisper": heard2 if part["check"] == "whisper" else None, "deviation": d,
+                               "passed": True, "pickup": {"take": k, "from_sentence": cut + 1}}
+        return None
 
     def lane(self, label: str, group: list[dict]) -> None:
         lane = _Lane(label)
