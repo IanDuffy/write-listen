@@ -93,6 +93,22 @@ def plan_failure(listener: Path, card: dict | None, settings: dict, now: datetim
     return last
 
 
+DEBRIEF_LINE = "Got five minutes to tell Ian how it went?"
+
+
+def debrief_card(listener: Path) -> dict:
+    """The library's debrief card (Tester Demo, "If they leave early"): shown to a tester (tester.json in the
+    folder) whose debrief isn't done (study/debrief.json), unless Ian turned it off (tester.json debrief_card
+    "off"); "on" shows it whatever, "auto" once a chapter was started (a folder under chapters/)."""
+    tester = profiles.read_json(listener / "tester.json")
+    if not isinstance(tester, dict):
+        return {"show": False, "line": ""}
+    done = (profiles.read_json(listener / "study" / "debrief.json") or {}).get("done")
+    setting = tester.get("debrief_card") or "auto"
+    show = not done and (setting == "on" or (setting == "auto" and bool(profiles.chapters(listener=listener))))
+    return {"show": bool(show), "line": DEBRIEF_LINE}
+
+
 def library_state(cfg: dict, now: datetime | None = None) -> dict:
     from . import runner, schedule
     now = now or datetime.now()
@@ -122,7 +138,8 @@ def library_state(cfg: dict, now: datetime | None = None) -> dict:
                         "change_note": why, "plan_failed": (failed or {}).get("reason")},
             "latest": _chapter_info(latest) if latest else None,
             "history": history(listener),
-            "settings": settings}
+            "settings": settings,
+            "debrief": debrief_card(listener)}
 
 
 def mount(app: FastAPI, cfg: dict, pipe=None, chat=None) -> None:

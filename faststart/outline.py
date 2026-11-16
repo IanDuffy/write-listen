@@ -2,8 +2,9 @@
 
 In a fast run the arc is decided here, before the research, because once the opening has
 played nothing can reorder the chapter (docs/fast-start.md). One call writes the outline: the
-angle, the through-line, the closing idea, and three to five sections, each with what it lands,
-what it sets up, how it hands off, its length and its research questions. A second call, in a
+angle, the through-line, the closing idea, and its sections (fast.sections: three to five, or two
+or three for a short chapter, faststart.base.sized_overrides), each with what it lands, what it
+sets up, how it hands off, its length and its research questions. A second call, in a
 fresh context, critiques the arc and returns a revised outline with a list of what it changed.
 One round only.
 
@@ -124,7 +125,7 @@ def _mins(words, lim: dict) -> str:
 def validate(outline: dict, scout_numbers: set[int], cfg: dict) -> list[str]:
     """Every rule the outline breaks, in plain words (the repair call reads them); [] when valid.
 
-    Three to five sections, numbered 1..N in order, each with a short title and its lands,
+    As many sections as fast.sections allows, numbered 1..N in order, each with a short title and its lands,
     sets_up and hand_off notes. The opening (section 1) at least fast.opening_min_minutes, no
     section under fast.section_min_minutes, the total inside fast.total_minutes. The opening has
     no research questions and cites at least one scout entry; every entry any section lists is a
