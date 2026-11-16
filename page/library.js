@@ -66,18 +66,6 @@
   #live { font-size: 14px; color: var(--muted); margin: 12px 0 0; }
   #live:empty { display: none; }
   #lib-hint { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
-  #lib-history h3 { margin: 6px 0 4px; }
-  #history { list-style: none; margin: 0; padding: 0; }
-  #history li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
-  #history li:first-child { border-top: 0; }
-  #history .lib-hplay { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--accent);
-                        background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
-  #history li.on .lib-hplay { background: var(--accent); color: var(--bg); }
-  #history .lib-hbody { flex: 1; min-width: 0; }
-  #history .lib-htitle { display: block; color: var(--fg); font-size: 16px; text-decoration: none; overflow: hidden;
-                         text-overflow: ellipsis; white-space: nowrap; }
-  #history a.lib-htitle:hover { text-decoration: underline; }
-  #history .lib-hmeta { font-size: 13px; color: var(--muted); }
   #settings-link { align-self: center; }
   #settings { display: none; }
   #library.lib-settings-open #settings { display: block; }
@@ -115,47 +103,180 @@
   #player-time { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   #player-ask { flex: none; font-size: 14px; padding: 5px 14px; }
   html.lib-in-chapter #screen { display: none; }
+
+  /* The library timeline (docs/library-timeline.md, sketches B and D). Colours: the app's own tokens where it
+     sets one (--bg, --fg, --muted, --line, --accent, the system font: the spec keeps the app's, PROGRESS.md), the
+     sketches' for the rest (accent text, topic colours, surface). */
+  #library { --lt-surface: var(--card); --lt-accent-text: #9C4330; --lt-teal: #24585B; --lt-coral: #C8553D;
+             --lt-amber: #B7791F; --lt-became: #E8C9BF; }
+  @media (prefers-color-scheme: dark) { #library { --lt-accent-text: #E59A82; --lt-became: #6b3a2d; } }
+  #library:not(.lib-wide) { max-width: 480px; padding-left: 0; padding-right: 0; }
+  #lib-home { gap: 20px; }
+  #lib-home > *:not(.lt-stripwrap) { margin-left: 22px; margin-right: 22px; }
+  .lt-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+  .lt-title { margin: 0 !important; font-size: 30px !important; font-weight: 600; letter-spacing: -0.5px; line-height: 1.1 !important; }
+  .lt-sub { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+  .lt-orb { flex: none; width: 44px; height: 44px; border-radius: 50%; background: var(--accent); opacity: .85; }
+  html.has-orb .lt-orb { display: none; }
+  .lt-stripwrap { position: relative; }
+  .lt-strip { display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: 22px;
+              padding: 2px 0 6px 22px; scrollbar-width: none; overscroll-behavior-x: contain; }
+  .lt-strip::-webkit-scrollbar { display: none; }
+  .lt-card { position: relative; flex: 0 0 calc(100% - 78px);  /* the strip less 100px (its 22px gutter is padding) */ min-height: 330px; box-sizing: border-box; border-radius: 22px;
+             padding: 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
+             scroll-snap-align: start; scroll-snap-stop: always; }
+  .lt-spacer { flex: 0 0 64px; }  /* room for Up next to snap to the start: 100px - the 22px gutter - the 14px gap */
+  .lt-ch { color: #fff; background: var(--lt-teal); }
+  .lt-ch.coral { background: var(--lt-coral); }
+  .lt-ch.amber { background: var(--lt-amber); color: #1E1A17; }  /* white on amber fails contrast: ink instead */
+  .lt-cdate { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; opacity: .9; }
+  .lt-cbottom { display: flex; flex-direction: column; gap: 6px; }
+  .lt-ctitle, #library a.lt-ctitle { font-size: 24px; font-weight: 600; line-height: 1.15; margin: 0; color: inherit; text-decoration: none; }
+  a.lt-ctitle::after { content: ""; position: absolute; inset: 0; border-radius: 22px; }  /* the whole card opens it */
+  a.lt-ctitle:focus-visible { outline: none; }
+  a.lt-ctitle:focus-visible::after { outline: 3px solid var(--fg); outline-offset: 3px; }
+  .lt-cstatus { font-size: 13px; opacity: .9; }
+  .lt-crow { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
+  .lt-play { font: inherit; font-size: 15px; font-weight: 600; min-height: 44px; padding: 0 22px; border-radius: 22px; border: 0;
+             background: #fff; color: #1E1A17; cursor: pointer; }
+  .lt-play:focus-visible, .lt-link:focus-visible, .lt-arrow:focus-visible, .lt-pill:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+  .lt-ch .lt-link { color: inherit; }
+  .lt-link { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; padding: 0; min-height: 44px;
+             text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .lt-up { background: var(--lt-surface); color: var(--fg); border: 1.5px dashed var(--accent); justify-content: flex-start; gap: 8px; }
+  .lt-upkick { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--lt-accent-text); margin: 0; }
+  .lt-up .lt-ctitle { margin: 2px 0 4px; }
+  .lt-upover { margin: 0; font-size: 15px; line-height: 1.4; }
+  .lt-upsum { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+  .lt-upline { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+  #library.building .lt-upline { color: var(--lt-accent-text); }
+  #library.failed .lt-upline { color: var(--fg); font-weight: 600; }
+  .lt-uprow { display: flex; align-items: center; gap: 16px; margin-top: auto; padding-top: 6px; flex-wrap: wrap; }
+  .lt-pill { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 20px; border-radius: 22px; cursor: pointer;
+             color: var(--lt-accent-text); background: none; border: 1.5px solid var(--accent); }
+  .lt-pill:disabled { opacity: .5; cursor: default; }
+  .lt-arrow { display: none; position: absolute; top: 143px; z-index: 2; width: 44px; height: 44px; border-radius: 50%;
+              border: 1px solid var(--line); background: var(--lt-surface); color: var(--fg); cursor: pointer; padding: 0;
+              align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .lt-arrow:disabled { opacity: .35; cursor: default; }
+  #strip-prev { left: 6px; } #strip-next { right: 6px; }
+  @media (hover: hover) and (pointer: fine), (min-width: 600px) { .lt-arrow { display: flex; } }
+  .lt-scrubwrap { display: flex; flex-direction: column; gap: 4px; }
+  .lt-scrub { position: relative; height: 44px; cursor: pointer; touch-action: none; border-radius: 8px; }
+  .lt-scrub:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+  .lt-track { position: absolute; left: 0; right: 0; top: 21px; height: 2px; background: var(--line); }
+  .lt-tick { position: absolute; width: 2px; transform: translateX(-1px); pointer-events: none; }
+  .lt-tick.ch { top: 15px; height: 14px; background: var(--fg); }
+  .lt-tick.mo { top: 17px; height: 10px; background: var(--muted); }
+  .lt-tick.conv { top: 17px; height: 10px; background: var(--fg); }
+  .lt-break { position: absolute; top: 14px; width: 10px; height: 16px; transform: translateX(-5px); background: var(--bg); pointer-events: none; }
+  .lt-break::before, .lt-break::after { content: ""; position: absolute; top: 0; width: 2px; height: 16px; background: var(--muted); transform: skewX(-20deg); }
+  .lt-break::before { left: 1px; } .lt-break::after { right: 1px; }
+  .lt-upring { position: absolute; top: 16px; width: 12px; height: 12px; border-radius: 50%; border: 2px dashed var(--accent);
+               box-sizing: border-box; transform: translateX(-6px); background: var(--bg); pointer-events: none; }
+  .lt-handle { position: absolute; top: 11px; width: 22px; height: 22px; border-radius: 50%; background: var(--lt-surface);
+               border: 2px solid var(--fg); box-sizing: border-box; transform: translateX(-11px); pointer-events: none;
+               transition: left .25s ease; }
+  .lt-scrub.dragging .lt-handle { transition: none; }
+  .lt-labels { position: relative; height: 16px; font-size: 12px; color: var(--muted); }
+  .lt-labels span { position: absolute; top: 0; white-space: nowrap; transform: translateX(-50%); }
+  .lt-labels span.l { transform: none; } .lt-labels span.r { transform: translateX(-100%); }
+  .lt-from { display: flex; flex-direction: column; gap: 10px; }
+  .lt-fromhead { display: flex; justify-content: space-between; align-items: center; }
+  .lt-kicker { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
+  #library a.lt-all { font-size: 14px; font-weight: 500; color: var(--lt-accent-text); text-decoration: none; min-height: 44px;
+                      display: inline-flex; align-items: center; }
+  .lt-row { display: flex; gap: 12px; align-items: flex-start; padding: 14px; border-radius: 14px; background: var(--lt-surface); }
+  .lt-rtime { font-size: 12px; color: var(--muted); min-width: 34px; padding-top: 2px; font-variant-numeric: tabular-nums; }
+  .lt-rtext { font-size: 14px; line-height: 1.4; }
+  #library a.lt-to, .lt-to { color: var(--lt-accent-text); font-weight: 600; font-size: inherit; text-decoration: none; white-space: nowrap; }
+  .lt-empty { margin: 0; font-size: 14px; color: var(--muted); }
+  #lib-hint, #live { margin-top: -8px !important; }
+  /* the chapter page (sketch D) */
+  #lib-page { display: flex; flex-direction: column; gap: 18px; padding: 0 22px; }
+  #library a.lt-back { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; font-weight: 500;
+                       text-decoration: none; color: var(--fg); align-self: flex-start; margin-top: -16px; }
+  .lt-phead { display: flex; flex-direction: column; gap: 6px; }
+  .lt-pmeta { font-size: 12px; color: var(--muted); }
+  #pg-title { margin: 0; font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.3px; }
+  #pg-summary { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); }
+  .lt-prog { display: flex; align-items: center; gap: 14px; }
+  .lt-bigplay { flex: none; width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--fg); color: var(--bg);
+                display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+  .lt-bigplay:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+  .lt-progmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .lt-bar { position: relative; height: 22px; }
+  .lt-bar::before { content: ""; position: absolute; left: 0; right: 0; top: 10px; height: 3px; border-radius: 2px; background: var(--line); }
+  .lt-barfill { position: absolute; left: 0; top: 10px; height: 3px; border-radius: 2px; background: var(--fg); width: 0; }
+  .lt-mk { position: absolute; top: -11px; width: 44px; height: 44px; margin-left: -22px; border: 0; padding: 0; background: none;
+           cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .lt-mk:focus-visible { outline: 3px solid var(--fg); outline-offset: -8px; border-radius: 50%; }
+  .lt-mk i { display: block; box-sizing: border-box; }
+  .lt-mk.question i, .lt-mk.note i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--fg); background: var(--bg); }
+  .lt-mk.mention i { width: 10px; height: 10px; background: var(--lt-amber); transform: rotate(45deg); }
+  .lt-mk.became i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: var(--bg); transform: none; }
+  .lt-barlabels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lt-moments { display: flex; flex-direction: column; gap: 10px; }
+  .lt-mrow { display: flex; flex-direction: column; gap: 6px; padding: 14px; border-radius: 14px; background: var(--lt-surface);
+             border: 1px solid transparent; scroll-margin: 90px; transition: box-shadow .4s; }
+  .lt-mrow.became { border-color: var(--lt-became); }
+  .lt-mrow.flash { box-shadow: 0 0 0 3px var(--accent); }
+  .lt-mrow:focus { outline: none; }
+  .lt-mhead { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+  .lt-mout.became, #library a.lt-mout { color: var(--lt-accent-text); font-weight: 600; font-size: 12px; text-decoration: none; text-align: right; }
+  .lt-mwords { font-size: 15px; line-height: 1.35; }
+  .lt-mreply { font-size: 13px; line-height: 1.4; color: var(--muted); }
+  .lt-offer { align-self: flex-start; }
+  #library a.lt-tlink { display: flex; justify-content: space-between; align-items: center; min-height: 44px; font-size: 14px;
+                        font-weight: 500; text-decoration: none; color: var(--lt-accent-text); }
   `;
 
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const NAMES = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
+  const ICON_L = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>';
+  const ICON_R = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"></path></svg>';
+  const ICON_PLAY = '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>';
+  const ICON_PAUSE = '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"></path></svg>';
   const MARKUP = `
   <div id="lib-home">
-    <section class="lib-card" id="up" aria-live="polite">
-      <p class="lib-kicker" id="up-kicker">Up next</p>
-      <h2 id="up-title"></h2>
-      <p class="lib-overview" id="up-overview"></p>
-      <p class="lib-summary" id="up-summary"></p>
-      <ul class="lib-notes" id="up-notes" aria-label="Your notes for it" hidden></ul>
-      <p class="lib-line" id="up-line"></p>
-      <div class="lib-row"><button class="lib-pill" id="change" hidden>Change</button><button class="lib-link" id="note-open">Add a note</button></div>
-      <div id="note-box" hidden>
-        <textarea id="note-text" rows="3" aria-label="A note for the next chapter"
-                  placeholder="Anything for the next chapter: a question to cover, a source, something to leave out"></textarea>
-        <div class="lib-row"><button class="lib-pill solid" id="note-send">Add the note</button><button class="lib-link" id="note-cancel">Cancel</button></div>
+    <div class="lt-head">
+      <div><h2 class="lt-title">Library</h2><p class="lt-sub">Swipe through what you’ve explored</p></div>
+      <a class="lt-orb" href="/" aria-label="Talk to your guide"></a>
+    </div>
+    <div class="lt-stripwrap">
+      <div id="strip" class="lt-strip" role="region" aria-roledescription="carousel" aria-label="Your chapters, oldest first, then Up next">
+        <section class="lt-card lt-up" id="up" aria-label="Up next">
+          <p class="lt-upkick" id="up-kicker">Up next · Tonight</p>
+          <h3 class="lt-ctitle" id="up-title"></h3>
+          <p class="lt-upover" id="up-overview"></p>
+          <p class="lt-upsum" id="up-summary"></p>
+          <ul class="lib-notes" id="up-notes" aria-label="Your notes for it" hidden></ul>
+          <p class="lt-upline" id="up-line" aria-live="polite"></p>
+          <div class="lt-uprow"><button class="lt-pill" id="change" hidden>Change</button><button class="lt-link" id="note-open">Add a note</button></div>
+        </section>
+        <div class="lt-spacer" aria-hidden="true"></div>
       </div>
-      <p class="lib-line" id="note-msg" hidden></p>
-    </section>
-    <section class="lib-card" id="latest">
-      <p class="lib-kicker">Latest chapter</p>
-      <div id="latest-body">
-        <h2 id="latest-title"></h2>
-        <p class="lib-overview" id="latest-overview"></p>
-        <p class="lib-meta" id="latest-meta"></p>
-        <div class="lib-row">
-          <button class="lib-pill solid" id="play">Play</button>
-          <button class="lib-link" id="skip" hidden>Skip the intro</button>
-          <a id="episode" href="#/" hidden>Read along</a>
-        </div>
-        <p id="lib-hint" hidden>Your guide introduces it live, so Play turns on the microphone.</p>
+      <button class="lt-arrow" id="strip-prev" aria-label="Previous chapter">${ICON_L}</button>
+      <button class="lt-arrow" id="strip-next" aria-label="Next chapter">${ICON_R}</button>
+    </div>
+    <p id="lib-hint" hidden>Your guide introduces it live, so Play turns on the microphone.</p>
+    <p id="live" aria-live="polite"></p>
+    <div id="note-box" hidden>
+      <textarea id="note-text" rows="3" aria-label="A note for the next chapter"
+                placeholder="Anything for the next chapter: a question to cover, a source, something to leave out"></textarea>
+      <div class="lib-row"><button class="lib-pill solid" id="note-send">Add the note</button><button class="lib-link" id="note-cancel">Cancel</button></div>
+    </div>
+    <p class="lib-line" id="note-msg" hidden></p>
+    <div class="lt-scrubwrap">
+      <div id="scrubber" class="lt-scrub" role="slider" tabindex="0" aria-label="Your chapters over time">
+        <div class="lt-track"></div><div id="scrub-marks"></div><div class="lt-handle" id="scrub-handle"></div>
       </div>
-      <p class="lib-empty" id="latest-empty" hidden>No chapter yet.</p>
-      <p id="live" aria-live="polite"></p>
-    </section>
-    <section id="lib-history">
-      <h3 class="lib-kicker">All chapters</h3>
-      <ol id="history"></ol>
-      <p class="lib-empty" id="history-empty" hidden>Finished chapters will be listed here.</p>
+      <div class="lt-labels" id="scrub-labels" aria-hidden="true"></div>
+    </div>
+    <section class="lt-from" id="from" aria-live="polite">
+      <div class="lt-fromhead"><p class="lt-kicker" id="from-kicker">From this chapter</p><a class="lt-all" id="from-all" href="#/">See all</a></div>
+      <div id="from-list"></div>
+      <p class="lt-empty" id="from-empty" hidden>Nothing saved from this one yet.</p>
     </section>
     <button class="lib-link" id="settings-link">Settings</button>
     <section class="lib-card" id="settings">
@@ -167,8 +288,26 @@
       <div class="lib-row"><button class="lib-pill" id="s-save">Save</button><span class="note" id="s-note"></span></div>
     </section>
   </div>
+  <div id="lib-page" hidden>
+    <a href="#/" class="lt-back" id="pg-back">${ICON_L}Library</a>
+    <div class="lt-phead"><span class="lt-pmeta" id="pg-meta"></span><h1 id="pg-title"></h1><p id="pg-summary"></p></div>
+    <div class="lt-prog">
+      <button class="lt-bigplay" id="pg-play" aria-label="Play chapter">${ICON_PLAY}</button>
+      <div class="lt-progmain">
+        <div class="lt-bar" id="pg-bar"><div class="lt-barfill" id="pg-fill"></div><div id="pg-marks"></div></div>
+        <div class="lt-barlabels"><span id="pg-heard"></span><span id="pg-length"></span></div>
+      </div>
+    </div>
+    <section class="lt-moments" aria-labelledby="pg-mkick">
+      <p class="lt-kicker" id="pg-mkick">Your moments</p>
+      <div id="pg-list"></div>
+      <p class="lt-empty" id="pg-empty" hidden>Ask anything while you listen and it’ll show up here.</p>
+    </section>
+    <a class="lt-tlink" id="pg-transcript" href="#/"><span>Transcript and references</span>${ICON_R}</a>
+    <p class="lt-empty" id="pg-demo" hidden>Demo chapter</p>
+  </div>
   <div id="lib-chapter" hidden>
-    <a href="#/" id="lib-back">← All chapters</a>
+    <a href="#/" id="lib-back">← Chapter</a>
     <h1 id="ch-title"></h1>
     <p id="ch-angle"></p>
     <div class="lib-row"><button class="lib-pill solid" id="ch-play">Play</button><span class="lib-meta" id="ch-meta"></span></div>
@@ -197,6 +336,7 @@
   let host = $("library");
   if (!host) { host = document.createElement("section"); host.id = "library"; document.body.appendChild(host); }
   document.documentElement.classList.add("has-library");  // index.html leaves past chapters to the library
+  if (document.getElementById("orb")) document.documentElement.classList.add("has-orb");  // its own guide circle
   host.innerHTML = MARKUP;
   const player = document.createElement("div");
   player.id = "player";
@@ -559,6 +699,7 @@
 
   function startRecording(at) {  // L.run's recording, from `at`, in the player
     L.loaded = infoFor(L.run);
+    if (!audio.src || !audio.src.endsWith(L.audioUrl) || audio.ended) L.pbStart = true;  // a play, for playback.json
     if (!audio.src || !audio.src.endsWith(L.audioUrl)) audio.src = L.audioUrl;
     const seek = () => { try { audio.currentTime = at || 0; } catch (e) {} };
     if (audio.readyState >= 1) seek(); else audio.addEventListener("loadedmetadata", seek, { once: true });
@@ -818,9 +959,453 @@
     setButton("Play");
   }
 
-  // --- the cards and the history ------------------------------------------------------------------
-  function show(e, on) { e.hidden = !on; }
+  // --- the library timeline (docs/library-timeline.md): the strip, the scrubber, From this chapter --------------
+  // /api/library's `timeline` lists every chapter oldest first, each with its moments, playback and status line.
+  // The strip is one card per chapter, then Up next; the scrubber is the same chapters on a line of real dates
+  // (a gap over 7 days squeezed to a fixed width with a break mark). Both always show the same chapter: T.i.
+  function show(e, on) { if (e) e.hidden = !on; }
+  const T = { items: [], i: -1, key: "", target: null, targetAt: 0, xs: [], ticks: [], drag: null, tl: null };
+  const BREAK_DAYS = 3;  // the width, in days, a gap over 7 days is squeezed to
+  const PAD = 3;         // % kept clear at each end of the scrubber, for the handle
+  const dayNum = (iso) => Math.round(Date.parse(`${iso}T12:00:00Z`) / 864e5);
+  const isoOf = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
+  const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const cardDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const chapterRows = () => ((state && state.timeline) || {}).chapters || [];
+  const rowFor = (run) => chapterRows().find((c) => c.run === run) || null;
+  const statusLine = (c) => [c.status_line, c.counts].filter(Boolean).join(" · ");
 
+  function renderTimeline(s) {
+    const tl = s.timeline || { chapters: [] };
+    T.tl = tl;
+    const key = JSON.stringify([tl.chapters.map((c) => [c.run, c.title, c.date, c.minutes, c.color, c.playable, c.status_line, c.counts]),
+                                tl.first, tl.tonight, !!(s.latest && s.latest.intro)]);
+    const rebuilt = key !== T.key;
+    if (rebuilt) { T.key = key; buildStrip(tl, s); }
+    buildScrubber(tl);  // cheap, and the width may have changed
+    renderFrom();
+    const pageKey = view.page ? JSON.stringify([rowFor(view.page), tl.guide, tl.up_next_short]) : "";
+    if (view.page && pageKey !== T.pageKey) showPage(view.page);  // its moments or progress changed
+  }
+
+  function buildStrip(tl, s) {
+    const strip = $("strip"), up = $("up");
+    const before = T.items[T.i] ? (T.items[T.i].run || "up") : null;
+    strip.querySelectorAll(".lt-ch").forEach((e) => e.remove());
+    T.items = tl.chapters.map((c, i) => {
+      const card = el("article", `lt-card lt-ch ${c.color || "teal"}`);
+      card.dataset.run = c.run; card.dataset.i = i;
+      card.setAttribute("aria-label", `${plain(c.title)}, ${cardDate(c.date)}`);
+      const date = el("span", "lt-cdate", [cardDate(c.date), c.minutes ? `${c.minutes} min` : null].filter(Boolean).join(" · "));
+      const bottom = el("div", "lt-cbottom");
+      const title = el("a", "lt-ctitle", plain(c.title));
+      title.href = `#/chapter/${encodeURIComponent(c.run)}`;
+      bottom.append(title, el("span", "lt-cstatus", statusLine(c)));
+      if (c.playable) {  // the latest chapter: Play starts the morning flow (the guide's intro, then the recording)
+        date.id = "latest-meta"; title.id = "latest-title";
+        const row = el("div", "lt-crow");
+        const b = el("button", "lt-play", "Play"); b.id = "lib-play";  // not "play": the orb page has its own
+        b.addEventListener("click", () => { if (state) play(state.latest); });
+        const skip = el("button", "lt-link", "Skip the intro"); skip.id = "lib-skip"; skip.hidden = true;
+        skip.addEventListener("click", () => { if (state && state.latest) playChapter(state.latest, 0); });
+        row.append(b, skip);
+        bottom.appendChild(row);
+      }
+      card.append(date, bottom);
+      strip.insertBefore(card, up);
+      return { run: c.run, el: card, c };
+    });
+    up.dataset.i = T.items.length;
+    T.items.push({ run: null, el: up, c: null });
+    let i = before == null ? -1 : T.items.findIndex((x) => (x.run || "up") === before);
+    if (i < 0) {  // first time: the latest chapter, else the last one, else Up next
+      i = T.items.findIndex((x) => x.run && x.run === tl.latest);
+      if (i < 0) i = Math.max(0, T.items.length - 2);
+      if (!tl.chapters.length) i = 0;
+    }
+    T.i = -1;
+    requestAnimationFrame(() => goTo(i, false));
+  }
+
+  function offsetOf(i) { return T.items[i].el.offsetLeft - T.items[0].el.offsetLeft; }
+
+  function goTo(i, smooth = true) {
+    if (!T.items.length) return;
+    i = Math.max(0, Math.min(T.items.length - 1, i));
+    const strip = $("strip");
+    T.target = i; T.targetAt = now();
+    strip.scrollTo({ left: offsetOf(i), behavior: smooth ? "smooth" : "auto" });
+    setIndex(i);
+  }
+
+  function setIndex(i) {
+    if (i === T.i) return;
+    T.i = i;
+    host.dataset.card = String(i);  // for tests
+    $("strip-prev").disabled = i <= 0;
+    $("strip-next").disabled = i >= T.items.length - 1;
+    T.items.forEach((x, k) => x.el.classList.toggle("lt-current", k === i));
+    placeHandle();
+    renderFrom();
+    paint();  // the intro hint follows the card in view
+  }
+
+  function onStripScroll() {
+    if (!T.items.length) return;
+    const left = $("strip").scrollLeft;
+    let best = 0;
+    T.items.forEach((x, k) => { if (Math.abs(offsetOf(k) - left) < Math.abs(offsetOf(best) - left)) best = k; });
+    if (T.target != null) {  // a scroll we asked for: let it arrive before following it
+      if (best !== T.target && now() - T.targetAt < 2000) return;
+      T.target = null;
+    }
+    setIndex(best);
+  }
+  let stripRaf = 0;
+  $("strip").addEventListener("scroll", () => { cancelAnimationFrame(stripRaf); stripRaf = requestAnimationFrame(onStripScroll); }, { passive: true });
+  $("strip-prev").addEventListener("click", () => goTo(T.i - 1));
+  $("strip-next").addEventListener("click", () => goTo(T.i + 1));
+  $("strip").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    if (e.target.closest && e.target.closest("textarea, input")) return;
+    e.preventDefault();
+    const inCard = e.target.closest && e.target.closest(".lt-card");
+    goTo(T.i + (e.key === "ArrowRight" ? 1 : -1));
+    if (inCard) {  // keep the keyboard on the card that came into view
+      const it = T.items[T.i];
+      const f = it && (it.el.querySelector("a.lt-ctitle") || it.el.querySelector("button:not([hidden])"));
+      if (f) f.focus({ preventScroll: true });
+    }
+  });
+
+  // The scrubber. x positions in % of its width, from real dates; ticks for the first conversation, each chapter
+  // (tall), each moment (short, just after its chapter's), Up next's dashed ring at Tonight.
+  function scale(tl) {
+    const days = new Set(tl.chapters.filter((c) => c.date).map((c) => dayNum(c.date)));
+    if (tl.first && tl.first.date) days.add(dayNum(tl.first.date));
+    days.add(dayNum(tl.tonight));
+    const ds = [...days].sort((a, b) => a - b);
+    const cum = [0], breaks = [];
+    for (let k = 1; k < ds.length; k++) {
+      const g = ds[k] - ds[k - 1], w = g > 7 ? BREAK_DAYS : g;
+      cum.push(cum[k - 1] + w);
+      if (g > 7) breaks.push(cum[k - 1] + w / 2);
+    }
+    const W = cum[cum.length - 1] || 1;
+    const pct = (x) => PAD + (x / W) * (100 - 2 * PAD);
+    const at = (d) => {  // a day (fractional within a gap) on the squeezed line
+      if (ds.length < 2) return 100 - PAD;
+      if (d <= ds[0]) return pct(0);
+      for (let k = 1; k < ds.length; k++) {
+        if (d <= ds[k]) { const g = ds[k] - ds[k - 1]; return pct(cum[k - 1] + ((d - ds[k - 1]) / g) * (cum[k] - cum[k - 1])); }
+      }
+      return pct(W);
+    };
+    return { at, breaks: breaks.map(pct), ds };
+  }
+
+  function buildScrubber(tl) {
+    const marks = $("scrub-marks");
+    const sc = scale(tl);
+    const parts = [], ticks = [];
+    T.xs = [];
+    tl.chapters.forEach((c, i) => {
+      const d0 = dayNum(c.date || tl.tonight), x = sc.at(d0);
+      T.xs.push(x);
+      ticks.push({ x, i });
+      parts.push(`<div class="lt-tick ch" style="left:${x}%"></div>`);
+      (c.moments || []).forEach((m) => {
+        const f = c.duration_s ? Math.min(1, (m.position_s || 0) / c.duration_s) : 0.5;
+        const mx = sc.at(d0 + 0.2 + 0.55 * f);
+        ticks.push({ x: mx, i });
+        parts.push(`<div class="lt-tick mo" style="left:${mx}%"></div>`);
+      });
+    });
+    if (tl.first && tl.first.date) parts.unshift(`<div class="lt-tick conv" style="left:${sc.at(dayNum(tl.first.date))}%"></div>`);
+    sc.breaks.forEach((x) => parts.push(`<div class="lt-break" style="left:${x}%"></div>`));
+    const tx = sc.at(dayNum(tl.tonight));
+    T.xs.push(tx);
+    ticks.push({ x: tx, i: tl.chapters.length });
+    parts.push(`<div class="lt-upring" style="left:${tx}%"></div>`);
+    const html = parts.join("");
+    if (marks.dataset.html !== html) { marks.innerHTML = html; marks.dataset.html = html; }
+    T.ticks = ticks;
+    renderLabels(tl, sc);
+    const sl = $("scrubber");
+    sl.setAttribute("aria-valuemin", "1");
+    sl.setAttribute("aria-valuemax", String(T.items.length || 1));
+    placeHandle();
+  }
+
+  function renderLabels(tl, sc) {
+    const cands = [];
+    const dated = tl.chapters.filter((c) => c.date).map((c) => c.date);
+    const firstDate = (tl.first && tl.first.date) || dated[0];
+    if (firstDate) cands.push({ x: sc.at(dayNum(firstDate)), text: shortDate(firstDate) });
+    let month = firstDate ? firstDate.slice(0, 7) : null;
+    dated.forEach((d) => { if (d.slice(0, 7) !== month) { month = d.slice(0, 7); cands.push({ x: sc.at(dayNum(d)), text: shortDate(d) }); } });
+    const weekStart = dayNum(tl.tonight) - 7;
+    const wk = dated.find((d) => dayNum(d) > weekStart);
+    if (wk) cands.push({ x: sc.at(dayNum(wk)), text: "This week" });
+    cands.push({ x: sc.at(dayNum(tl.tonight)), text: "Tonight" });
+    const width = $("scrubber").offsetWidth || 346;
+    const minGap = (70 / width) * 100;
+    const kept = [];  // from the newest back: the oldest are dropped when crowded, and at most five
+    for (let k = cands.length - 1; k >= 0; k--) {
+      const c = cands[k];
+      if (kept.length && kept[kept.length - 1].x - c.x < minGap) continue;
+      kept.push(c);
+      if (kept.length === 5) break;
+    }
+    kept.reverse();
+    $("scrub-labels").replaceChildren(...kept.map((c) => {
+      const e = el("span", c.x < 10 ? "l" : c.x > 90 ? "r" : null, c.text);
+      e.style.left = `${c.x < 10 ? Math.max(0, c.x - 1) : c.x > 90 ? Math.min(100, c.x + 1) : c.x}%`;
+      return e;
+    }));
+  }
+
+  function placeHandle(x) {
+    const h = $("scrub-handle"), sl = $("scrubber");
+    if (x == null) x = T.xs[T.i];
+    if (x == null) { h.hidden = true; return; }
+    h.hidden = false;
+    h.style.left = `${x}%`;
+    const it = T.items[T.i];
+    if (it) {
+      sl.setAttribute("aria-valuenow", String(T.i + 1));
+      sl.setAttribute("aria-valuetext", it.c ? `${plain(it.c.title)}, ${cardDate(it.c.date)}` : "Up next, tonight");
+    }
+  }
+
+  function pctAt(e) { const r = $("scrubber").getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * 100; }
+  function nearest(x, ticks) { let b = null; ticks.forEach((t) => { if (!b || Math.abs(t.x - x) < Math.abs(b.x - x)) b = t; }); return b; }
+  const scrub = $("scrubber");
+  scrub.addEventListener("pointerdown", (e) => {
+    if (!T.items.length) return;
+    T.drag = { x0: e.clientX, moved: false };
+    try { scrub.setPointerCapture(e.pointerId); } catch (err) {}
+    scrub.focus({ preventScroll: true });
+  });
+  scrub.addEventListener("pointermove", (e) => {
+    if (!T.drag) return;
+    if (!T.drag.moved && Math.abs(e.clientX - T.drag.x0) < 5) return;
+    T.drag.moved = true;
+    scrub.classList.add("dragging");
+    const x = Math.max(0, Math.min(100, pctAt(e)));
+    const n = nearest(x, T.xs.map((tx, i) => ({ x: tx, i })));  // the handle marks a chapter (or Up next)
+    if (n && n.i !== T.i) goTo(n.i, false);
+    placeHandle(x);
+  });
+  function endDrag(e) {
+    if (!T.drag) return;
+    const tap = !T.drag.moved;
+    T.drag = null;
+    scrub.classList.remove("dragging");
+    if (tap && e && e.type === "pointerup") {  // a tap on a tick, a chapter's or a moment's: that chapter
+      const n = nearest(pctAt(e), T.ticks);
+      if (n) goTo(n.i);
+    }
+    placeHandle();
+  }
+  scrub.addEventListener("pointerup", endDrag);
+  scrub.addEventListener("pointercancel", endDrag);
+  scrub.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -3, PageUp: 3 }[e.key];
+    if (step) { e.preventDefault(); goTo(T.i + step); }
+    else if (e.key === "Home") { e.preventDefault(); goTo(0); }
+    else if (e.key === "End") { e.preventDefault(); goTo(T.items.length - 1); }
+  });
+  addEventListener("resize", () => { if (T.tl) { buildScrubber(T.tl); if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) }); } });
+
+  // A moment as a line: "You asked: “…”", "You mentioned *Upstream*, Mary Oliver", "You saved: “…”".
+  function momentText(m, into) {
+    if (m.kind === "mention" && m.title) {
+      into.append("You mentioned ", el("em", null, m.title), m.creator ? `, ${m.creator}` : "");
+    } else {
+      into.append(`${m.kind === "note" ? "You saved" : m.kind === "mention" ? "You mentioned" : "You asked"}: “${m.text}”`);
+    }
+  }
+  function outcomeTo(m) {  // where a moment's outcome points: "→ Tonight", or a past chapter, linked
+    if (m.tonight) return el("span", "lt-to", "→ Tonight");
+    if (m.outcome_run) {
+      const a = el("a", "lt-to", `→ ${plain((rowFor(m.outcome_run) || {}).title || m.outcome_label).split(":")[0]}`);
+      a.href = `#/chapter/${encodeURIComponent(m.outcome_run)}`;
+      return a;
+    }
+    return null;
+  }
+  function pickThree(ms) {  // up to three, in time order; one that became a chapter is never left out
+    const became = ms.filter((m) => m.outcome === "became_chapter");
+    const rest = ms.filter((m) => m.outcome !== "became_chapter");
+    const take = [...became.slice(0, 3), ...rest].slice(0, 3);
+    return take.sort((a, b) => (a.position_s || 0) - (b.position_s || 0));
+  }
+
+  function renderFrom() {
+    const it = T.items[T.i];
+    const list = $("from-list");
+    if (!it) { show($("from"), false); return; }
+    show($("from"), true);
+    let ms, kicker = "From this chapter";
+    const c = it.run ? rowFor(it.run) || it.c : null;  // the latest state's row: its moments may have changed
+    if (c) {
+      ms = pickThree(c.moments || []);
+      $("from-all").href = `#/chapter/${encodeURIComponent(c.run)}`;
+      show($("from-all"), true);
+    } else {  // Up next: the moment it came from, when it came from one
+      ms = [];
+      chapterRows().forEach((c) => (c.moments || []).forEach((m) => { if (m.tonight) ms.push({ ...m, _from: c }); }));
+      kicker = "Where it came from";
+      show($("from-all"), false);
+    }
+    $("from-kicker").textContent = kicker;
+    const key = JSON.stringify([T.i, kicker, ms.map((m) => [m.id, m.outcome_label, m._from && m._from.run])]);
+    if (list.dataset.key !== key) {
+      list.dataset.key = key;
+      list.replaceChildren(...ms.map((m) => {
+        const row = el("div", "lt-row");
+        row.dataset.moment = m.id;
+        const text = el("span", "lt-rtext");
+        momentText(m, text);
+        const to = c ? outcomeTo(m) : null;
+        if (to) text.append(" ", to);
+        if (m._from) text.append(` (${plain(m._from.title).split(":")[0]})`);
+        row.append(el("span", "lt-rtime", fmt(m.position_s)), text);
+        return row;
+      }));
+    }
+    show($("from-empty"), !!c && ms.length === 0);
+    if (!c && !ms.length) show($("from"), false);
+  }
+
+  // --- the chapter page (#/chapter/<run>, sketch D) ---------------------------------------------------------
+  function showPage(run) {
+    view.page = run;
+    T.pageKey = JSON.stringify([rowFor(run), ((state || {}).timeline || {}).guide, ((state || {}).timeline || {}).up_next_short]);
+    const c = rowFor(run);
+    const info = infoFor(run);
+    const s = state || {};
+    const guide = (s.timeline || {}).guide;
+    if (!c) {  // not (yet) in the library: what /api/library says about it
+      $("pg-meta").textContent = dateLabel(info);
+      $("pg-title").textContent = plain(info.title);
+      $("pg-summary").textContent = info.overview || "";
+      show($("pg-play"), false);
+      $("pg-list").replaceChildren(); $("pg-marks").replaceChildren();
+      show($("pg-empty"), true);
+      return;
+    }
+    $("pg-meta").textContent = [cardDate(c.date), c.minutes ? `${c.minutes} min` : null, guide ? `with ${guide}` : null].filter(Boolean).join(" · ");
+    $("pg-title").textContent = plain(c.title);
+    $("pg-summary").textContent = c.summary || c.overview || "";
+    show($("pg-play"), !!c.playable);
+    $("pg-length").textContent = c.duration_s ? fmt(c.duration_s) : "";
+    const marks = (c.moments || []).map((m) => {
+      const b = el("button", `lt-mk ${m.outcome === "became_chapter" ? "became" : m.kind}`);
+      b.style.left = `${c.duration_s ? Math.min(100, (100 * (m.position_s || 0)) / c.duration_s) : 0}%`;
+      b.dataset.moment = m.id;
+      b.setAttribute("aria-label", `${fmt(m.position_s)}: ${m.kind === "mention" ? "you mentioned" : m.kind === "note" ? "you saved" : "you asked"} ${m.kind === "mention" && m.title ? m.title : m.text}`);
+      b.appendChild(el("i"));
+      b.addEventListener("click", () => toMoment(c, m));
+      return b;
+    });
+    $("pg-marks").replaceChildren(...marks);
+    $("pg-list").replaceChildren(...(c.moments || []).map((m) => momentRow(c, m, guide)));
+    show($("pg-empty"), !(c.moments || []).length);
+    $("pg-transcript").href = `#/chapter/${encodeURIComponent(c.run)}/transcript`;
+    show($("pg-transcript"), !!c.episode);
+    show($("pg-demo"), !c.episode);
+    $("pg-demo").textContent = c.demo ? "Demo chapter" : "No transcript yet";
+    pageProgress();
+  }
+
+  function momentRow(c, m, guide) {
+    const row = el("div", `lt-mrow${m.outcome === "became_chapter" ? " became" : ""}`);
+    row.id = `moment-${m.id}`; row.tabIndex = -1; row.dataset.moment = m.id;
+    const head = el("div", "lt-mhead");
+    const kind = { question: "You asked", mention: "You mentioned", note: "You saved" }[m.kind] || "";
+    head.appendChild(el("span", null, `${fmt(m.position_s)} · ${kind}`));
+    if (m.outcome_run) {
+      const a = el("a", "lt-mout", plain(m.outcome_label)); a.href = `#/chapter/${encodeURIComponent(m.outcome_run)}`;
+      head.appendChild(a);
+    } else head.appendChild(el("span", `lt-mout${m.outcome === "became_chapter" ? " became" : ""}`, m.outcome_label || ""));
+    row.appendChild(head);
+    const words = el("span", "lt-mwords");
+    if (m.kind === "mention" && m.title) words.append(el("em", null, m.title), m.creator ? `, ${m.creator}` : "");
+    else words.textContent = `“${m.text}”`;
+    row.appendChild(words);
+    let second = m.reply ? `${guide || "Your guide"}: ${m.reply}` : null;
+    if (!second && m.tonight) second = `Saved for later. Up next: ${plain(((state || {}).timeline || {}).up_next_short || "")}.`;
+    if (second) row.appendChild(el("span", "lt-mreply", second));
+    if (c.playable) {
+      const b = el("button", "lt-pill lt-offer", `Play from ${fmt(Math.max(0, (m.position_s || 0) - 10))}`);
+      b.hidden = true;
+      b.addEventListener("click", () => seekTo(infoFor(c.run), Math.max(0, (m.position_s || 0) - 10)));
+      row.appendChild(b);
+    }
+    return row;
+  }
+
+  function toMoment(c, m) {  // a marker tapped: its moment comes into view; on the playable chapter, an offer to play
+    const row = document.getElementById(`moment-${m.id}`);
+    if (!row) return;
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    row.classList.add("flash");
+    setTimeout(() => row.classList.remove("flash"), 1600);
+    const offer = row.querySelector(".lt-offer");
+    $("pg-list").querySelectorAll(".lt-offer").forEach((b) => { if (b !== offer) b.hidden = true; });
+    if (offer) { offer.hidden = false; offer.focus({ preventScroll: true }); } else row.focus({ preventScroll: true });
+  }
+
+  function pageProgress() {  // the bar filled to the furthest point heard (or further, while it plays here)
+    const c = view.page && rowFor(view.page);
+    if (!c) return;
+    const pb = c.playback || {};
+    const here = L.loaded && L.loaded.run === c.run && audio.src;
+    const furthest = Math.max(pb.furthest_s || 0, here ? audio.currentTime || 0 : 0);
+    const d = c.duration_s || (here && Number.isFinite(audio.duration) ? audio.duration : 0);
+    const finished = pb.finished || (d && furthest >= 0.95 * d);
+    $("pg-fill").style.width = `${finished ? 100 : d ? Math.min(100, (100 * furthest) / d) : 0}%`;
+    $("pg-heard").textContent = finished ? "Finished" : furthest >= 30 ? `${Math.max(1, Math.floor(furthest / 60))} of ${Math.round(d / 60)} min heard` : "Not started";
+    const playing = here && !audio.paused;
+    const b = $("pg-play");
+    b.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
+    b.setAttribute("aria-label", playing ? "Pause chapter" : "Play chapter");
+  }
+  $("pg-play").addEventListener("click", () => {
+    const c = view.page && rowFor(view.page);
+    if (!c || !c.playable || !state) return;
+    if (L.loaded && L.loaded.run === c.run && audio.src && !L.mode) return playOrPause(infoFor(c.run));
+    play(state.latest);  // the latest chapter's Play: the morning flow, as on its card
+  });
+
+  // --- the player's progress: playback.json (every 10 seconds while playing, and on pause and at the end) ------
+  let reportedAt = 0;
+  function report(start) {
+    if (!L.loaded || !audio.src) return;
+    reportedAt = now();
+    const d = Number.isFinite(audio.duration) ? audio.duration : null;
+    const run = L.loaded.run;
+    post(`/api/chapters/${encodeURIComponent(run)}/playback`, { t: audio.currentTime || 0, duration: d, start: !!start })
+      .then((pb) => {  // the card's status line and the page's bar follow at once, not at the next poll
+        const c = rowFor(run);
+        if (c) { c.playback = pb; if (pb.finished && c.status !== "finished") load(); }
+        pageProgress();
+      }).catch(() => {});
+  }
+  audio.addEventListener("playing", () => { if (L.pbStart) { L.pbStart = false; report(true); } });
+  audio.addEventListener("timeupdate", () => { if (!audio.paused && now() - reportedAt >= 10000) report(false); pageProgress(); });
+  audio.addEventListener("pause", () => { report(false); setTimeout(load, 400); });
+  audio.addEventListener("ended", () => report(false));
+  addEventListener("pagehide", () => {
+    if (!L.loaded || !audio.src || audio.paused) return;
+    const d = Number.isFinite(audio.duration) ? audio.duration : null;
+    try { navigator.sendBeacon(`/api/chapters/${encodeURIComponent(L.loaded.run)}/playback`,
+                                new Blob([JSON.stringify({ t: audio.currentTime || 0, duration: d })], { type: "application/json" })); } catch (e) {}
+  });
+
+  // --- the Up next card and the rest of the page ------------------------------------------------------------
   function render(s) {
     state = s;
     const up = s.up_next, card = up.card;
@@ -829,46 +1414,16 @@
     $("up-title").textContent = card ? card.title : (up.state === "off" ? "Overnight chapters are off" : "Nothing planned yet");
     $("up-overview").textContent = card ? (card.overview || "") : "";
     $("up-summary").textContent = card ? (card.summary || "") : "";
+    $("up-kicker").textContent = card ? "Up next · Tonight" : "Up next";
     const notes = (card && card.notes_added) || [];
     $("up-notes").replaceChildren(...notes.map((n) => el("li", null, n.text || "")));
     show($("up-notes"), notes.length > 0);
     if (L.mode !== "change") $("up-line").textContent = up.line || "";
     show($("change"), !!up.change);
     show($("note-open"), up.state !== "off");
-    const l = s.latest;
-    show($("latest-body"), !!l);
-    show($("latest-empty"), !l);
-    if (l) {
-      $("latest-title").textContent = l.title;
-      $("latest-overview").textContent = l.overview || "";
-      $("latest-meta").textContent = dateLabel(l);
-      show($("episode"), !!l.episode);
-      if (l.episode) $("episode").href = l.episode;
-    }
-    renderHistory(s.history || []);
+    renderTimeline(s);
     if (!host.classList.contains("lib-settings-open")) fillSettings(s.settings);
     paint();
-  }
-
-  let shownHistory = "";
-  function renderHistory(items) {
-    const key = JSON.stringify(items);
-    if (key === shownHistory) return;  // rebuilt only when it changed: a focused button survives the poll
-    shownHistory = key;
-    $("history").replaceChildren(...items.map((x) => {
-      const li = el("li");
-      li.dataset.run = x.run;
-      const b = el("button", "lib-hplay", "▶");
-      b.setAttribute("aria-label", `Play ${x.title}`);
-      b.addEventListener("click", () => playOrPause(infoFor(x.run)));
-      const body = el("div", "lib-hbody");
-      const title = el(x.episode ? "a" : "span", "lib-htitle", plain(x.title));
-      if (x.episode) title.href = x.episode;
-      body.append(title, el("span", "lib-hmeta", dateLabel(x)));
-      li.append(b, body);
-      return li;
-    }));
-    show($("history-empty"), items.length === 0);
   }
 
   function fillSettings(st) {
@@ -886,23 +1441,19 @@
   function paint() {
     const l = state && state.latest;
     const mine = !!l && L.run === l.run;
-    $("play").textContent = mine || L.mode === "ask" ? L.button : "Play";
+    const pb = $("lib-play");
+    if (pb) pb.textContent = mine || L.mode === "ask" ? L.button : "Play";
     const offerIntro = !!(l && l.intro) && !(mine && (L.playing || L.mode));
-    show($("skip"), offerIntro);
-    show($("lib-hint"), offerIntro);
+    show($("lib-skip"), offerIntro);
+    show($("lib-hint"), offerIntro && T.items[T.i] && T.items[T.i].run === l.run);
     const on = L.loaded && !audio.paused ? L.loaded.run : null;
-    $("history").querySelectorAll("li").forEach((li) => {
-      const playing = li.dataset.run === on;
-      li.classList.toggle("on", playing);
-      const b = li.querySelector(".lib-hplay");
-      b.textContent = playing ? "❚❚" : "▶";
-    });
     if (view.run) $("ch-play").textContent = on === view.run ? "Pause" : "Play";
+    pageProgress();
     const info = L.loaded;
     player.hidden = !info;
     if (info) {
       $("player-title").textContent = plain(info.title);
-      $("player-title").href = info.episode || "#/";
+      $("player-title").href = `#/chapter/${encodeURIComponent(info.run)}`;
       $("player-toggle").textContent = audio.paused ? "▶" : "❚❚";
       $("player-toggle").setAttribute("aria-label", audio.paused ? "Play" : "Pause");
       const asking = L.mode === "ask";
@@ -940,7 +1491,7 @@
   seekBar.addEventListener("input", () => { try { audio.currentTime = +seekBar.value; } catch (e) {} tick(); });
 
   // --- the chapter view (#/chapter/<run>) ------------------------------------------------------------
-  const view = { run: null, sentences: [], refs: [], cur: -1, refK: -2, scrolledAt: 0, autoAt: 0 };
+  const view = { run: null, page: null, sentences: [], refs: [], cur: -1, refK: -2, scrolledAt: 0, autoAt: 0 };
   const episodes = {};
 
   async function showChapter(run) {
@@ -968,7 +1519,9 @@
       }
     }
     if (view.run !== run) return;
-    if (ep.title) $("ch-title").textContent = plain(ep.title);
+    const row = rowFor(run);  // the title the library knows it by (its card's), else the episode's
+    $("ch-title").textContent = plain((row && row.title) || ep.title || info.title);
+    show($("ch-play"), !!(row && row.playable));  // only the latest chapter plays (docs/library-timeline.md)
     if (ep.angle && plain(ep.angle) !== plain(ep.title)) $("ch-angle").textContent = plain(ep.angle);
     renderText(ep);
     renderRefs(ep.references || []);
@@ -1042,23 +1595,31 @@
   $("ch-text").addEventListener("click", (e) => {
     const se = e.target.closest && e.target.closest(".lib-s");
     if (!se || !view.run) return;
+    if (!(rowFor(view.run) || {}).playable) return;  // an older chapter reads, but doesn't play
     seekTo(infoFor(view.run), view.sentences[+se.dataset.i].start);
   });
-  $("ch-play").addEventListener("click", () => { if (view.run) playOrPause(infoFor(view.run)); });
+  $("ch-play").addEventListener("click", () => { if (view.run && (rowFor(view.run) || {}).playable) playOrPause(infoFor(view.run)); });
 
   // --- the router: location.hash; the player's audio is never touched (the orb's #audio playing this chapter is
   // handed to it, since the chapter view hides the orb) ---------------------------------------------------------
-  let homeScroll = 0, inChapter = false;
+  let homeScroll = 0, inChapter = false, shownHash = "";
   function route() {
-    const m = /^#\/chapter\/(.+)$/.exec(location.hash);
+    const m = /^#\/chapter\/([^/]+)(\/transcript)?$/.exec(location.hash);
     const run = m ? decodeURIComponent(m[1]) : null;
+    const reading = !!(m && m[2]);
     if (run && !inChapter) homeScroll = scrollY;
     document.documentElement.classList.toggle("lib-in-chapter", !!run);
-    host.classList.toggle("lib-wide", !!run);
+    host.classList.toggle("lib-wide", reading);
     show($("lib-home"), !run);
-    show($("lib-chapter"), !!run);
-    if (run) { takeOver(run); showChapter(run); if (!inChapter) scrollTo(0, 0); }  // the orb hides: its chapter moves to the player
-    else if (inChapter) { view.run = null; requestAnimationFrame(() => scrollTo(0, homeScroll)); }
+    show($("lib-page"), !!run && !reading);
+    show($("lib-chapter"), reading);
+    if (run) takeOver(run);  // the orb hides: its chapter moves to the player
+    if (run && reading) { view.page = null; $("lib-back").href = `#/chapter/${encodeURIComponent(run)}`; showChapter(run); }
+    else if (run) { view.run = null; showPage(run); }
+    else { view.run = null; view.page = null; }
+    if (run && location.hash !== shownHash) scrollTo(0, 0);
+    else if (!run && inChapter) requestAnimationFrame(() => { scrollTo(0, homeScroll); if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) }); });
+    shownHash = location.hash;
     inChapter = !!run;
     paint();
   }
@@ -1104,8 +1665,6 @@
     $("s-note").textContent = res.ok ? "Saved." : (out.detail || "Couldn't save that.");
     if (res.ok) { host.classList.remove("lib-settings-open"); load(); }
   });
-  $("play").addEventListener("click", () => { if (state) play(state.latest); });
-  $("skip").addEventListener("click", () => { if (state && state.latest) playChapter(state.latest, 0); });
   $("change").addEventListener("click", () => {
     if (!state) return;
     return L.mode === "change" ? closeChange(L.changed || null) : openChange(state.up_next);

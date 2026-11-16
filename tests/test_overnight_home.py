@@ -1,8 +1,8 @@
 """The library mounted on the main page (overnight/DESIGN.md "Round 2"; page/index.html, page/library.js), in
 headless Chromium against the real server, GPT-Live's session opening faked and WebRTC stubbed in the page (the
-pattern of test_overnight_library_page.py). Covers: the orb on top and the library and history below it; one
-player that keeps playing while the listener moves between the home and a chapter view; a sentence click
-seeking; Skip the intro playing with no session; the typed note; the lines still being heard saved before a
+pattern of test_overnight_library_page.py). Covers: the orb on top and the library (the chapter strip,
+docs/library-timeline.md) below it; one player that keeps playing while the listener moves between the home, a
+chapter page and its transcript; a sentence click seeking (only on the latest chapter, the one that plays); Skip the intro playing with no session; the typed note; the lines still being heard saved before a
 session ends; the orb's audio and the chapter player pausing each other; the orb's voice guide and the library's
 player and sessions never running together (the ElevenLabs client stubbed as in test_page_voice.py); every play
 and seek closing a live session first; the chapter view taking over the orb's audio; Ask only where it can work."""
@@ -125,14 +125,15 @@ def test_the_home_shows_the_orb_and_the_library_below_it(site, browser):
     height = pg.evaluate("innerHeight")
     assert pg.evaluate("document.getElementById('library').getBoundingClientRect().top") >= height - 1  # below it
     assert pg.evaluate("document.getElementById('orb').getBoundingClientRect().bottom") <= height
-    pg.locator("#history").scroll_into_view_if_needed()
+    pg.locator("#strip").scroll_into_view_if_needed()
     assert pg.inner_text("#up-title") == "How Owls Hear" and pg.is_visible("#change") and pg.is_visible("#note-open")
     assert pg.inner_text("#latest-title") == "Why Herons Wait"
-    titles = pg.eval_on_selector_all("#history .lib-htitle", "els => els.map((e) => e.textContent)")
-    assert titles == ["Why Herons Wait", "Octopus Eyes"]  # every chapter, newest first
-    hrefs = pg.eval_on_selector_all("#history a.lib-htitle", "els => els.map((e) => e.getAttribute('href'))")
-    assert hrefs == [f"#/chapter/{LATEST}", f"#/chapter/{OLDER}"]
-    assert pg.get_attribute("#episode", "href") == f"#/chapter/{LATEST}"  # not the old standalone episode page
+    titles = pg.eval_on_selector_all("#strip .lt-ch a.lt-ctitle", "els => els.map((e) => e.textContent)")
+    assert titles == ["Octopus Eyes", "Why Herons Wait"]  # every chapter, oldest first (the strip)
+    hrefs = pg.eval_on_selector_all("#strip .lt-ch a.lt-ctitle", "els => els.map((e) => e.getAttribute('href'))")
+    assert hrefs == [f"#/chapter/{OLDER}", f"#/chapter/{LATEST}"]  # each card opens its chapter page
+    assert pg.eval_on_selector_all("#strip .lt-ch", "els => els.map((e) => !!e.querySelector('.lt-play'))") == [False, True]
+    assert not pg.is_visible(".lt-orb")  # the page's own orb is the guide circle here
     assert not pg.is_visible("#player")  # nothing loaded yet
     assert page.errors == []
 
@@ -140,21 +141,27 @@ def test_the_home_shows_the_orb_and_the_library_below_it(site, browser):
 def test_moving_between_the_home_and_a_chapter_keeps_the_same_audio_playing(site, browser):
     page = open_page(site, browser)
     pg = page.p
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")  # a past chapter just plays: no intro, no mic
+    pg.click("#lib-skip")  # the recording at once: no intro, no mic
     playing(pg)
     assert site.posts == [] and pg.evaluate("window.__rtc.mics") == 0
-    assert pg.is_visible("#player") and pg.inner_text("#player-title") == "Octopus Eyes"
+    assert pg.is_visible("#player") and pg.inner_text("#player-title") == "Why Herons Wait"
     first = audio_state(pg)
-    assert first["src"].endswith(f"/api/chapters/{OLDER}/audio")
-    pg.click(f"#history li[data-run='{OLDER}'] a.lib-htitle")  # its chapter view
+    assert first["src"].endswith(f"/api/chapters/{LATEST}/audio")
+    pg.click("#latest-title")  # its chapter page
+    pg.wait_for_function(f"location.hash === '#/chapter/{LATEST}'")
+    pg.wait_for_function("document.documentElement.classList.contains('lib-in-chapter')")
+    assert not pg.is_visible("#orb") and not pg.is_visible("#lib-home") and pg.is_visible("#lib-page")
+    assert pg.is_visible("#player") and pg.get_attribute("#pg-play", "aria-label") == "Pause chapter"
+    pg.click("#pg-transcript")  # its transcript: read along with the player
     pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 0")
-    assert pg.evaluate("location.hash") == f"#/chapter/{OLDER}"
-    assert not pg.is_visible("#orb") and not pg.is_visible("#lib-home") and pg.is_visible("#player")
-    pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")  # read along with the player
+    assert pg.evaluate("location.hash") == f"#/chapter/{LATEST}/transcript"
+    pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")
     pg.wait_for_timeout(600)
     mid = audio_state(pg)
     assert mid["src"] == first["src"] and not mid["paused"] and mid["t"] > first["t"]
-    pg.click("#lib-back")
+    pg.click("#lib-back")  # to the chapter page, then to the library
+    pg.wait_for_function(f"location.hash === '#/chapter/{LATEST}'")
+    pg.click("#pg-back")
     pg.wait_for_function("location.hash === '#/' && !document.documentElement.classList.contains('lib-in-chapter')")
     assert pg.is_visible("#orb") and pg.is_visible("#lib-home")
     pg.wait_for_timeout(600)
@@ -168,7 +175,7 @@ def test_moving_between_the_home_and_a_chapter_keeps_the_same_audio_playing(site
 
 
 def test_a_sentence_click_seeks_and_plays(site, browser):
-    page = open_page(site, browser, f"/#/chapter/{LATEST}")
+    page = open_page(site, browser, f"/#/chapter/{LATEST}/transcript")
     pg = page.p
     pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 20")
     assert pg.inner_text("#ch-title") == "Why Herons Wait"
@@ -190,15 +197,25 @@ def test_a_sentence_click_seeks_and_plays(site, browser):
     assert site.posts == [] and page.errors == []
 
 
+def test_an_older_chapters_transcript_reads_but_does_not_play(site, browser):
+    page = open_page(site, browser, f"/#/chapter/{OLDER}/transcript")
+    pg = page.p
+    pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 20")
+    assert pg.inner_text("#ch-title") == "Octopus Eyes" and not pg.is_visible("#ch-play")
+    pg.click("#ch-text .lib-s[data-id='seg02-s004']")
+    pg.wait_for_timeout(500)
+    assert pg.evaluate(f"{AUDIO}.paused") and not pg.is_visible("#player") and page.errors == []
+
+
 def test_skip_the_intro_plays_at_once_and_ask_runs_from_the_player(site, browser):
     page = open_page(site, browser, "/library")  # the standalone shell
     pg = page.p
-    assert pg.is_visible("#skip") and pg.is_visible("#lib-hint") and "microphone" in pg.inner_text("#lib-hint")
-    pg.click("#skip")
+    assert pg.is_visible("#lib-skip") and pg.is_visible("#lib-hint") and "microphone" in pg.inner_text("#lib-hint")
+    pg.click("#lib-skip")
     playing(pg)
     assert site.posts == [] and pg.evaluate("window.__rtc.mics") == 0  # no session, no microphone
     assert audio_state(pg)["src"].endswith(f"/api/chapters/{LATEST}/audio")
-    assert pg.inner_text("#play") == "Ask a question" and not pg.is_visible("#skip")
+    assert pg.inner_text("#lib-play") == "Ask a question" and not pg.is_visible("#lib-skip")
     pg.click("#player-ask")  # Ask, from the mini player
     pg.wait_for_function(f"{AUDIO}.paused")
     start_session(pg)
@@ -212,9 +229,9 @@ def test_skip_the_intro_plays_at_once_and_ask_runs_from_the_player(site, browser
 def test_play_on_the_latest_says_the_guide_introduces_it_live(site, browser):
     page = open_page(site, browser, "/library")
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     pg.wait_for_function("document.getElementById('live').textContent.includes('live')")
-    assert "introduces" in pg.inner_text("#live") and pg.inner_text("#play") == "Skip to the chapter"
+    assert "introduces" in pg.inner_text("#live") and pg.inner_text("#lib-play") == "Skip to the chapter"
     start_session(pg)
     assert pg.inner_text("#live") == "" and site.posts[-1]["delegation"]["responses"]["tools"][0]["name"] == "start_chapter"
     assert page.errors == []
@@ -292,7 +309,7 @@ def test_the_lines_still_being_heard_are_saved_before_the_end(site, browser):
 def test_the_orb_audio_and_the_chapter_player_pause_each_other(site, browser):
     page = open_page(site, browser)
     pg = page.p
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
+    pg.click("#lib-skip")
     playing(pg)
     pg.evaluate(f"(() => {{ const a = document.getElementById('audio'); a.src = '/api/chapters/{LATEST}/audio'; a.play(); }})()")
     pg.wait_for_function("!document.getElementById('audio').paused")
@@ -339,7 +356,7 @@ def test_a_chapter_played_below_ends_the_orb_guide(site, browser):
     page = open_page(site, browser, voice=True)
     pg = page.p
     orb_talking(pg)
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
+    pg.click("#lib-skip")
     playing(pg)
     pg.wait_for_function("window.__el.sessions[0].ended && !window.Orb.busy()")
     pg.wait_for_timeout(400)
@@ -355,7 +372,7 @@ def test_the_orb_pauses_the_chapter_player_before_it_listens(site, browser):
     pg = page.p
     pg.evaluate("""(() => { const C = window.ElevenLabsClient.Conversation, s = C.startSession; window.__heard = [];
       C.startSession = (o) => { window.__heard.push(document.getElementById('chapter-audio').paused); return s(o); }; })()""")
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
+    pg.click("#lib-skip")
     playing(pg)
     pg.click("#orb")
     pg.wait_for_function("window.__el.sessions.length === 1")
@@ -401,7 +418,7 @@ def test_change_pauses_the_orbs_chapter_before_the_mic_opens(site, browser):
 def test_the_player_toggle_closes_a_change_conversation_first(site, browser):
     page = open_page(site, browser)
     pg = page.p
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
+    pg.click("#lib-skip")
     playing(pg)
     pg.click("#change")
     start_session(pg)
@@ -417,9 +434,9 @@ def test_a_sentence_clicked_during_the_intro_plays_from_that_sentence(site, brow
     import ask_fixture
     page = open_page(site, browser)
     pg = page.p
-    pg.click("#play")  # the intro, live
+    pg.click("#lib-play")  # the intro, live
     start_session(pg)
-    pg.evaluate(f"location.hash = '#/chapter/{LATEST}'")
+    pg.evaluate(f"location.hash = '#/chapter/{LATEST}/transcript'")
     pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 20")
     target = "seg02-s004"
     pg.click(f"#ch-text .lib-s[data-id='{target}']")
@@ -434,21 +451,23 @@ def test_the_chapter_view_takes_over_the_orbs_audio(site, browser):
     page = open_page(site, browser)
     pg = page.p
     orb_plays(pg, LATEST, at=40)
-    pg.locator("#episode").scroll_into_view_if_needed()
-    pg.click("#episode")  # Read along on the Latest card
+    pg.locator("#latest-title").scroll_into_view_if_needed()
+    pg.click("#latest-title")  # the latest card: its chapter page
     pg.wait_for_function(f"location.hash === '#/chapter/{LATEST}'")
     playing(pg)
     pg.wait_for_function(f"{ORB_AUDIO}.paused")
     assert audio_state(pg)["t"] >= 40  # where the orb had got to, not the start
     assert pg.is_visible("#player") and pg.inner_text("#player-title") == "Why Herons Wait"
-    pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")
-    assert pg.inner_text("#ch-play") == "Pause"
-    pg.click("#ch-play")
+    assert pg.get_attribute("#pg-play", "aria-label") == "Pause chapter"
+    pg.click("#pg-play")
     pg.wait_for_function(f"{AUDIO}.paused")
     t = audio_state(pg)["t"]
     assert t >= 40
-    pg.click("#ch-play")
+    pg.click("#pg-play")
     playing(pg)
+    pg.click("#pg-transcript")  # and the read-along follows it
+    pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")
+    assert pg.inner_text("#ch-play") == "Pause"
     assert audio_state(pg)["t"] >= t and site.posts == [] and page.errors == []
 
 
@@ -456,21 +475,21 @@ def test_play_on_the_latest_while_the_orb_plays_it_carries_on_without_an_intro(s
     page = open_page(site, browser)
     pg = page.p
     orb_plays(pg, LATEST, at=40)
-    pg.locator("#play").scroll_into_view_if_needed()
-    pg.click("#play")
+    pg.locator("#lib-play").scroll_into_view_if_needed()
+    pg.click("#lib-play")
     playing(pg)
     pg.wait_for_function(f"{ORB_AUDIO}.paused")
     assert audio_state(pg)["t"] >= 40 and site.posts == [] and pg.evaluate("window.__rtc.mics") == 0
-    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+    assert pg.inner_text("#lib-play") == "Ask a question" and page.errors == []
 
 
 # R6: Ask only on a chapter with a timed transcript; when it can't start, the listener is told why.
 def test_ask_is_not_offered_on_a_chapter_without_a_timed_transcript(site, browser):
     for name in ("timing.json", "episode.json"):
-        (site.older / "11_episode" / name).unlink()
+        (site.root / "11_episode" / name).unlink()
     page = open_page(site, browser)
     pg = page.p
-    pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
+    pg.click("#lib-skip")
     playing(pg)
     pg.wait_for_timeout(300)
     assert pg.is_visible("#player") and not pg.is_visible("#player-ask")
@@ -483,8 +502,8 @@ def test_an_ask_that_cannot_start_says_why_and_the_chapter_goes_on(site, browser
     why = "This chapter has no timed transcript, so it can't be asked about yet."
     pg.route("**/api/overnight/live/start", lambda r: r.fulfill(status=400, content_type="application/json",
                                                                 body=json.dumps({"detail": why})))
-    pg.locator("#skip").scroll_into_view_if_needed()
-    pg.click("#skip")
+    pg.locator("#lib-skip").scroll_into_view_if_needed()
+    pg.click("#lib-skip")
     playing(pg)
     pg.click("#player-ask")
     pg.wait_for_function(f"document.getElementById('player-line').textContent === {json.dumps(why)}")
