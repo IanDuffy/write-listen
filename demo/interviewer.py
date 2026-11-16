@@ -1,0 +1,594 @@
+"""The interviewer (docs/tester-demo.md, "The interviewer"; contracts in docs/tester-demo-design.md, part C).
+
+A separate GPT-Live session from the guide's, in its own voice (demo.interviewer.voice), twice per tester:
+
+    intro     thanks them, gets and confirms their name (set_listener_name), says it would like a few minutes
+              afterwards, "I'll hand you over now." (handoff_to_guide); the page then brings in the guide
+    debrief   the five core questions in order, question three from their real moments (demo/debrief.py), the
+              closing question, thanks by name (end_debrief)
+
+The session is opened like the guide's (voice/gpt_live/session.py): the page's WebRTC offer goes to OpenAI with
+the configuration and the key stays here. The tools run through GPT-Live's delegation to a Responses backend
+(prompts/interviewer_backend.md), which the voice only uses when its instructions carry a Delegation policy
+naming them (prompts/interviewer_intro.md, _debrief.md); the page runs them at /api/interview/tool.
+
+Everything is kept in listeners/<lid>/study/, never sessions/: memory.meeting() counts any sessions/*.jsonl
+the tester spoke in as a past conversation with the guide, which would then skip introducing itself.
+
+    intro-<sid>.jsonl, debrief-<sid>.jsonl   transcripts ({"t", "s", "who", "text", ...}; who: session, page,
+                                             listener, interviewer, tool)
+    log.jsonl                                costs (GPT-Live per session, kind "interviewer"; the summary's Claude call)
+    <live_id>.mp3 (or .wav if ffmpeg fails)  the session's recording from OpenAI (store: true), fetched after
+                                             live.archive_wait_seconds in a background thread
+    debrief.json                             {done, finished_at, questions_asked, session}
+    debrief_summary.md                       one Claude call (prompts/debrief_summary.md)
+
+Routes (mount(app, cfg); part A's middleware scopes each request to the tester's listener folder):
+
+    POST /api/interview/start  {mode, sdp} -> {sid, live_id, sdp, notes, settings}
+    POST /api/interview/tool   {sid, name, args} -> the tool's result, with PAGE_ONLY fields the page strips
+                               before the backend: `act` (name, handover, close) and, at the handover, what
+                               the page loads next (`scripts`, `entry`)
+    POST /api/interview/line   {sid, who: in|out|page, text}: a transcript line (in: what GPT-Live heard of
+                               them; out: what the interviewer said)
+    POST /api/interview/usage  {sid, live_id, seconds, backend}: the session's cost (once per live_id)
+    POST /api/interview/end    {sid, how}: closes; fetches the audio, and for a debrief writes the summary
+    GET  /interview.js         page/interview.js
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from stages import common
+from stages.common import PROMPTS_DIR, ROOT, Run, StageError, load_prompt
+
+INTERVIEW_JS = ROOT / "page" / "interview.js"
+TOOLS_FILE = PROMPTS_DIR / "interviewer_tools.json"
+MODES = ("intro", "debrief")
+MODE_TOOLS = {"intro": ("set_listener_name", "handoff_to_guide"), "debrief": ("end_debrief",)}
+WHO = {"in": "listener", "out": "interviewer", "page": "page"}
+# A tool result's fields for the page alone, stripped before the backend sees it: what the page does next
+# (`act`), and what it loads at the handover. The page acts on `act`, never on a tool's name, and learns the
+# names it may call itself from its settings (`acts`): the gate's source carries no product wording.
+PAGE_ONLY = ("act", "scripts", "entry")
+ACTS = {"handover": "handoff_to_guide", "close": "end_debrief"}
+NAME_MAX = 60
+
+DEFAULTS = {
+    "voice": "cedar", "store": True,
+    "intro_max_minutes": 3, "debrief_max_minutes": 9, "debrief_target_minutes": 8,
+    "stale_minutes": 15,              # a session the page never ended is closed after this long without a line
+    "audio_tries": 6,                 # the recording: tries after live.archive_wait_seconds, live.archive_retry_seconds apart
+    "summary_role": "researcher", "summary_effort": "medium",
+    # What the page loads at the handover (part D's product page), in order, and the object it hands over to.
+    # Here, not in the gate's source, which must carry no product wording.
+    "scripts": ["/align.js", "/live.js", "/library.js"], "entry": "Live",
+    "page": {},
+}
+PAGE_DEFAULTS = {
+    "line_quiet_ms": 900,             # a transcript line ends after this much quiet
+    "close_quiet_ms": 1400,           # after handoff/end: close once both sides have been quiet this long
+    "close_min_ms": 800,
+    "close_max_ms": 9000,             # ... or after this long whatever happens
+    "greet_fallback_ms": 4000,        # nothing said this long after the start: the opening note again, as an instruction
+    "start_timeout_ms": 10000,
+    "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
+    "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
+    "handover": r"\bhand(ing)? you over\b",
+    "closing_question": r"\banything I didn'?t ask\b",
+    "thanks": r"\bthank(s| you)\b",
+}
+
+# The five core questions and the close, as the interviewer's lines show them (docs/tester-demo.md). Matching
+# is loose on purpose: GPT-Live rarely says a line word for word.
+QUESTIONS = {
+    1: r"what (that|it) was like|from the start",
+    2: r"most into it|drift(ed)?\b|felt off",
+    3: r"\byou asked\b|stop it and ask|want(ed)? to stop",
+    4: r"\bto a friend\b",
+    5: r"tomorrow morning|make the difference",
+}
+CLOSING = r"anything I didn'?t ask"
+
+BACKGROUND: list[threading.Thread] = []  # after-end work (audio, summary): tests join these
+_FILE_LOCK = threading.Lock()
+
+
+def icfg(cfg: dict) -> dict:
+    got = ((cfg.get("demo") or {}).get("interviewer") or {})
+    out = {**DEFAULTS, **got}
+    out["page"] = {**PAGE_DEFAULTS, **(got.get("page") or {})}
+    return out
+
+
+def notes() -> dict[str, str]:
+    """prompts/interviewer_notes.md: `key: text` lines."""
+    out = {}
+    for line in load_prompt("interviewer_notes").splitlines():
+        k, sep, v = line.partition(":")
+        if sep and re.fullmatch(r"[a-z0-9_]+", k.strip()):
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _fill(text: str, **fields) -> str:
+    for k, v in fields.items():
+        text = text.replace("{" + k + "}", str(v))
+    return text
+
+
+def tools(mode: str) -> list[dict]:
+    """The mode's tools as Responses function tools for the delegation backend."""
+    raw = json.loads(TOOLS_FILE.read_text(encoding="utf-8"))
+    return [{"type": "function", "name": t["name"], "description": t["description"],
+             "parameters": t["input_schema"], "strict": False} for t in raw if t["name"] in MODE_TOOLS[mode]]
+
+
+# --- what the interviewer is told ------------------------------------------------------------------
+
+def tester_record(listener_dir: Path) -> dict:
+    """tester.json (part B), read directly: the interviewer only needs the name."""
+    try:
+        return json.loads((Path(listener_dir) / "tester.json").read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _when(seconds: float | None, n: dict) -> str:
+    if seconds is None or seconds < 45:
+        return n["when_seconds"]
+    m = int(round(seconds / 60))
+    return n["when_minute"] if m <= 1 else _fill(n["when_minutes"], n=m)
+
+
+def intro_values(listener_dir: Path) -> dict:
+    n = notes()
+    name = (tester_record(listener_dir).get("name") or "").strip()
+    return {"meeting": _fill(n["meeting_again"], name=name) if name else n["meeting_first"]}
+
+
+def debrief_values(cfg: dict, listener_dir: Path) -> dict:
+    """The debrief's placeholders: name, the chapter (title, summary, how much they heard) and their moments
+    (demo/debrief.py). Question three names their first moment, or asks whether anything made them want to."""
+    from demo import debrief
+    name = (tester_record(listener_dir).get("name") or "").strip()
+    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg))
+
+
+def values_from(name: str, ctx: dict, got: list[dict]) -> dict:
+    """The debrief's placeholders from a name, a chapter_context and moments (also the simulated checks')."""
+    n = notes()
+    name = name or n["name_unknown"]
+    minutes, heard = ctx.get("minutes"), float(ctx.get("minutes_heard") or 0)
+    if minutes and heard >= minutes - 0.5:
+        heard_line = _fill(n["heard_all"], minutes=round(minutes))
+    elif heard < 1:
+        heard_line = n["heard_little"]
+    else:
+        heard_line = _fill(n["heard_some"], heard=round(heard), minutes=round(minutes or 10))
+    if got:
+        q3 = _fill(n["q3_moment"], when=_when(got[0]["at_s"], n), words=got[0]["words"])
+        lines = "\n".join("  - " + _fill(n["moment_line"], when=_when(m["at_s"], n), words=m["words"]) for m in got)
+        moments_text = "\n" + lines
+    else:
+        q3, moments_text = n["q3_none"], n["moments_none"]
+    return {"person": name, "title": ctx.get("title") or n["title_unknown"],
+            "summary": ctx.get("summary") or n["summary_unknown"], "heard": heard_line,
+            "moments": moments_text, "question_three": q3,
+            "_moments": got, "_context": ctx}
+
+
+def instructions(mode: str, values: dict) -> str:
+    from voice.gpt_live import session as live_session
+    shared = load_prompt("interviewer")
+    text = load_prompt(f"interviewer_{mode}", shared=shared,
+                       **{k: v for k, v in values.items() if not k.startswith("_")})
+    if live_session.approx_tokens(text) > live_session.INSTRUCTION_TOKENS:
+        raise StageError(f"The interviewer's {mode} instructions are too long for GPT-Live.")
+    return text
+
+
+def session_config(cfg: dict, mode: str, values: dict, *, transport: str = "webrtc") -> dict:
+    """The GPT-Live session: the guide's voice model and backend (config live), the interviewer's voice,
+    instructions and tools. No startup message: the page sends the opening as speakable context once the
+    session starts (live.js does the same for the guide; a startup message alone did not make it speak)."""
+    L, I = cfg["live"], icfg(cfg)
+    session = {
+        "model": L["model"],
+        "instructions": instructions(mode, values),
+        "audio": {"output": {"voice": I["voice"]}},
+        "input": [],
+        "delegation": {"type": "responses", "responses": {
+            "model": L["backend_model"], "instructions": load_prompt("interviewer_backend"),
+            "tools": tools(mode), "tool_choice": "auto", "reasoning": {"effort": L.get("backend_effort", "low")}}},
+        "store": bool(I.get("store", True)),
+    }
+    if transport == "websocket":
+        session["audio"]["format"] = {"type": "audio/pcm", "rate": 24000}
+    return session
+
+
+def page_notes(mode: str, values: dict) -> dict:
+    """The notes the page sends during this session, filled."""
+    n, name = notes(), values.get("person") or ""
+    keys = ("opened_intro", "handover_now") if mode == "intro" else ("opened_debrief", "time_up", "wrap_now")
+    out = {k.replace("_intro", "").replace("_debrief", ""): _fill(n[k], name=name) for k in keys}
+    return out
+
+
+def page_settings(cfg: dict, mode: str) -> dict:
+    I = icfg(cfg)
+    return {**I["page"], "mode": mode, "acts": dict(ACTS), "intro_max_minutes": I["intro_max_minutes"],
+            "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
+
+
+# --- the transcript ---------------------------------------------------------------------------------
+
+def questions_asked(lines: list[dict]) -> dict:
+    """Which core questions the interviewer asked, in the order first asked, and whether it closed:
+    {"asked": [1, 2, ...], "in_order": bool, "closing": bool}."""
+    first: dict[int, int] = {}
+    closing = False
+    said = [str(x.get("text") or "") for x in lines if x.get("who") == "interviewer"]
+    for i, text in enumerate(said):
+        for q, pat in QUESTIONS.items():
+            if q not in first and re.search(pat, text, re.I):
+                first[q] = i
+        closing = closing or bool(re.search(CLOSING, text, re.I))
+    asked = sorted(first, key=lambda q: (first[q], q))
+    return {"asked": asked, "in_order": asked == sorted(asked), "closing": closing}
+
+
+def read_lines(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(raw))
+        except ValueError:
+            continue
+    return out
+
+
+def format_transcript(lines: list[dict]) -> str:
+    """'[m:ss] who: text' for the summary (times from the session's start)."""
+    from demo.debrief import clock
+    out = []
+    for x in lines:
+        if x.get("who") in ("listener", "interviewer") and x.get("text"):
+            who = "them" if x["who"] == "listener" else "interviewer"
+            out.append(f"[{clock(float(x.get('s') or 0))}] {who}: {x['text']}")
+    return "\n".join(out) or "(none)"
+
+
+def write_json_atomic(p: Path, obj) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
+# --- after a session --------------------------------------------------------------------------------
+
+def fetch_audio(cfg: dict, study: Path, live_id: str, *, sleep=time.sleep, client=None) -> Path | None:
+    """The session's recording from OpenAI (store: true) into study/<live_id>.wav, then .mp3 by ffmpeg (the
+    wav is removed once the mp3 is made; kept if ffmpeg fails). OpenAI makes it some time after the session
+    ends: wait live.archive_wait_seconds, then try every archive_retry_seconds, demo.interviewer.audio_tries
+    times."""
+    from stages import tts
+    from voice.gpt_live import session as live_session
+    L, I = cfg["live"], icfg(cfg)
+    wav, mp3 = study / f"{live_id}.wav", study / f"{live_id}.mp3"
+    if mp3.exists():
+        return mp3
+    sleep(float(L.get("archive_wait_seconds", 120)))
+    got = None
+    for k in range(int(I["audio_tries"])):
+        if k:
+            sleep(float(L.get("archive_retry_seconds", 10)))
+        try:
+            got = live_session.recording(cfg, live_id, wav, client=client)
+        except Exception as e:  # noqa: BLE001 (network, no key: try again, then give up quietly)
+            print(f"  interviewer: recording {live_id}: {type(e).__name__}: {e}")
+            got = None
+        if got:
+            break
+    if not got:
+        print(f"  interviewer: no recording for {live_id} after {I['audio_tries']} tries")
+        return None
+    try:
+        tts.ffmpeg(["-i", str(wav), "-c:a", "libmp3lame", "-q:a", "4", str(mp3)])
+    except StageError as e:
+        print(f"  interviewer: {live_id}.wav kept ({e})")
+        return wav
+    wav.unlink(missing_ok=True)
+    return mp3
+
+
+def summarize(cfg: dict, study: Path, sid: str, values: dict) -> Path | None:
+    """debrief_summary.md from one debrief (one Claude call; its cost goes to study/log.jsonl). Only when
+    they said something; it replaces an earlier summary only when this debrief is the finished one (or there
+    is none yet), so a debrief left halfway never overwrites a complete one."""
+    from stages import llm
+    lines = read_lines(study / f"debrief-{sid}.jsonl")
+    if not any(x.get("who") == "listener" and x.get("text") for x in lines):
+        return None
+    out = study / "debrief_summary.md"
+    state = json.loads((study / "debrief.json").read_text(encoding="utf-8")) if (study / "debrief.json").exists() else {}
+    if out.exists() and not (state.get("done") and state.get("session") == sid):
+        return None
+    intros = sorted(study.glob("intro-*.jsonl"))
+    prompt = load_prompt("debrief_summary", person=values.get("person") or "", title=values.get("title") or "",
+                         summary=values.get("summary") or "", heard=values.get("heard") or "",
+                         moments=values.get("moments") or "", transcript=format_transcript(lines),
+                         intro=format_transcript(read_lines(intros[-1])) if intros else "(none)")
+    I = icfg(cfg)
+    log = Run(name="study", root=study)
+    res = llm.call(log, cfg, "debrief_summary", messages=[{"role": "user", "content": prompt}],
+                   role=I["summary_role"], effort=I["summary_effort"], max_tokens=16000, preapproved=True,
+                   label="debrief summary", log_extra={"kind": "interviewer", "session": sid})
+    text = res.text.strip()
+    if not text:
+        return None
+    tmp = out.with_name(out.name + ".tmp")
+    tmp.write_text(text + "\n", encoding="utf-8")
+    tmp.replace(out)
+    return out
+
+
+def _after_end(cfg: dict, study: Path, s: dict) -> None:
+    """In the background: the summary first (it doesn't need the audio), then the recording."""
+    if s["mode"] == "debrief":
+        try:
+            summarize(cfg, study, s["id"], s["values"])
+        except Exception as e:  # noqa: BLE001 (a summary that fails leaves the transcript, which is the record)
+            print(f"  interviewer: summary for {s['id']} failed: {type(e).__name__}: {e}")
+    if s.get("live_id") and icfg(cfg).get("store", True):
+        try:
+            fetch_audio(cfg, study, s["live_id"])
+        except Exception as e:  # noqa: BLE001
+            print(f"  interviewer: audio for {s['id']} failed: {type(e).__name__}: {e}")
+
+
+# --- routes -----------------------------------------------------------------------------------------
+
+class Start(BaseModel):
+    mode: str
+    sdp: str
+
+
+class Tool(BaseModel):
+    sid: str
+    name: str
+    args: dict | None = None
+    by: str = "backend"   # "page": the page acted on a line the voice said without calling the tool
+
+
+class Line(BaseModel):
+    sid: str
+    who: str
+    text: str = ""
+
+
+class Usage(BaseModel):
+    sid: str
+    live_id: str
+    seconds: float = 0
+    backend: dict | None = None
+
+
+class End(BaseModel):
+    sid: str
+    how: str = "ended"
+
+
+def mount(app, cfg: dict) -> None:
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    open_: dict[str, dict] = {}
+    ended: dict[str, dict] = {}  # closed sessions, for a usage report that lands after /end (a beacon)
+    lock = threading.Lock()
+
+    def here() -> Path:
+        return common.listener_dir(cfg)
+
+    def study_of(ld: Path) -> Path:
+        d = ld / "study"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def new_sid(study: Path) -> str:
+        base = time.strftime("%Y%m%d-%H%M%S")
+        sid, n = base, 2
+        while any(study.glob(f"*-{sid}.jsonl")) or sid in open_:
+            sid, n = f"{base}-{n}", n + 1
+        return sid
+
+    def write(s: dict, rec: dict) -> None:
+        line = {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "s": round(time.monotonic() - s["t0"], 2), **rec}
+        with _FILE_LOCK, open(s["path"], "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+    def get(sid: str) -> dict:
+        """The open session, only for the tester it belongs to (the middleware scoped this request)."""
+        s = open_.get(sid)
+        if s is None or s["listener"] != here().resolve():
+            raise HTTPException(409, "That session has ended.")
+        s["last"] = time.monotonic()
+        return s
+
+    def log_usage(s: dict, live_id: str, seconds: float, backend: dict | None) -> float:
+        from voice.gpt_live import session as live_session
+        usd = live_session.cost(cfg, seconds, backend)
+        log = Run(name="study", root=s["study"])
+        with _FILE_LOCK:
+            if any(x.get("live_id") == live_id and x.get("provider") == "openai" for x in log.read_log()):
+                return usd  # reported twice (a beacon and the end)
+            log.log({"stage": "voice", "provider": "openai", "kind": "interviewer", "mode": s["mode"],
+                     "session": s["id"], "live_id": live_id, "seconds": round(seconds, 1), "backend": backend,
+                     "cost_usd": usd})
+        s["usage_logged"] = True
+        return usd
+
+    def mark_done(s: dict, how: str) -> None:
+        q = questions_asked(read_lines(s["path"]))
+        write_json_atomic(s["study"] / "debrief.json", {
+            "done": True, "finished_at": datetime.now().isoformat(timespec="seconds"), "questions_asked": q["asked"],
+            "in_order": q["in_order"], "closing": q["closing"], "session": s["id"], "how": how})
+
+    def close(s: dict, how: str) -> dict:
+        """End a session: its cost if the page never reported it (wall clock), the debrief's state, then the
+        summary and the recording in the background."""
+        s["closed_at"] = time.monotonic()
+        if not s.get("usage_logged"):
+            log_usage(s, s["live_id"], s["closed_at"] - s["t0"], None)
+        write(s, {"who": "session", "ended": how})
+        out: dict = {"ended": True}
+        if s["mode"] == "debrief":
+            q = questions_asked(read_lines(s["path"]))
+            out["questions_asked"] = q["asked"]
+            state_p = s["study"] / "debrief.json"
+            state = json.loads(state_p.read_text(encoding="utf-8")) if state_p.exists() else {}
+            if not state.get("done"):
+                # Delegation misses tools: a debrief that asked all five and the closing question, and thanked
+                # them, is finished whether or not end_debrief came.
+                said = [x.get("text") or "" for x in read_lines(s["path"]) if x.get("who") == "interviewer"]
+                thanked = any(re.search(PAGE_DEFAULTS["thanks"], t, re.I) for t in said[-2:])
+                if s.get("ended_by_tool") or (q["asked"] == [1, 2, 3, 4, 5] and q["closing"] and thanked):
+                    mark_done(s, "complete" if not s.get("ended_by_tool") else "end_debrief")
+                else:
+                    write_json_atomic(state_p, {"done": False, "finished_at": None, "questions_asked": q["asked"],
+                                                "session": s["id"], "how": how})
+            out["done"] = json.loads(state_p.read_text(encoding="utf-8")).get("done", False)
+        t = threading.Thread(target=_after_end, args=(cfg, s["study"], s), name=f"interviewer-{s['id']}", daemon=True)
+        BACKGROUND.append(t)
+        t.start()
+        return out
+
+    def sweep() -> None:
+        limit = float(icfg(cfg)["stale_minutes"]) * 60
+        now = time.monotonic()
+        with lock:
+            stale = [open_.pop(sid) for sid, s in list(open_.items()) if now - s["last"] > limit]
+        for s in stale:
+            close(s, "stale")
+
+    @app.get("/interview.js")
+    def interview_js() -> Response:
+        return Response(INTERVIEW_JS.read_text(encoding="utf-8"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/interview/start")
+    def start(req: Start) -> dict:
+        if req.mode not in MODES:
+            raise HTTPException(400, "Unknown mode.")
+        sweep()
+        from voice.gpt_live import session as live_session
+        ld = here()
+        study = study_of(ld)
+        try:
+            values = intro_values(ld) if req.mode == "intro" else debrief_values(cfg, ld)
+            sc = session_config(cfg, req.mode, values)
+            got = live_session.create_webrtc(cfg, sc, req.sdp)
+        except StageError as e:
+            raise HTTPException(503, str(e)) from None
+        except Exception as e:  # noqa: BLE001 (network)
+            raise HTTPException(503, f"Voice isn't available: {e}") from None
+        with lock:
+            sid = new_sid(study)
+            s = {"id": sid, "mode": req.mode, "live_id": got["id"], "t0": time.monotonic(), "last": time.monotonic(),
+                 "listener": ld.resolve(), "study": study, "path": study / f"{req.mode}-{sid}.jsonl",
+                 "values": values, "name": None, "tools": []}
+            open_[sid] = s
+        write(s, {"who": "session", "mode": req.mode, "live_id": got["id"], "voice": sc["audio"]["output"]["voice"],
+                  "model": sc["model"], "backend": sc["delegation"]["responses"]["model"],
+                  "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
+                  "tools": [t["name"] for t in sc["delegation"]["responses"]["tools"]],
+                  **({"moments": values["_moments"], "chapter": values["_context"]} if req.mode == "debrief" else {})})
+        return {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
+                "settings": page_settings(cfg, req.mode)}
+
+    @app.post("/api/interview/tool")
+    def tool(req: Tool) -> dict:
+        s = get(req.sid)
+        args = dict(req.args or {})
+        lid = s["listener"].name
+        if req.name not in MODE_TOOLS[s["mode"]]:
+            out: dict = {"error": f"No tool named {req.name}."}
+        elif req.name == "set_listener_name":
+            name = " ".join(str(args.get("name") or "").split())[:NAME_MAX]
+            if not name:
+                out = {"saved": False, "reason": "No name was given."}
+            else:
+                try:
+                    from demo import testers
+                    testers.set_name(lid, name)
+                    s["name"] = name
+                    out = {"saved": True, "act": "name", "name": name}
+                except Exception as e:  # noqa: BLE001 (the conversation goes on; the guide asks the name itself)
+                    out = {"saved": False, "reason": f"{type(e).__name__}: {e}"}
+        elif req.name == "handoff_to_guide":
+            if s.get("handed_over"):
+                out = {"handed_over": True, "again": True}
+            else:
+                out = {"handed_over": True}
+                try:
+                    from demo import testers
+                    testers.update(lid, intro_done=datetime.now().isoformat(timespec="seconds"))
+                except Exception as e:  # noqa: BLE001 (the handover happens anyway: the person is waiting)
+                    out["not_saved"] = f"{type(e).__name__}: {e}"
+                s["handed_over"] = True
+            if out.get("handed_over"):
+                name = s["name"] or (tester_record(s["listener"]).get("name") or None)
+                I = icfg(cfg)
+                out = {**out, "act": "handover", "name": name, "scripts": list(I["scripts"]), "entry": I["entry"]}
+        else:  # end_debrief
+            s["ended_by_tool"] = True
+            mark_done(s, "end_debrief")
+            out = {"ended": True, "act": "close"}
+        s["tools"].append(req.name)
+        write(s, {"who": "tool", "name": req.name, "input": args, "by": req.by,
+                  "result": {k: v for k, v in out.items() if k not in PAGE_ONLY}})
+        return out
+
+    @app.post("/api/interview/line")
+    def line(req: Line) -> dict:
+        s = get(req.sid)
+        who = WHO.get(req.who)
+        if who and req.text.strip():
+            write(s, {"who": who, "text": req.text.strip()})
+        return {"ok": True}
+
+    @app.post("/api/interview/usage")
+    def usage(req: Usage) -> dict:
+        with lock:
+            s = open_.get(req.sid) or ended.get(req.sid)
+        if s is None or s["listener"] != here().resolve():
+            raise HTTPException(409, "That session has ended.")
+        # GPT-Live bills connected seconds; the page's last usage figure lags, so the wall clock from the start
+        # to now (or to the end) is used when it is longer (as overnight/live.py does).
+        wall = (s.get("closed_at") or time.monotonic()) - s["t0"]
+        return {"cost_usd": log_usage(s, req.live_id, max(req.seconds, wall), req.backend)}
+
+    @app.post("/api/interview/end")
+    def end(req: End) -> dict:
+        with lock:
+            s = open_.get(req.sid)
+            if s is not None and s["listener"] == here().resolve():
+                ended[req.sid] = open_.pop(req.sid)
+            else:
+                s = None
+        if s is None:
+            raise HTTPException(409, "That session has ended.")
+        return close(s, req.how)

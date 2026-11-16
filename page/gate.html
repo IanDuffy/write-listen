@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Welcome</title>
+<!--
+  The welcome screen (docs/tester-demo.md, "Screens"): a dot, three words and the recording notice, nothing
+  else. The tap unlocks sound, asks for the microphone (phones need both from a tap), records consent and
+  starts the welcome talk (/interview.js). At the handover the dot warms over about two seconds, the next
+  screen's markup comes from /app into this same document (so the tap's sound and microphone stay unlocked),
+  the scripts the server named are loaded in order, and the session is handed on with the name and the mic.
+  Ids are prefixed w- so they never meet the next screen's.
+-->
+<style id="w-base">
+  html, body { margin: 0; height: 100%; background: #F5F2ED; overflow: hidden; }
+</style>
+<style>
+  #w-gate { position: fixed; inset: 0; z-index: 1000; background: #F5F2ED; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #6B635C;
+            -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+            transition: opacity .8s ease; }
+  #w-gate.gone { opacity: 0; pointer-events: none; }
+  #w-dot { width: 22px; height: 22px; border-radius: 50%; background: #A69D94;
+           transition: background-color .6s ease; }
+  #w-tap { margin-top: 22px; letter-spacing: .02em; transition: opacity .8s ease; }
+  #w-note { position: absolute; left: 16px; right: 16px; bottom: max(18px, env(safe-area-inset-bottom));
+            text-align: center; font-size: 12px; color: #8F867D; transition: opacity .8s ease; }
+  #w-mic { display: none; margin-top: 22px; text-align: center; }
+  #w-again { margin-top: 12px; font: inherit; color: #6B635C; background: none; border: 1px solid #6B635C;
+             border-radius: 999px; padding: 6px 18px; cursor: pointer; }
+  body.w-on #w-dot { background: #6B635C; }
+  body.w-on #w-tap { opacity: 0; }
+  body.w-speaking #w-dot { animation: w-pulse 2.4s ease-in-out infinite; }
+  body.w-refused #w-tap { display: none; }
+  body.w-refused #w-mic { display: block; }
+  body.w-warm #w-dot { background: #d9822b; width: 140px; height: 140px; animation: w-breathe 3.2s ease-in-out infinite;
+                       transition: background-color 2s ease, width 2s ease, height 2s ease; }  /* about two seconds */
+  body.w-warm #w-note { opacity: 0; }
+  @keyframes w-pulse { 50% { transform: scale(1.18); opacity: .8; } }
+  @keyframes w-breathe { 50% { opacity: .75; } }
+</style>
+</head>
+<body>
+<div id="w-gate" role="button" aria-label="Tap to begin">
+  <div id="w-dot"></div>
+  <div id="w-tap">Tap to begin</div>
+  <div id="w-mic"><div>I need your microphone to talk with you</div><button id="w-again" type="button">Try again</button></div>
+  <div id="w-note">Your conversations are recorded so Ian can learn from them. Ask him to delete yours any time.</div>
+</div>
+<script src="/interview.js"></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const body = document.body;
+  const W = { busy: false, ctx: null, stream: null };
+  window.Welcome = W;  // for tests
+
+  function begin(e) {
+    if (e) e.stopPropagation();
+    if (W.busy) return;
+    W.busy = true;
+    body.classList.remove("w-refused");
+    // All of this inside the tap, before any await: phones allow sound and the microphone only from a gesture.
+    try {
+      W.ctx = W.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      if (W.ctx.state === "suspended") W.ctx.resume().catch(() => {});
+    } catch (x) { W.ctx = null; }
+    if (window.Interview) Interview.unlock(W.ctx);
+    let asked;
+    try {
+      asked = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    } catch (x) { asked = Promise.reject(x); }
+    asked.then(talk, refused);
+  }
+
+  function refused() {
+    W.busy = false;
+    body.classList.remove("w-on", "w-speaking");
+    body.classList.add("w-refused");
+  }
+
+  async function talk(stream) {
+    W.stream = stream;
+    body.classList.add("w-on");
+    try { await fetch("/api/demo/consent", { method: "POST" }); } catch (x) { /* the talk goes on */ }
+    const ok = await Interview.start("intro", {
+      stream,
+      onState: (s) => body.classList.toggle("w-speaking", s === "speaking"),
+      onHandoff: handOn,
+      onDone: again,
+    });
+    if (!ok && !W.handed) again();
+  }
+
+  // The talk ended before any handover (it couldn't start, or dropped): back to the dot and three words.
+  function again() {
+    if (W.handed) return;
+    W.busy = false;
+    body.classList.remove("w-on", "w-speaking");
+  }
+
+  async function handOn(h) {
+    if (W.handed) return;
+    W.handed = true;
+    body.classList.remove("w-speaking");
+    body.classList.add("w-warm");
+    const next = fetch("/app").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    await new Promise((r) => setTimeout(r, 2000));
+    const got = await next;
+    if (got) {
+      const style = document.createElement("style");
+      style.textContent = got.style || "";
+      document.head.appendChild(style);
+      const base = $("w-base");
+      if (base) base.remove();
+      $("w-gate").insertAdjacentHTML("beforebegin", got.body || "");
+      body.classList.add("tester");
+    }
+    for (const src of h.scripts || []) await load(src);
+    const target = h.entry && window[h.entry];
+    if (target && typeof target.handoff === "function") target.handoff({ name: h.name, stream: h.stream || W.stream });
+    $("w-gate").classList.add("gone");
+    setTimeout(() => { const g = $("w-gate"); if (g) g.remove(); }, 900);
+  }
+
+  function load(src) {
+    return new Promise((done) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = false;
+      s.onload = () => done(true);
+      s.onerror = () => done(false);
+      document.body.appendChild(s);
+    });
+  }
+
+  $("w-gate").onclick = begin;
+  $("w-again").onclick = begin;
+})();
+</script>
+</body>
+</html>
