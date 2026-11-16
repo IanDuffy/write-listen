@@ -1,0 +1,53 @@
+# Caddy in front of write-listen on the droplet (DEPLOY.md). Caddy gets and renews the HTTPS
+# certificate itself; browsers only allow the microphone over HTTPS.
+#
+# setup.sh installs this as /etc/caddy/Caddyfile with two things filled in from /etc/write-listen/env:
+# the domain (from WL_BASE_URL) and the admin login (ADMIN_USER, and ADMIN_PASSWORD as a bcrypt hash).
+# By hand instead: run `caddy hash-password`, type the password, put the user and the hash it prints
+# in place of the placeholder line below, then `systemctl reload caddy`. Use the same pair as
+# ADMIN_USER/ADMIN_PASSWORD in the env file: Caddy passes the login on and the app checks it too.
+
+listen.ianduffy.com {
+	# The admin page and its API: a username and password (the app also guards them).
+	@admin path /admin /admin/* /api/admin /api/admin/*
+	basic_auth @admin {
+		ADMIN_USER $2a$14$REPLACE_WITH_THE_HASH_FROM_caddy_hash-password
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		# A tester link carries its token until the redirect: never send it on as a referrer.
+		Referrer-Policy no-referrer
+		# The page asks for the microphone itself; nothing it embeds may.
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		-Server
+	}
+
+	# The status stream (server-sent events): each event goes out at once, uncompressed (compression
+	# would hold events back), and Caddy sets no time limit on a proxied response, so it stays open.
+	handle /api/events* {
+		reverse_proxy 127.0.0.1:8765 {
+			flush_interval -1
+		}
+	}
+
+	# Everything else. The app has no WebSockets: the live voice's audio goes from the browser to
+	# OpenAI directly (WebRTC); only the connection offer passes through here.
+	handle {
+		encode gzip
+		reverse_proxy 127.0.0.1:8765 {
+			transport http {
+				# The live session's offer and a tool's answer can take a while; don't cut them short.
+				response_header_timeout 5m
+			}
+		}
+	}
+
+	log {
+		output file /var/log/caddy/write-listen.log {
+			roll_keep_for 720h
+		}
+	}
+}

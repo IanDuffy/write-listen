@@ -1,0 +1,31 @@
+# The write-listen web app (DEPLOY.md). setup.sh and `wl deploy` install it as
+# /etc/systemd/system/write-listen.service. There is no separate job runner: chapter builds are child
+# processes the app starts (one per chapter, at most demo.max_builds at once, the rest queued).
+[Unit]
+Description=write-listen (the web app and its chapter builds)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=writelisten
+Group=writelisten
+WorkingDirectory=/srv/write-listen
+# The keys and settings; mode 600, owned by writelisten, never in the repository.
+EnvironmentFile=/etc/write-listen/env
+# print() reaches the journal at once, not when a buffer fills.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/write-listen/.venv/bin/python server.py --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=3
+# A restart (a deploy) stops the server only: a chapter being made is its own process and carries on,
+# as it does on the laptop, and the new server finds it through the pid in its status.json.
+KillMode=process
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=write-listen
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

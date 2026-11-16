@@ -1,0 +1,11 @@
+# One app log a day: /var/log/write-listen/app-YYYY-MM-DD.log, written just after midnight.
+[Unit]
+Description=write-listen daily app log
+
+[Timer]
+OnCalendar=*-*-* 00:10:00
+# If the droplet was off at ten past midnight, write it when it comes back.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
