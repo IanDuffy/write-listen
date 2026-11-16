@@ -256,8 +256,12 @@ def mount(app, cfg: dict, pipe, chat) -> None:
             notes = live_session.notes()  # no greeting: the conversation is already going
             # A new session at a section boundary, or after a pause long enough to close the old one: it says
             # nothing and reads on; after a drop, it says it's back.
-            opening = (notes["asking"] if req.reason == "paused-ask"
-                       else notes["continue"] if req.reason in ("section boundary", "paused") else notes["returned"])
+            # The guide steps back with GPT-Live closed (Ian's fifth note), so a rest's end is a new session too:
+            # a tap ("I'm here"), a voice that may not be the listener (listen only), the chapter ready (say
+            # nothing until given words), play (the reading follows).
+            opening = {"paused-ask": notes["asking"], "section boundary": notes["continue"], "paused": notes["continue"],
+                       "play": notes["continue"], "tap": notes["back_from_rest"], "wake": notes["listening_again"],
+                       "ready": notes["ready_back"]}.get(req.reason, notes["returned"])
             values = session.resume_values()
             values["explained"] = live_session.explained(session.transcript)  # told what this is: not offered again
             said = session.name_said() or live_session.name_said(session.transcript)

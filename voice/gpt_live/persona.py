@@ -36,7 +36,7 @@ from . import sim as S
 SILENT, LEAVE = "[SILENT]", "[LEAVE]"
 GUIDE_WAIT_SECS = 20  # the guide has said nothing for this long: the listener is asked what they'd do
 LISTENER_USD = 0.03  # an upper estimate for one listener reply (Sonnet, effort low)
-GRADE_USD = 0.60  # and for one grade (Opus, effort high)
+GRADE_USD = 0.15  # and for one grade (Sonnet, effort medium: config live.checks.grade_role)
 ONBOARDING_PARTS = ("00_system.md", "10_talk.md", "20_meeting.md", "30_pitch.md", "80_policies.md")
 ASIDE_PARTS = ("40_reading.md", "50_asides.md", "80_policies.md")
 
@@ -182,10 +182,23 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
     await sim.connect()
     since, said, silent, stop = 0, 0, 0, "turns"
     nudges, nudged, notes = cfg["live"]["page"].get("pitch_nudge_secs") or [], 0, live.notes()
+    after_noted = False
     try:
         while True:
             new = await sim.wait_guide(since, GUIDE_WAIT_SECS)
             since = len(sim.turns)
+            if not after_noted and any(c["name"] == "start_chapter" for c in sim.calls):
+                # The page's note once the chapter starts (live.js afterStart): step back, or keep them company
+                # if they've been chatting (engaged_lines lines, the last four averaging engaged_words words).
+                after_noted = True
+                lines = [x["text"] for x in sim.timeline if x["who"] == "listener" and x.get("text")]
+                recent = [len(x.split()) for x in lines[-4:]]
+                P = cfg["live"]["page"]
+                engaged = len(lines) >= P["engaged_lines"] and recent and sum(recent) / len(recent) >= P["engaged_words"]
+                key = "started_company" if engaged else "started_step_back"
+                await sim.note("instructions", notes[key].replace("{when}", "about 4 minutes"))
+                new = await sim.wait_guide(since, GUIDE_WAIT_SECS) or new
+                since = len(sim.turns)
             if sim.closed.is_set():
                 stop = f"closed: {sim.closed_reason}"
                 break
@@ -306,8 +319,9 @@ def grade(cfg: dict, path: Path, log_run: Run | None = None) -> dict:
     else:
         prompt = load_prompt("live_grade", rules=rules_text(cfg, transcript["values"]),
                              persona=transcript["description"], transcript=text)
-    res = claude(cfg, log_run, f"live_grade {path.stem}", prompt, role="writer", effort="high",
-                 estimate=GRADE_USD, schema=GRADE_SCHEMA, max_tokens=32000)
+    checks = cfg["live"].get("checks") or {}
+    res = claude(cfg, log_run, f"live_grade {path.stem}", prompt, role=checks.get("grade_role", "researcher"),
+                 effort="medium", estimate=GRADE_USD, schema=GRADE_SCHEMA, max_tokens=32000)
     data = parse_json(log_run, res.text, "live_grade")
     data["quotes_not_found"] = check_quotes(data, text)
     data["grade_usd"] = round(res.usage.cost_usd, 4)

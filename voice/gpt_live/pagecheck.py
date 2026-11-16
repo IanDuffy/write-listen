@@ -200,6 +200,10 @@ class Harness:
         return self.page.evaluate("window.Live.state()")
 
     def wait(self, cond: str, timeout: float, what: str) -> bool:
+        # The check's own cap (config live.checks.run_cap_usd, at $0.05 a connected minute): stop there.
+        cap = float((self.cfg["live"].get("checks") or {}).get("run_cap_usd") or 0)
+        if cap and time.time() - self.t0 > cap / float(self.cfg["live"]["price_per_minute"]) * 60:
+            raise RuntimeError(f"stopped at the check's ${cap:.2f} cap (live.checks.run_cap_usd)")
         end = time.time() + timeout
         while time.time() < end:
             if self.page.evaluate(f"(() => {{ const L = window.Live.L; return !!({cond}); }})()"):

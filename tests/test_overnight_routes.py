@@ -71,7 +71,7 @@ def test_the_library_states(app):
     page = app.c.get("/library")  # a shell around the module, which builds the cards and the player
     assert page.status_code == 200 and 'id="library"' in page.text and "/library.js" in page.text
     js = app.c.get("/library.js").text
-    assert "window.Morning" in js and 'id="change"' in js and 'id="chapter-audio"' in js and 'id="player"' in js
+    assert "window.Morning" in js and 'id="change"' in js and 'id="chapter-audio"' in js and '"lib-player"' in js
     home = app.c.get("/")  # the main page mounts the same module below the orb
     assert 'id="orb"' in home.text and '<section id="library"></section>' in home.text and "/library.js" in home.text
     assert home.text.index('id="orb"') < home.text.index('<section id="library">')
@@ -235,3 +235,17 @@ def test_an_aside_on_a_recorded_chapter_resumes_with_the_rewind(app):
         real_time.sleep(0.02)
     assert [p.name for p in app.passes] == [f"{s['session']}.jsonl"]  # (docs/library-timeline.md, Capture)
     assert app.c.post("/api/overnight/live/line", json={"session": s["session"], "who": "guide", "text": "x"}).status_code == 409
+
+
+def test_the_library_never_reuses_an_id_of_the_pages_it_mounts_on():
+    """After the merge (Ian, 2026-11-15): the library made its own #player and #play, the live page already
+    had both, so its CSS pinned the live player to the bottom left and its script wrote "Play" over the live
+    play button. Only the mount point, #library, may be shared."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "page"
+    lib = set(re.findall(r'id=\\?"([\w-]+)\\?"', (root / "library.js").read_text())) | \
+        set(re.findall(r'\.id = "([\w-]+)"', (root / "library.js").read_text()))
+    for page in ("live.html", "index.html"):
+        theirs = set(re.findall(r'id="([\w-]+)"', (root / page).read_text()))
+        assert lib & theirs <= {"library"}, (page, sorted(lib & theirs))

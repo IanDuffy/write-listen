@@ -436,8 +436,15 @@ later phase. Report, doc answers, live results, costs and Ian's script: `voice/g
   `offer_first.md` until the listener has been told (a returning listener, or `session.explained()` on resume),
   then `offer_known.md`. An outright "turn off your mic" (`mic_off_ask`) rests tap-only; other rests wait
   `wake_grace_secs` before listening, with `live.page.wake` over `voice.wake`.
+- **Ian's fifth note** (2026-11-16). After `start_chapter` the page sends `started_step_back` (and steps back after
+  the guide's line, `restSoon(true)`: only real talk cancels) or, if `engaged()`, `started_company`. A rest closes
+  the GPT-Live session (`closeLive(keepMic)`; it lets go of `L.pc`/`L.dc` at once and waits for the close on the
+  side); resume reasons `wake`/`tap`/`play`/`ready`/`dropped` each have a note; `ready` opens a session with no
+  mic (`addTransceiver`) to say the ready line, then closes (`readyWhileAway`).
 - Costs: GPT-Live $0.05 per connected minute (muted and silent time too) + backend tokens, logged per
   session in `listener/sessions/log.jsonl`; build checks in `voice/gpt_live/build_costs.jsonl` (cap $20).
+  The checks are small by default (`live.checks`: 3-minute conversations, no grade unless `--grade`, then
+  Sonnet; $0.40 per check at most): keep them that way unless Ian asks for a bigger run.
 - Tests: `tests/live/`; `tests/conftest.py`'s `cfg` pins `live.provider: elevenlabs` for the older tests.
 
 ## Overnight Chapters (branch `feature/overnight`, 2026-11-15)

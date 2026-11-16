@@ -1,6 +1,6 @@
 // The library (docs/overnight-chapters.md; overnight/DESIGN.md "Round 2"): a module any page mounts. It builds
 // its markup into <section id="library"> (made at the end of <body> if the page has none) and a fixed mini
-// player <div id="player"> owning the one <audio id="chapter-audio">. page/index.html mounts it below the orb;
+// player <div id="lib-player"> owning the one <audio id="chapter-audio">. page/index.html mounts it below the orb;
 // /library (page/library.html) is a standalone shell around it.
 //   #/                 home: Up next (Change by voice, Add a note by text), the latest chapter, every past one
 //   #/chapter/<run>    a chapter view in the page: read along (the sentence being heard highlighted, click a
@@ -32,8 +32,8 @@
 
   // --- markup -------------------------------------------------------------------------------------
   const STYLE = `
-  #library, #player { --card: #ffffff; --soft: #f3e3d1; }
-  @media (prefers-color-scheme: dark) { #library, #player { --card: #1c1c1a; --soft: #3a2a1b; } }
+  #library, #lib-player { --card: #ffffff; --soft: #f3e3d1; }
+  @media (prefers-color-scheme: dark) { #library, #lib-player { --card: #1c1c1a; --soft: #3a2a1b; } }
   #library { display: block; width: 100%; max-width: 38em; margin: 0 auto; flex: none; text-align: left;
              padding: 32px 16px calc(48px + var(--lib-player-h, 0px)); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   #library.lib-wide { max-width: 1100px; }
@@ -89,13 +89,13 @@
   #ch-cards .lib-ref .title { font-weight: 600; }
   #ch-cards .lib-ref a { color: var(--accent); font-size: inherit; }
   #ch-cards .lib-ref .note { color: var(--muted); }
-  #player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); color: var(--fg);
+  #lib-player { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: var(--card); color: var(--fg);
             border-top: 1px solid var(--line); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  #player[hidden] { display: none; }
-  #player .lib-pin { max-width: 38em; margin: 0 auto; padding: 8px 16px; display: flex; align-items: center; gap: 12px; }
+  #lib-player[hidden] { display: none; }
+  #lib-player .lib-pin { max-width: 38em; margin: 0 auto; padding: 8px 16px; display: flex; align-items: center; gap: 12px; }
   #player-toggle { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; background: var(--accent);
                    color: #fff; cursor: pointer; font-size: 14px; }
-  #player .lib-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #lib-player .lib-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   #player-title { font-size: 14px; color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #player-line { font-size: 13px; color: var(--muted); }
   #player-line:empty { display: none; }
@@ -365,7 +365,7 @@
   if (document.getElementById("orb")) document.documentElement.classList.add("has-orb");  // its own guide circle
   host.innerHTML = MARKUP;
   const player = document.createElement("div");
-  player.id = "player";
+  player.id = "lib-player";
   player.hidden = true;
   player.innerHTML = PLAYER;
   document.body.appendChild(player);
