@@ -541,7 +541,13 @@ fast:
     reasoning_effort: low
     turn_timeout_secs: 30       # the page handles silence itself; the platform should not nudge first
 
-# Tester demo (docs/tester-demo-design.md). Each part adds only its own keys.
+# Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys.
 demo:
-  enabled: false            # tester mode: cookies required, gate, interviewer. Off: the app as today (Ian's own)
+  enabled: false            # tester mode: cookies required, gate, interviewer. Off: the app as today (Ian's own).
+                            # env WL_DEMO=1 turns it on (the droplet's env file sets it: deploy/env.example)
   max_builds: 3             # chapter builds running at once, server-wide; more wait in a queue (server.BuildQueue)
+  cookie: wl_tester         # the cookie holding the tester's token (demo/testers.py)
+  cookie_days: 365
+  secure_cookie: auto       # auto: Secure when the request came over https (X-Forwarded-Proto from Caddy)
+  chapter_minutes: 10       # testers' chapter length (written into their settings.json)
+  base_url: null            # the links' origin for `wl study create` (env WL_BASE_URL wins), e.g. https://listen.ianduffy.com

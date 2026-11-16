@@ -209,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in ("listener", "overnight"):  # listener profiles and the nightly build
         from overnight.cli import main as overnight_main
         return overnight_main(argv)
+    if argv and argv[0] == "study":  # the Tester Demo: testers' links and the study report (demo/cli.py)
+        from demo.cli import main as study_main
+        return study_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage")
     ap.add_argument("run", nargs="?")

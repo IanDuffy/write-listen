@@ -69,6 +69,7 @@ from pydantic import BaseModel
 
 from ask import aside as ask_aside
 from ask import routes as ask_routes
+from demo import routes as demo_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
@@ -738,7 +739,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     pipe = _Here(lambda: here().pipe)  # what the routes below and the mounted ones hold
     chat = _ChatHere(lambda: here().chat)
     app.add_middleware(TesterScope, cfg=cfg, on_request=queue.ensure_watcher if queue is not None else None)
-    # Part B mounts the demo routes here, before the page route, so its GET / wins in tester mode.
+    demo_routes.mount(app, cfg)  # before the page route: with demo.enabled its GET / wins over the one below
 
     @app.get("/healthz")
     def healthz() -> dict:
