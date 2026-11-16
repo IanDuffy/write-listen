@@ -20,6 +20,18 @@ Interviewer check costs: `demo/build_costs.jsonl`.
 Underneath: the server now keeps each tester's listener per request (a cookie, a ContextVar), their own
 pipeline and conversation, and a build queue of 3 (server.py). With tester mode off nothing changes.
 
+## Review (2026-11-16)
+
+Five lenses (isolation, server state, page flow, interviewer and study data, deploy), each finding checked by a
+skeptic: 17 confirmed (11 distinct), all fixed with regression tests, each fix reviewed again; that review found
+three more (two name-fallback gaps, the CLI tests loading the repo's .env, an open page's catch-up pass during an
+admin reset), also fixed. Highlights: an admin reset or delete waits for memory passes and stops builds that
+survived a restart; memory locks are per listener; the interviewer's name fallback needs real capitals and skips
+stop words; curly apostrophes no longer stop the debrief closing; one debrief per tester (a later chapter doesn't
+hand back again); "I'm done" counts the minutes actually heard; a refused mic asks again instead of typing;
+the backup accepts the droplet's new host key; `wl study create` on the droplet prints the real link.
+Full suite after the fixes: 1,648 passed.
+
 ## Acceptance checks
 
 | # | Check | State |
