@@ -69,6 +69,7 @@ from pydantic import BaseModel
 
 from ask import aside as ask_aside
 from ask import routes as ask_routes
+from demo import interviewer as demo_interviewer
 from demo import routes as demo_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
@@ -690,6 +691,8 @@ def state_for(lid: str | None) -> State:
 def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, remember_on_start: bool = True) -> FastAPI:
     pipe0 = pipeline or Pipeline()
     cfg = cfg or load_config()
+    if os.environ.get("WL_DEMO", "").strip().lower() in ("1", "true", "yes", "on"):  # the droplet (deploy/env.example)
+        cfg = {**cfg, "demo": {**(cfg.get("demo") or {}), "enabled": True}}
     if pipe0.cfg is None:
         pipe0.cfg = cfg
     app = FastAPI(title="write-listen")
@@ -740,6 +743,26 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     chat = _ChatHere(lambda: here().chat)
     app.add_middleware(TesterScope, cfg=cfg, on_request=queue.ensure_watcher if queue is not None else None)
     demo_routes.mount(app, cfg)  # before the page route: with demo.enabled its GET / wins over the one below
+    demo_interviewer.mount(app, cfg)  # the interviewer's sessions (/api/interview/*, /interview.js)
+
+    def drop(lid: str, action: str) -> None:
+        """The admin resets, deletes or revokes a tester: their chapter being made stops and their
+        conversation is let go (no memory pass: the folder is being cleared), so nothing keeps writing into
+        the folder that replaces it."""
+        with registry:
+            st = states.pop(lid, None)
+        if st is None:
+            return
+        st.chat["session"] = None
+        status = st.pipe.status() or {}
+        if status.get("run") and status.get("state") == "making":
+            try:
+                st.pipe.stop(status["run"], cfg)
+            except Exception as e:
+                print(f"  tester {lid}: stopping {status['run']} on {action} failed: {e}")
+    if demo_on(cfg):
+        from demo import testers as demo_testers
+        demo_testers.ON_CHANGE[:] = [f for f in demo_testers.ON_CHANGE if getattr(f, "__name__", "") != "drop"] + [drop]
 
     @app.get("/healthz")
     def healthz() -> dict:
