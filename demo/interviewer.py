@@ -149,7 +149,10 @@ NOT_NAMES = {"Yes", "Yeah", "Yep", "No", "Nope", "Sorry", "Okay", "Ok", "Alright
              "Just", "Not", "Here", "Fine", "Good", "Ready", "Curious", "Happy", "Got", "It", "It's", "Its",
              "That", "That's", "This", "Lovely", "Perfect", "Nice", "Cool", "Wonderful", "Brilliant", "Awesome",
              "Excellent", "Glad", "Exactly", "Correct", "Totally", "Did", "Is", "Have", "I", "I'm", "My", "The",
-             "A", "An", "What", "Wait", "Pretty", "Really", "Very", "Busy", "Tired", "Doing"}
+             "A", "An", "What", "Wait", "Pretty", "Really", "Very", "Busy", "Tired", "Doing",
+             "Absolutely", "Definitely", "Certainly", "Please", "Of", "Course", "Indeed", "Yup", "Mhm", "Uhm",
+             "Fair", "True", "Agreed", "Sounds", "Morning", "Afternoon", "Evening", "Today", "Tonight",
+             "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"}
 
 
 def norm_quotes(text) -> str:
@@ -158,9 +161,12 @@ def norm_quotes(text) -> str:
 
 
 def _a_name(found: str | None) -> str | None:
-    """A matched name up to its first stop word; None when its first word isn't a name."""
-    words = (found or "").split()
-    if not words or words[0] in NOT_NAMES:
+    """A matched name without its leading stop words ("Okay Sam" is Sam), up to its next one; None when no
+    word of it is a name."""
+    words = [w.strip(".,!?") for w in (found or "").split()]
+    while words and words[0] in NOT_NAMES:
+        words = words[1:]
+    if not words:
         return None
     out = []
     for w in words:

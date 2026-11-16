@@ -501,3 +501,22 @@ def test_the_summary_is_not_written_for_a_reset_tester(cfg, tmp_path, monkeypatc
     s["who"] = IV.identity(lis)
     IV._after_end(cfg, lis / "study", s)
     assert len(seen) == 1 and (lis / "study" / "debrief_summary.md").exists()
+
+
+def test_a_stop_word_before_the_name_is_dropped_and_yes_words_are_never_names():
+    """Review of the fix: "Okay Sam, did I get that right?" gave None, and "Absolutely." after "Can I call you
+    Sam?" was saved as the name."""
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    for line in ("It's Sam. Did I get that right?", "Okay Sam, did I get that right?", "Thanks Sam. Did I get that right?"):
+        assert confirmed_name([said("interviewer", line)]) == "Sam", line
+    ask = said("interviewer", "Can I call you Sam?")
+    for yes in ("Absolutely.", "Definitely!", "Please.", "Certainly", "Of course."):
+        assert confirmed_name([ask, said("listener", yes)]) is None, yes
+    assert confirmed_name([said("listener", "It's Tuesday, I'm tired")]) is None
+
+
+def test_the_study_cli_never_loads_the_repos_dot_env():
+    import demo.cli
+    from stages.common import ROOT
+    assert demo.cli.ROOT != ROOT  # tests/demo/conftest.py
