@@ -5,6 +5,8 @@
     wl overnight status [--listener ID]        the card and the build's status
     wl overnight plan [--mode M] [--topic T]   write the Up next card now
     wl overnight tick [--listener ID]          what the scheduler calls every quarter hour: plan or build if due
+    wl overnight wait [--listener ID]          tick every quarter hour in this terminal, keeping the Mac awake (the
+                                               launchd entry can't reach a repo in ~/Desktop: macOS privacy rules)
     wl overnight schedule show|install|remove  the laptop's scheduler entry (launchd), for testing
 """
 
@@ -81,10 +83,39 @@ def tick(cfg: dict, lid: str | None, clock: datetime | None = None) -> dict:
     return {"did": None}
 
 
+def next_quarter(t: datetime) -> datetime:
+    """The next quarter hour after t (02:00, 02:15, ...), a few seconds past it."""
+    from datetime import timedelta
+    base = t.replace(second=0, microsecond=0)
+    return base + timedelta(minutes=15 - base.minute % 15, seconds=5)
+
+
+def wait(cfg: dict, lid: str | None, sleep=None, clock=None, rounds: int | None = None) -> None:
+    """`wl overnight wait`: what the launchd entry does, from a terminal. On macOS a launchd job is refused
+    access to ~/Desktop (privacy rules), where this repo lives; a process started in a terminal has it. Ticks
+    at once, then on every quarter hour, until Ctrl-C; idle sleep is held off while it runs (caffeinate)."""
+    import time as _time
+    sleep = sleep or _time.sleep
+    clock = clock or datetime.now
+    runner._keep_awake()
+    n = 0
+    while rounds is None or n < rounds:
+        try:
+            out = tick(cfg, lid, clock=clock())
+            print(f"  -> {out.get('did') or 'nothing due'}" + (f" ({out['reason']})" if out.get("reason") else ""),
+                  flush=True)
+        except Exception as e:  # noqa: BLE001 - one bad tick must not end the night's waiting
+            print(f"  tick failed: {type(e).__name__}: {e}", flush=True)
+        n += 1
+        if rounds is not None and n >= rounds:
+            break
+        sleep(max(1.0, (next_quarter(clock()) - clock()).total_seconds()))
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="wl overnight")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("run", "resume", "status", "plan", "tick"):
+    for name in ("run", "resume", "status", "plan", "tick", "wait"):
         p = sub.add_parser(name)
         p.add_argument("--listener", help="listener id (default: the active one)")
         if name == "run":
@@ -124,6 +155,10 @@ def main(argv: list[str]) -> int:
         elif args.cmd == "tick":
             out = tick(cfg, args.listener)
             print(json.dumps({"did": out.get("did"), "state": out.get("state"), "reason": out.get("reason")}))
+        elif args.cmd == "wait":
+            print(f"  waiting: a tick now and on every quarter hour (plans at plan_at, builds at start on build days). "
+                  f"Ctrl-C to stop.", flush=True)
+            wait(cfg, args.listener)
         elif args.cmd == "schedule":
             text = plist_text(args.listener)
             if args.action == "show":

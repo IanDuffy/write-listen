@@ -17,12 +17,15 @@ Then open http://127.0.0.1:8765/library (Chrome; allow the microphone).
 1. Keep the laptop on power, lid open (or with an external display), and set it to wake before the build:
    System Settings → Battery → Options (or `sudo pmset repeat wakeorpoweron MTWRF 01:55:00`). This is a
    system setting, so it is yours to change; nothing here changes it.
-2. Install the scheduler entry. It is a launchd job that runs `wl overnight tick` every quarter hour. Tick
-   plans at 18:00 and builds at 02:00 on build days, following `settings.json`:
+2. Start the scheduler. **On this Mac a launchd job can't run it**: macOS refuses background jobs access to
+   `~/Desktop`, where the repo lives (tried 2026-11-15: "Operation not permitted"). Instead, in a Terminal tab,
+   from the main checkout, run this and leave it running. It ticks now and every quarter hour, plans at 18:00
+   and builds at 02:00 on build days (following `settings.json`), and keeps the Mac from idle-sleeping:
    ```bash
-   ./wl overnight schedule install
+   ./wl overnight wait
    ```
-   (`./wl overnight schedule show` prints it first; `./wl overnight schedule remove` takes it out.)
+   (The launchd entry, `./wl overnight schedule install`, works once the repo is outside `~/Desktop`, or once the
+   venv's python and `/bin/sh` have Full Disk Access in System Settings → Privacy & Security; your call.)
 3. Before 18:00 on a weeknight, check the card plans: `./wl overnight status`.
 4. Next morning: the library page's latest chapter is that night's, and
    `listeners/ian/chapters/<date>-<slug>/status.json` says `ready`. The build log is

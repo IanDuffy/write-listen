@@ -468,7 +468,9 @@ opens a short live intro by the guide, then the recording. Report, live results 
   session (34 of 50 paragraphs lost their openings). A take is everything audible since the last, trimmed. Each
   take is checked by local Whisper (`overnight.record.check`), GPT-Live's transcript as a tie-breaker for names;
   numbers in digits normalised; a passage it always stops short gets a pickup of the missing sentences.
-- **Scheduling:** `wl overnight tick` (launchd every quarter hour: `wl overnight schedule install`, Ian's call)
+- **Scheduling:** `wl overnight tick`, every quarter hour: `wl overnight wait` in a terminal (macOS refuses a
+  launchd job access to `~/Desktop`, where the repo lives; `wl overnight schedule install` is the launchd entry for
+  a repo elsewhere, or with Full Disk Access granted),
   plans at `plan_at`, builds at `start` on build days (`overnight/schedule.py` is pure). A card lock
   (`overnight/locks.py`) keeps the tick and the server's Change from crossing; a dead build counts as failed
   (`runner.reconcile`); a failed card is retried once on the next build day; failed planning passes back off.

@@ -415,3 +415,19 @@ def test_a_note_added_while_a_manual_build_starts_reaches_the_seed(world, monkey
     assert "- Mention the grey heron colony" in (root / "00_source" / "seed.md").read_text()
     locked = json.loads((root / "00_source" / "up_next.json").read_text())
     assert [n["text"] for n in locked["notes_added"]] == ["Mention the grey heron colony"]
+
+
+def test_wait_ticks_now_and_on_each_quarter_hour(world, monkeypatch):
+    """The launchd entry is refused ~/Desktop by macOS; `wl overnight wait` ticks from a terminal instead."""
+    from overnight import commands as cmds
+    t = [datetime(2026, 11, 16, 1, 52, 10)]
+    ticks, slept = [], []
+    monkeypatch.setattr(cmds, "tick", lambda cfg, lid, clock=None: ticks.append(clock) or {"did": None})
+
+    def sleep(s):
+        slept.append(s)
+        from datetime import timedelta
+        t[0] = t[0] + timedelta(seconds=s)
+    cmds.wait(world.cfg, "ian", sleep=sleep, clock=lambda: t[0], rounds=3)
+    assert [x.strftime("%H:%M") for x in ticks] == ["01:52", "02:00", "02:15"]
+    assert cmds.next_quarter(datetime(2026, 11, 16, 2, 0, 0)).strftime("%H:%M:%S") == "02:15:05"
