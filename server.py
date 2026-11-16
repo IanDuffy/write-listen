@@ -762,7 +762,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 print(f"  tester {lid}: stopping {status['run']} on {action} failed: {e}")
     if demo_on(cfg):
         from demo import testers as demo_testers
-        demo_testers.ON_CHANGE[:] = [f for f in demo_testers.ON_CHANGE if getattr(f, "__name__", "") != "drop"] + [drop]
+        hooks = getattr(demo_testers, "ON_CHANGE", None)  # (a test's stand-in module may not have it)
+        if isinstance(hooks, list):  # one drop: the newest app's (tests create several)
+            hooks[:] = [f for f in hooks if getattr(f, "__name__", "") != "drop"] + [drop]
 
     @app.get("/healthz")
     def healthz() -> dict:

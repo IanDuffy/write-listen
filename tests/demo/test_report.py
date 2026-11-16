@@ -81,6 +81,8 @@ def test_the_report_uses_the_interviewers_moments_when_part_c_is_there(dcfg, wri
     fake = types.ModuleType("demo.debrief")
     fake.moments = lambda d: [{"at_s": 192, "clock": "3:12", "words": "Why don't arches fall?"}]
     monkeypatch.setitem(sys.modules, "demo.debrief", fake)
+    import demo
+    monkeypatch.setattr(demo, "debrief", fake, raising=False)  # the real part C module, once imported, is the package's attribute
     seed(dcfg, "Purnima", "done")
     report.build(dcfg, yes=True)
     assert "at 3:12: \"Why don't arches fall?\"" in writer.prompt()
