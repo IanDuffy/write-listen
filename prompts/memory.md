@@ -7,14 +7,16 @@ Inputs:
 - {{known}}: what library.jsonl and seeds.jsonl already hold (recent items), so nothing is added twice
 - {{transcript}}: the conversation just ended, from listener/sessions/<id>.jsonl
 - {{today}}: the date of the conversation
+- {{aside}}: whether this was an ask during a chapter, and where (prompts/memory_aside.md)
 
 Output: JSON (structured output; SCHEMA in stages/memory.py): the new profile.md
 and guide.md, written whole, whether the listener asked to forget anything (code marks the
 session so memory.recent never quotes it), and the run names of any chapters the listener asked
 to forget (code removes them from history.md and seeds/), and the works, people, topics and future-chapter
 seeds the listener mentioned (code appends them to library.jsonl and seeds.jsonl, overnight/library.py, and
-keeps a seed's words only if the listener said them). Rules from docs/phase1-onboarding.md, "Memory store";
-library and seeds from docs/overnight-chapters.md.
+keeps a seed's words only if the listener said them), and, for an ask during a chapter, its moments (code writes
+them to the chapter's moments.jsonl, overnight/timeline.py). Rules from docs/phase1-onboarding.md, "Memory store";
+library and seeds from docs/overnight-chapters.md; moments from docs/library-timeline.md, "Capture".
 Model: config.yaml models.writer (Opus 5.5), for a careful reading.
 ---
 You keep the memory of a guide who makes narrated audio chapters for one listener. A conversation between them has just ended. Update two short files from it.
@@ -49,7 +51,7 @@ The conversation (who: listener, guide, page, tool), in order:
 {{transcript}}
 </transcript>
 
-The conversation took place on {{today}}.
+The conversation took place on {{today}}. {{aside}}
 
 **profile**: what the listener has said about themselves and their interests, in their own words where possible.
 - Record only what the listener said. No guesses about personality, mood or motives, and nothing the guide said about them that they did not confirm.
@@ -70,6 +72,11 @@ The conversation took place on {{today}}.
 
 **library**: works (books, films, podcasts, articles, pieces of music), people and topics the listener mentioned in this conversation as something they read, watched, love or are curious about. Only what the listener brought up or took up with interest, not everything the guide named. `kind` is work, person or topic; `title` as they would say it; `creator` the author or maker if known (else empty); `note` a few words on what they said about it. Leave out anything already known (above) and anything they asked to forget. Often an empty list.
 
-**seeds**: questions and ideas the listener raised that could become a future chapter: something they wondered about, asked and did not get to the bottom of, or said they'd like to hear more about. `kind` is question or idea; `text` the subject as a plain line; `words` their exact words from the transcript (copied, not paraphrased), or empty. Leave out the topic of a chapter started in this conversation (the start_chapter tool call), anything already known (above) and anything they asked to forget. Often an empty list.
+**seeds**: questions and ideas the listener raised that could become a future chapter: something they wondered about, asked and did not get to the bottom of, or said they'd like to hear more about. `kind` is question or idea; `text` the subject as a plain line; `words` their exact words from the transcript (copied, not paraphrased), or empty. Leave out the topic of a chapter started in this conversation (the start_chapter tool call), anything already known (above) and anything they asked to forget; in an aside, leave out questions (they go in moments). Often an empty list.
+
+**moments**: only for an aside during a chapter (above says whether this was one); otherwise an empty list. One entry per thing the listener did in it:
+- a **question** they asked: `text` their question in their own words, shortened to one short line and tidied (the transcript breaks speech into fragments: join them; keep their wording, drop the ums and false starts). `outcome` answered if the guide answered it in the conversation, with `reply` one plain line summing up the answer (under twenty words, no "the guide said"); saved if the guide saved it for later (the save_seed tool) or could not answer it then, with `reply` empty.
+- a **mention**: a book, person, place or work they named as something they know, love or want to look at. `title` and `creator` as in library above, `text` "Title, Creator" (or just the title), `outcome` saved, `reply` empty. Not what the guide named.
+Leave out greetings, "go on", "okay", requests to go back to the chapter, and anything they asked to forget. Never list the topic the guide saved by itself with save_seed as a separate entry (code writes that). Use `kind` question or mention; for a question, `title` and `creator` are empty. Often one entry; an aside with nothing asked, an empty list.
 
 profile and guide are plain markdown, no headings beyond one title line, written to be read by the guide at the start of the next conversation.

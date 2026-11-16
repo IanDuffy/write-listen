@@ -11,7 +11,7 @@ Spec: `docs/library-timeline.md` (Ian, 2026-11-15). Branch `feature/library-time
 | 2. Demo seed | Done (`demo/library_demo.json`, `wl demo seed`) |
 | 3. Library screen | Done (`page/library.js`: strip, scrubber, From this chapter, Up next with Change and notes) |
 | 4. Chapter screen | Done (`#/chapter/<run>`; the read-along moved to `#/chapter/<run>/transcript`) |
-| 5. Capture | Planner outcomes and `playback.json` from the player done; the ask capture: see below |
+| 5. Capture | Done: an ask's moments from the after-conversation pass, `save_seed`'s note, the planner's outcomes, `playback.json` from the player (gap 4 below) |
 
 ## Acceptance checks
 
@@ -27,7 +27,8 @@ Spec: `docs/library-timeline.md` (Ian, 2026-11-15). Branch `feature/library-time
 | 8 | Pass: Play only on the latest card and its chapter page; older transcripts read but don't play |
 | 10 | Pass: the planner marks the moment (seen live in the demo's generation, 7 of 7 seed-sourced cards) and a replaced card puts it back to Saved, on both screens |
 | 11 | Pass: the start of a play, every 10 s, pause and the end are posted; after a reload the card's status line and the page's bar match `playback.json` |
-| 9, 12, 13 | Need a person (`NEEDS_HUMAN.md`) |
+| 9 | Needs a person (`NEEDS_HUMAN.md`). Offline: two asks make two moments at their places with words and outcomes (`tests/test_library_capture.py`); live: the pass on two of your real asides ($0.023 each) turned "Um, I've heard that in the / Himalayas there are saints..." into one saved question with its seed |
+| 12, 13 | Need a person (`NEEDS_HUMAN.md`) |
 
 ## Where the code didn't match the spec (the stop rule)
 
@@ -45,7 +46,31 @@ Written down here rather than worked around; what was done instead, if anything,
    build names it when it locks the card), so `outcome_ref` is the card's plan id; the reader resolves it (still up
    next: "tonight's chapter"; built: that chapter, by its `00_source/up_next.json` id).
 
+4. **Asks didn't get the after-conversation pass.** The spec has the pass "that already updates the profile and
+   library" write an ask's moments; but an ask on a recorded chapter (overnight/live.py, mode ask) ended without
+   it (the overnight build left it out; its seeds were written by code, `aside_seeds`). What I did: asks now get
+   the pass (`overnight.live.memory_on_asks: true`; false puts it back as it was), and the pass returns `moments`
+   for an ask only. Cost: about $0.02 an ask (Opus). Effects beyond moments: an ask can now update `profile.md`,
+   `guide.md` and the library like any conversation; an ask that ends after a later conversation was remembered
+   still gets its moments but leaves the profile alone. Your call whether this is the right fix; the alternative
+   is a smaller pass for asks alone.
+5. **Where capture doesn't reach.** Questions and mentions are captured for asks on the library page's recordings
+   (GPT-Live, overnight/live.py). The older ElevenLabs asides (`ask/routes.py`, `?chapter=`) get `save_seed`'s note
+   but no pass; questions asked during a chapter read live on the orb page (`page/live.js`, one GPT-Live session)
+   are not asides at all and leave no moments. The orb page's own player doesn't write `playback.json`; the
+   library's player does.
+
 ## Decisions
+
+- **Capture.** A moment from an ask sits at the tap position (`position_s`, and `sentence_id` and `paragraph_id`
+  `segNN-pKK` from the timed transcript, written into the session's first line). Questions are shortened into a
+  line in the listener's words by the pass, with the guide's answer in one line (`reply`) when it answered;
+  otherwise Saved, and the question becomes a seed (kind question). `save_seed` writes a note at once, naming the
+  seed the aside gives it; if the pass then finds the question the guide saved, the note becomes that question
+  (one ask, one moment). A mention goes into `library.jsonl` (a work) and reads In your library. For an aside the
+  pass's own question seeds are dropped (the moments make them), so the planner never sees one question twice.
+- **"Use"** needed nothing new: a card's source words come from its seed, which for a saved moment are the
+  listener's question, and the intro brief already quotes the card's source words.
 
 - **Visual tokens.** The spec keeps the app's token where it already sets one. The app sets the font (the system
   font), the ground (`--bg` #fafaf8), ink (`--fg`), muted (`--muted` #77756f), line (`--line`) and the accent

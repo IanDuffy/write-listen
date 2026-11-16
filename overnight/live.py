@@ -479,7 +479,8 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                 aside_seeds(s)
             out["restart"] = restart
         write_line(s, {"who": "session", "ended": how, "seconds": billed, "cost_usd": usd})
-        if s["mode"] != "ask" and chat is not None:  # the usual after-conversation pass (profile, library, seeds)
+        remember = s["mode"] != "ask" or lcfg(cfg).get("memory_on_asks", True)  # asks: their moments too
+        if remember and chat is not None:  # the usual after-conversation pass (profile, library, seeds, moments)
             from stages import memory
             t = threading.Thread(target=memory.after_session, args=(cfg, s["path"]), name="overnight-memory",
                                  daemon=True)
@@ -542,7 +543,9 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                 ch = A.Chapter(root, cfg)
                 t = min(max(req.t, 0.0), ch.duration)
                 values = ask_values(cfg, ch, t, A.load_asides(root))
-                extra = {"chapter": ch, "t": t, "sentence_id": ch.sents[ch.locate(t)].id, "root": root,
+                here = ch.sents[ch.locate(t)]
+                extra = {"chapter": ch, "t": t, "sentence_id": here.id, "root": root,
+                         "paragraph_id": f"seg{here.seg + 1:02d}-p{here.para + 1:02d}",
                          "aside": f"{time.strftime('%Y%m%d-%H%M%S')}-live", "seeds": [], "lines": []}
             session = session_config(cfg, req.mode, values)
             got = create_webrtc(cfg, session, req.sdp)
@@ -552,8 +555,11 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
         s = {"id": sid, "mode": req.mode, "run": req.run, "live_id": got["id"], "t0": time.monotonic(),
              "last": time.monotonic(),
              "path": common.listener_dir(cfg) / "sessions" / f"{sid}.jsonl", "tools": [], **extra}
-        write_line(s, {"who": "session", "mode": req.mode, "run": req.run, "live_id": got["id"],
-                       "voice": session["audio"]["output"]["voice"], "model": session["model"]})
+        first = {"who": "session", "mode": req.mode, "run": req.run, "live_id": got["id"],
+                 "voice": session["audio"]["output"]["voice"], "model": session["model"]}
+        if req.mode == "ask":  # where they tapped: the memory pass puts the aside's moments there
+            first.update(t=round(extra["t"], 2), sentence_id=extra["sentence_id"], paragraph_id=extra["paragraph_id"])
+        write_line(s, first)
         with lock:
             open_[sid] = s
         out = {"session": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": notes(),
@@ -637,7 +643,8 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             s["resume"] = {"reason": args.get("reason") or "other", "rewind": args.get("rewind")}
             out = {"resuming": True}
         else:  # save_seed
-            saved = A.save_seed(s["root"], args.get("topic", ""), args.get("why", ""), s["t"], s["sentence_id"])
+            saved = A.save_seed(s["root"], args.get("topic", ""), args.get("why", ""), s["t"], s["sentence_id"],
+                                session=s["id"], paragraph_id=s.get("paragraph_id"))
             s["seeds"].append(saved)
             out = {"saved": True}
         s["tools"].append(req.name)

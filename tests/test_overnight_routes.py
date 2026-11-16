@@ -5,6 +5,7 @@ recorded chapter with the rewind (check 13 in code)."""
 
 import json
 import os
+import time as real_time
 from datetime import datetime
 
 import pytest
@@ -228,5 +229,9 @@ def test_an_aside_on_a_recorded_chapter_resumes_with_the_rewind(app):
     assert end["restart"] == ch.restart_point(20, 1.0) and end["restart"]["rule"] == "sentence"  # under 30 s
     asides = A.load_asides(root)
     assert asides[-1]["ended"] == "closing" and asides[-1]["voice"] == "gpt-live" and asides[-1]["seeds"]
-    assert app.passes == []  # an aside belongs to the chapter, not a memory pass of its own
+    for _ in range(100):  # an ask gets the after-conversation pass: it writes the aside's moments
+        if app.passes:
+            break
+        real_time.sleep(0.02)
+    assert [p.name for p in app.passes] == [f"{s['session']}.jsonl"]  # (docs/library-timeline.md, Capture)
     assert app.c.post("/api/overnight/live/line", json={"session": s["session"], "who": "guide", "text": "x"}).status_code == 409

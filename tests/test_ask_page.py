@@ -335,10 +335,10 @@ def test_read_along_opens_the_chapter_view_in_this_page(site):
     try:
         play_at(page, 30.0)
         page.wait_for_function("getComputedStyle(document.getElementById('read')).display !== 'none'")
-        assert page.get_attribute("#read", "href") == "#/chapter/synthetic"
+        assert page.get_attribute("#read", "href") == "#/chapter/synthetic/transcript"
         assert page.get_attribute("#read", "target") is None
         page.click("#read")
-        page.wait_for_function("location.hash === '#/chapter/synthetic'")
+        page.wait_for_function("location.hash === '#/chapter/synthetic/transcript'")
         page.wait_for_function("!document.getElementById('chapter-audio').paused && document.getElementById('audio').paused")
         assert page.evaluate("document.getElementById('chapter-audio').currentTime") >= 30
         assert len(page.context.pages) == 1

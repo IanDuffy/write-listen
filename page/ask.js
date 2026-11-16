@@ -113,7 +113,7 @@
     const s = status;
     const on = s.state === "ready" && s.episode && !a;
     read.style.display = on ? "" : "none";
-    if (on) read.href = `#/chapter/${encodeURIComponent(s.run)}`;
+    if (on) read.href = `#/chapter/${encodeURIComponent(s.run)}/transcript`;  // the library's read-along
   }
 
   // --- the aside --------------------------------------------------------------------------------

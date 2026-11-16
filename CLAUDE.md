@@ -481,6 +481,26 @@ opens a short live intro by the guide, then the recording. Report, live results 
   `prompts/overnight_voice_*.md`: a second, smaller GPT-Live client beside the live page's; they never run at
   once (`window.Orb` / `window.Library` busy/end). Merging the two clients and personas is open.
 
+## Library Timeline and Listening Notes (branch `feature/library-timeline`, 2026-11-16)
+
+Spec: `docs/library-timeline.md` (Ian). Progress, the gaps found and decisions: `PROGRESS.md`; checks 9, 12, 13:
+`NEEDS_HUMAN.md`. The library (page/library.js) is now two screens: the chapter strip with a scrubber of real dates
+and "From this chapter" (sketch B), and the chapter page `#/chapter/<run>` (sketch D: progress bar, a marker per
+moment, every moment with its outcome); the read-along moved to `#/chapter/<run>/transcript`. Only the latest chapter
+plays. The library's Play is `#lib-play` (the orb page has its own `#play`).
+
+- `overnight/timeline.py`: `chapters/<id>/moments.jsonl` (rewritten whole under a lock file), `playback.json`
+  (`POST /api/chapters/<run>/playback`: the player reports at a play's start, every 10 s, on pause and at the end),
+  and `state()`, `/api/library`'s `timeline`. `became_chapter`'s `outcome_ref` is the card's plan id, resolved at read.
+- Capture: an ask on a recording now gets the after-conversation pass (`overnight.live.memory_on_asks`), whose
+  `moments` (asks only) `memory.remember_moments` writes at the tap position from the session's first line;
+  `ask/aside.save_seed` writes a note moment; `planner.moments_follow` marks the moment a card's seed came from and
+  puts it back to Saved (and the seed back in the pool, `library.mark_unused`) when the card is replaced unbuilt.
+- Demo: `wl demo seed [--use]` rebuilds `listeners/demo-library/` from `demo/library_demo.json` (filler cards from
+  the real planner; the Beauty and Herons chapters copied from `listeners/ian`, read only). The tick skips a listener
+  whose settings.json has `demo`.
+- Visual tokens: the app's own (system font, `--accent` orange, dark mode) where it sets one, per the spec's rule.
+
 ## Local setup
 
 ```bash

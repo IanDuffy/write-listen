@@ -315,7 +315,12 @@ def clear_asides(runs_dir: Path, dest: Path) -> list[str]:
     return touched
 
 
-def save_seed(run: Path, topic: str, why: str, t: float, sentence_id: str) -> dict:
+def save_seed(run: Path, topic: str, why: str, t: float, sentence_id: str, session: str | None = None,
+              paragraph_id: str | None = None) -> dict:
+    """The guide saved a topic for a future chapter during an aside: 12_asks/seeds.md, and a note in the chapter's
+    moments.jsonl at the place they tapped (docs/library-timeline.md: "the seed now also writes a moment"), naming
+    the seed it becomes (the id after_chapter and the aside's own seeds give it)."""
+    _note_moment(run, topic, why, t, sentence_id, session, paragraph_id)
     d = asks_dir(run)
     d.mkdir(exist_ok=True)
     p = d / "seeds.md"
@@ -324,3 +329,18 @@ def save_seed(run: Path, topic: str, why: str, t: float, sentence_id: str) -> di
         f.write(f"{head}\n## {topic.strip()}\n\nWhy: {why.strip()}\n\nFrom an aside at {_clock(t)} ({sentence_id}), "
                 f"{time.strftime('%Y-%m-%d %H:%M')}.\n")
     return {"topic": topic.strip(), "why": why.strip()}
+
+
+def _note_moment(run: Path, topic: str, why: str, t: float, sentence_id: str, session: str | None,
+                 paragraph_id: str | None) -> None:
+    from overnight import library, timeline
+    topic, why = topic.strip(), why.strip()
+    if not topic:
+        return
+    try:
+        timeline.add_moments(Path(run), [{"kind": "note", "position_s": t, "sentence_id": sentence_id,
+                                          "paragraph_id": paragraph_id, "text": topic, "outcome": "saved",
+                                          "seed": library.seed_id("idea", topic + (f" ({why})" if why else "")),
+                                          "session": session}])
+    except OSError as e:  # a moment is a display; the seed itself is what the planner needs
+        print(f"  moments: the note was not written ({e})")

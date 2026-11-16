@@ -219,3 +219,14 @@ def test_library_api_has_the_timeline_and_the_player_writes_playback(cfg, tmp_pa
     assert client.post("/api/chapters/nope/playback", json={"t": 1}).status_code == 404
     assert client.post("/api/chapters/..%2Fx/playback", json={"t": 1}).status_code == 404
     assert client.post(f"/api/chapters/{root.name}/playback", json={"t": "soon"}).status_code == 400
+
+
+def test_colours_follow_dates_not_folder_names(tmp_path):
+    """Review: seed and fast runs are named <slug>-YYYYMMDD, so folder order is not time order."""
+    lis = tmp_path / "l"
+    late = chapter(lis, "aaa-herons-20261114", "Herons", topics=["Birds"])
+    early = chapter(lis, "zzz-beauty-20261111", "Beauty", topics=["Beauty"])
+    profiles.write_json(late / "finished.json", {"t": "2026-11-14T06:00:00"})
+    profiles.write_json(early / "finished.json", {"t": "2026-11-11T06:00:00"})
+    st = timeline.state(lis, None, "none", None, None, today=date(2026, 11, 20))
+    assert [(r["title"], r["color"]) for r in st["chapters"]] == [("Beauty", "teal"), ("Herons", "coral")]

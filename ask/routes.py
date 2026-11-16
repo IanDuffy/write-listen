@@ -264,7 +264,8 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
                 a["resume"] = {"reason": args.get("reason") or "other", "rewind": args.get("rewind")}
                 out = RESUMED
             elif req.name == "save_seed":
-                saved = A.save_seed(a["chapter"].run, args.get("topic", ""), args.get("why", ""), a["t"], a["sentence_id"])
+                saved = A.save_seed(a["chapter"].run, args.get("topic", ""), args.get("why", ""), a["t"], a["sentence_id"],
+                                    session=a.get("id"))
                 a["seeds"].append(saved)
                 out = {"saved": True, "note": "Saved for a future chapter."}
             else:

@@ -1,4 +1,50 @@
-# Overnight Chapters: checks that need a person
+# Library Timeline and Listening Notes: checks that need a person
+
+The spec (`docs/library-timeline.md`) says checks 9, 12 and 13 need a person. They are listed here rather than
+marked passed; what each already has in code and tests is in `PROGRESS.md`.
+
+Start the server from this checkout (stop the one running from the main checkout first: both use port 8765):
+
+```bash
+cd /Users/ian/Desktop/write-listen/.claude/worktrees/library-timeline-listening-notes-32f2b2
+./wl demo seed --use
+.venv/bin/python server.py
+```
+
+Then open http://127.0.0.1:8765/library (the library alone) or http://127.0.0.1:8765/ (below the orb). The demo
+listener is `listeners/demo-library/`; `./wl listener use ian` goes back to your own (nothing of yours changes).
+
+## 12. Both screens at 390 px and at laptop width, and with the keyboard alone
+
+1. In Chrome, open the developer tools' device bar at 390 x 844, then a normal laptop window.
+2. Library: it opens on *Herons*, with Up next peeking at the right. Swipe (or use the arrow buttons at laptop
+   width); drag the scrubber's handle; tap a short tick.
+3. Keyboard only: Tab to a card's title, Left and Right move one card; Tab to the scrubber, Left, Right, Home,
+   End; Enter on a card opens its page; on the *Herons* page, Tab to a marker and press Enter: the moment comes
+   into view with "Play from ...".
+
+Pass: nothing overlaps or scrolls sideways, every control is reachable and visibly focused.
+
+## 13. Side by side with sketches B and D
+
+Open the Library Timeline Sketches canvas (artboards *B · Strip* and *D · Chapter + listening notes*) beside
+the demo at 390 px. Two differences are deliberate (`PROGRESS.md`, Decisions): the app's system font and its
+orange accent stand in for Instrument Sans and coral, as the spec's rule on existing tokens asks, and the real
+chapters' lengths (43 and 17 min) stand in for the sketch's 38 and 21.
+
+Pass: layout, type sizes and colours otherwise match.
+
+## 9. A real chapter with two asks makes two moments
+
+With your own listener (`./wl listener use ian`) and the latest chapter: press Play (or Skip the intro), tap
+Ask twice at two places. Once ask something the guide answers; once ask something it can't settle or say "save
+that for later". About half a minute after each ask ends (the after-conversation pass, about $0.02 an ask), open
+the chapter's page (tap its card).
+
+Pass: two moments, at the places you tapped (the markers on the bar), your words shortened, the first Answered
+with a one-line reply, the second Saved for later. That saved one is in `listeners/ian/seeds.jsonl`.
+
+# Overnight Chapters: checks that need a person (the build before this one)
 
 The spec (`docs/overnight-chapters.md`) says checks 10, 11 (by voice), 12 and 13 need a person. They
 are listed here rather than marked passed. What each one already has in code is in `PROGRESS.md`.

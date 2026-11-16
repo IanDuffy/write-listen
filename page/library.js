@@ -970,7 +970,7 @@
   const dayNum = (iso) => Math.round(Date.parse(`${iso}T12:00:00Z`) / 864e5);
   const isoOf = (n) => new Date(n * 864e5).toISOString().slice(0, 10);
   const shortDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const cardDate = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const cardDate = (iso) => (iso ? new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "");
   const chapterRows = () => ((state && state.timeline) || {}).chapters || [];
   const rowFor = (run) => chapterRows().find((c) => c.run === run) || null;
   const statusLine = (c) => [c.status_line, c.counts].filter(Boolean).join(" · ");
@@ -991,6 +991,8 @@
   function buildStrip(tl, s) {
     const strip = $("strip"), up = $("up");
     const before = T.items[T.i] ? (T.items[T.i].run || "up") : null;
+    const fe = document.activeElement, fcard = fe && fe.closest && fe.closest(".lt-ch");
+    const refocus = fcard ? { run: fcard.dataset.run, sel: fe.id ? `#${fe.id}` : "a.lt-ctitle" } : null;
     strip.querySelectorAll(".lt-ch").forEach((e) => e.remove());
     T.items = tl.chapters.map((c, i) => {
       const card = el("article", `lt-card lt-ch ${c.color || "teal"}`);
@@ -1024,6 +1026,11 @@
       if (!tl.chapters.length) i = 0;
     }
     T.i = -1;
+    if (refocus) {  // a poll rebuilt the cards under the keyboard: back to the same control
+      const it = T.items.find((x) => x.run === refocus.run);
+      const f = it && (it.el.querySelector(refocus.sel) || it.el.querySelector("a.lt-ctitle"));
+      if (f) f.focus({ preventScroll: true });
+    }
     requestAnimationFrame(() => goTo(i, false));
   }
 
@@ -1063,6 +1070,7 @@
   }
   let stripRaf = 0;
   $("strip").addEventListener("scroll", () => { cancelAnimationFrame(stripRaf); stripRaf = requestAnimationFrame(onStripScroll); }, { passive: true });
+  ["pointerdown", "touchstart", "wheel"].forEach((ev) => $("strip").addEventListener(ev, () => { T.target = null; }, { passive: true }));
   $("strip-prev").addEventListener("click", () => goTo(T.i - 1));
   $("strip-next").addEventListener("click", () => goTo(T.i + 1));
   $("strip").addEventListener("keydown", (e) => {
@@ -1367,7 +1375,8 @@
     const d = c.duration_s || (here && Number.isFinite(audio.duration) ? audio.duration : 0);
     const finished = pb.finished || (d && furthest >= 0.95 * d);
     $("pg-fill").style.width = `${finished ? 100 : d ? Math.min(100, (100 * furthest) / d) : 0}%`;
-    $("pg-heard").textContent = finished ? "Finished" : furthest >= 30 ? `${Math.max(1, Math.floor(furthest / 60))} of ${Math.round(d / 60)} min heard` : "Not started";
+    const heard = Math.max(1, Math.floor(furthest / 60));
+    $("pg-heard").textContent = finished ? "Finished" : furthest >= 30 ? (d ? `${heard} of ${Math.round(d / 60)} min heard` : `${heard} min heard`) : "Not started";
     const playing = here && !audio.paused;
     const b = $("pg-play");
     b.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
@@ -1513,7 +1522,8 @@
         ep = episodes[run] = await res.json();
       } catch (e) {
         if (view.run !== run) return;
-        $("ch-problem").textContent = "This chapter has no read-along yet. Play still plays it.";
+        $("ch-problem").textContent = (rowFor(run) || {}).playable ? "This chapter has no read-along yet. Play still plays it."
+          : "This chapter has no read-along yet.";
         show($("ch-problem"), true);
         return;
       }
@@ -1618,7 +1628,11 @@
     else if (run) { view.run = null; showPage(run); }
     else { view.run = null; view.page = null; }
     if (run && location.hash !== shownHash) scrollTo(0, 0);
-    else if (!run && inChapter) requestAnimationFrame(() => { scrollTo(0, homeScroll); if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) }); });
+    else if (!run && inChapter) requestAnimationFrame(() => {  // back home: the strip and the scrubber were hidden
+      scrollTo(0, homeScroll);
+      if (T.tl) buildScrubber(T.tl);  // its labels are spaced by its width
+      if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) });
+    });
     shownHash = location.hash;
     inChapter = !!run;
     paint();

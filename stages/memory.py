@@ -12,8 +12,9 @@ Plain files in the listener's folder (listeners/<id>/, common.listener_dir), rea
                        (overnight/library.py; the pass appends to them, never rewrites)
 
 after_session() is the pass after a conversation: Opus reads the transcript and
-rewrites profile.md and guide.md under the doc's rules, and lists what the listener
-mentioned for the library and seeds (Overnight Chapters, "Change by voice" step 5) (record only what the
+rewrites profile.md and guide.md under the doc's rules, lists what the listener
+mentioned for the library and seeds, and, for an ask during a chapter, its moments (remember_moments,
+docs/library-timeline.md) (Overnight Chapters, "Change by voice" step 5) (record only what the
 listener said, keep it small, honour "forget that"). record_chapter() appends a
 finished seed run to history.md, by code. The guide reads profile.md, guide.md and
 the last few history.md entries at the start of each conversation, which is what
@@ -38,7 +39,7 @@ from .common import ROOT, Run, StageError, listener_dir, load_prompt, parse_json
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["profile", "guide", "forget_chapters", "forgot", "library", "seeds"],
+    "required": ["profile", "guide", "forget_chapters", "forgot", "library", "seeds", "moments"],
     "properties": {
         "profile": {"type": "string"}, "guide": {"type": "string"},
         "forget_chapters": {"type": "array", "items": {"type": "string"}},
@@ -53,6 +54,13 @@ SCHEMA = {
             "type": "object", "additionalProperties": False, "required": ["kind", "text", "words"],
             "properties": {"kind": {"type": "string", "enum": ["question", "idea"]},
                            "text": {"type": "string"}, "words": {"type": "string"}}}},
+        # The library timeline (docs/library-timeline.md, Capture): an ask during a chapter's moments
+        "moments": {"type": "array", "items": {
+            "type": "object", "additionalProperties": False,
+            "required": ["kind", "text", "reply", "outcome", "title", "creator"],
+            "properties": {"kind": {"type": "string", "enum": ["question", "mention"]}, "text": {"type": "string"},
+                           "reply": {"type": "string"}, "outcome": {"type": "string", "enum": ["answered", "saved"]},
+                           "title": {"type": "string"}, "creator": {"type": "string"}}}},
     },
 }
 # One pass at a time: each reads the files the last one wrote, so an older pass can never
@@ -105,14 +113,29 @@ def after_session(cfg: dict, transcript: Path) -> bool:
         return _after_session(cfg, transcript)
 
 
+def session_start(transcript: Path) -> dict:
+    """The session's first line ({"who": "session", "mode", "run", ...}), or {}."""
+    try:
+        with open(transcript, encoding="utf-8") as f:
+            rec = json.loads(f.readline() or "{}")
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return rec if isinstance(rec, dict) and rec.get("who") == "session" else {}
+
+
 def _after_session(cfg: dict, transcript: Path) -> bool:
     done = transcript.with_suffix(".done")
     if done.exists() or not had_listener(transcript):
         return False
+    start = session_start(transcript)
+    ask = start.get("mode") == "ask" and bool(start.get("run"))
     newest = newest_done(cfg)
-    if newest and transcript.stem < newest:
+    stale = bool(newest and transcript.stem < newest)
+    if stale and not ask:
         done.write_text("skipped: older than a conversation already remembered\n", encoding="utf-8")
         return False
+    # An ask ending after a later conversation was remembered still gets its moments (and library, seeds); only
+    # profile.md and guide.md are left as the newer pass wrote them.
     d = listener_dir(cfg)
     from overnight import library  # the listener's library and seeds (overnight/library.py)
     known = [f"- ({w['kind']}) {w['title']}" for w in library.works(d)[-60:]] + \
@@ -120,14 +143,15 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
     prompt = load_prompt("memory", profile=_read(d / "profile.md", "(none yet)"),
                          guide=_read(d / "guide.md", "(none yet: this was a first meeting)"),
                          history=_read(d / "history.md", "(none yet)"), known="\n".join(known) or "(nothing yet)",
-                         transcript=transcript_text(transcript), today=session_date(transcript))
+                         transcript=transcript_text(transcript), today=session_date(transcript),
+                         aside=aside_line(d, start) if ask else _aside_lines()["none"])
     log_run = Run(name="sessions", root=transcript.parent)
     res = llm.call(log_run, cfg, "memory", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA,
                    label="memory", preapproved=True, log_extra={"session": transcript.stem})
     data = parse_json(log_run, res.text, "memory")
     for name in ("profile", "guide"):
         text = (data.get(name) or "").strip()
-        if text:
+        if text and not stale:
             p = d / f"{name}.md"
             tmp = p.with_name(f"{name}.md.{transcript.stem}.tmp")
             tmp.write_text(text + "\n", encoding="utf-8")
@@ -136,9 +160,88 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
     forget_chapters(cfg, gone)
     if data.get("forgot") is True or gone:  # before .done: recent() reads the marker once the pass has run
         transcript.with_suffix(".forgot").write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
+    if ask:  # an aside's questions are its moments, which make their own seeds: never the same question twice
+        data["seeds"] = [x for x in data.get("seeds") or [] if isinstance(x, dict) and x.get("kind") != "question"]
     remember_library(d, data, transcript)
+    if ask:
+        remember_moments(d, start, data, transcript)
     done.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     return True
+
+
+def _aside_lines() -> dict[str, str]:
+    out = {}
+    for line in load_prompt("memory_aside").splitlines():
+        k, sep, v = line.partition(":")
+        if sep and re.fullmatch(r"[a-z_]+", k.strip()):
+            out[k.strip()] = v.strip()
+    return out
+
+
+def aside_line(d: Path, start: dict) -> str:
+    """{{aside}} for an ask: which chapter, and where in it they tapped."""
+    from overnight import library
+    t = float(start.get("t") or 0)
+    root = d / "chapters" / str(start.get("run"))
+    title = library.chapter_title(root) if root.is_dir() else str(start.get("run"))
+    return _aside_lines()["aside"].replace("{title}", title).replace("{at}", f"{int(t // 60)}:{int(t % 60):02d}")
+
+
+STOP = {"the", "a", "an", "of", "and", "to", "in", "on", "for", "is", "are", "do", "does", "it", "this", "that",
+        "why", "how", "what", "can", "you", "i", "we", "they", "like", "about"}
+
+
+def _matching_note(notes: list[dict], question: str) -> dict | None:
+    """The save_seed note that saved this question: the only note of the aside, or the one sharing most words."""
+    if len(notes) == 1:
+        return notes[0]
+    words = {w for w in re.findall(r"[a-z0-9']+", question.lower()) if w not in STOP}
+    best = max(notes, key=lambda n: len(words & set(re.findall(r"[a-z0-9']+", n["text"].lower()))), default=None)
+    return best if best and words & set(re.findall(r"[a-z0-9']+", best["text"].lower())) else None
+
+
+def remember_moments(d: Path, start: dict, data: dict, transcript: Path) -> list[dict]:
+    """An ask's moments into its chapter's moments.jsonl (docs/library-timeline.md, Capture), at the place they
+    tapped. A question saved for later becomes a seed (seeds.jsonl, kind question, their words), which the planner
+    can take; a saved question takes over the note the guide's save_seed wrote in the same aside, so one ask reads as
+    one moment. A mention goes into library.jsonl and reads "In your library"."""
+    from overnight import library, timeline
+    root = d / "chapters" / str(start.get("run"))
+    if not root.is_dir():
+        return []
+    sid, at = transcript.stem, {"position_s": float(start.get("t") or 0), "paragraph_id": start.get("paragraph_id"),
+                                "sentence_id": start.get("sentence_id")}
+    src = {"chapter": root.name, "session": sid}
+    notes = [m for m in timeline.moments(root) if m.get("session") == sid and m["kind"] == "note"]
+    items = []
+    for x in data.get("moments") or []:
+        if not isinstance(x, dict):
+            continue
+        text = " ".join((x.get("text") or "").split())
+        if not text or x.get("kind") not in ("question", "mention"):
+            continue
+        if x["kind"] == "mention":
+            title = (x.get("title") or "").strip() or text
+            creator = (x.get("creator") or "").strip() or None
+            kind = "work"
+            library.add_works(d, [{"kind": kind, "title": title, "creator": creator, "note": "", "source": src}])
+            items.append({**at, "kind": "mention", "text": text, "title": title, "creator": creator, "work_kind": kind,
+                          "outcome": "in_library", "outcome_ref": library.work_id(kind, title, creator), "session": sid})
+            continue
+        if x.get("outcome") == "answered":
+            items.append({**at, "kind": "question", "text": text, "reply": (x.get("reply") or "").strip() or None,
+                          "outcome": "answered", "session": sid})
+            continue
+        note = _matching_note(notes, text)
+        if note:  # the guide saved this question with save_seed: its note becomes the question, keeping its seed
+            notes.remove(note)
+            timeline.update_moments(root, lambda r, n=note: {**r, "kind": "question", "text": text}
+                                    if r["id"] == n["id"] else None)
+            continue
+        seed = library.add_seeds(d, [{"kind": "question", "text": text, "words": text, "source": src}])
+        sid_seed = seed[0]["id"] if seed else library.seed_id("question", text)
+        items.append({**at, "kind": "question", "text": text, "outcome": "saved", "seed": sid_seed, "session": sid})
+    return timeline.add_moments(root, items)
 
 
 def remember_library(d: Path, data: dict, transcript: Path) -> None:

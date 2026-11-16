@@ -132,7 +132,7 @@ def test_the_memory_pass_adds_library_and_seeds(world, cfg):
     call = all_text(fake.of("memory")[0])
     assert "- (work) The Peregrine" in call and "- (seed, question) How do kingfishers see under water?" in call
     schema = fake.of("memory")[0]["output_config"]["format"]["schema"]
-    assert {"library", "seeds", "profile", "guide", "forget_chapters", "forgot"} == set(schema["required"])
+    assert {"library", "seeds", "profile", "guide", "forget_chapters", "forgot", "moments"} == set(schema["required"])
     work = [w for w in library.works(d) if w["title"] == "H is for Hawk"][0]
     assert work["creator"] == "Helen Macdonald" and work["source"] == {"session": "20261117-200000"}
     seeds = {s["text"]: s for s in library.seeds(d)}

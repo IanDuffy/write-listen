@@ -267,7 +267,8 @@ def state(listener: Path, card: dict | None, card_state: str, latest: str | None
     the first conversation, and where Tonight sits. `card` is the listener's up_next.json when it is still to come
     (planned, building, failed), else None; `latest` the playable chapter's folder name."""
     today = today or date.today()
-    roots = [p for p in profiles.chapters(listener=listener) if in_library(p)]
+    roots = sorted((p for p in profiles.chapters(listener=listener) if in_library(p)),
+                   key=lambda p: (_day(p, {}) or "", p.name))  # by date: colours go by first appearance in time
     built_from: dict[str, Path] = {}
     for p in profiles.chapters(listener=listener):
         cid = (profiles.read_json(p / "00_source" / "up_next.json", {}) or {}).get("id")
