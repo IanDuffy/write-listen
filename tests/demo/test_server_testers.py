@@ -3,7 +3,9 @@ server state). Testers come from a stand-in for demo/testers.py (part B), keyed 
 
 import importlib.machinery
 import json
+import os
 import sys
+import threading
 import time
 import types
 from types import SimpleNamespace as NS
@@ -17,7 +19,7 @@ import server
 from faststart import base as fast_base
 from faststart import guide_hooks
 from overnight import profiles
-from stages import common, guide, llm
+from stages import common, guide, llm, memory
 
 TOKENS = {"tokA": "t-alice", "tokB": "t-bob", "tokC": "t-carol"}
 
@@ -319,3 +321,74 @@ def test_a_ten_minute_listener_gets_a_sized_run_and_a_card(demo, monkeypatch):
     bob = server.state_for("t-bob").pipe  # the default length: no run config at all
     rb = bob.start_seed("Herons", mode="fast")
     assert not (demo.L / "t-bob" / "chapters" / rb / "config.yaml").exists()
+
+
+# --- the admin's reset, revoke and delete (drop) ------------------------------------------------
+
+def hooked_app(demo):
+    """A new app whose drop() is on the stand-in testers module's ON_CHANGE, as it is on demo/testers.py."""
+    mod = sys.modules["demo.testers"]
+    mod.ON_CHANGE = []
+    app = server.create_app(cfg=demo.cfg, remember_on_start=False)
+    return app, mod.ON_CHANGE[0]
+
+
+def test_dropping_a_tester_waits_for_their_memory_passes(demo):
+    """A pass still in its call when the folder moves would write into the fresh folder (review)."""
+    app, drop = hooked_app(demo)
+    a = TestClient(app, headers={"cookie": "wl_tester=tokA"})
+    sa = a.post("/api/chat/start").json()["session"]
+    a.post("/api/chat", json={"message": "I pour concrete", "session": sa})
+    demo.resp.memory_delay = 0.5
+    st = app.state.state_for("t-alice")
+    assert a.post("/api/chat/end", json={"session": sa}).json() == {"ended": True}
+    passes = list(st.chat["passes"])
+    assert passes and passes[0].is_alive()
+    drop("t-alice", "reset")
+    assert not any(t.is_alive() for t in passes)
+    assert (demo.L / "t-alice" / "sessions" / f"{sa}.done").exists()  # finished before the folder could move
+    assert app.state.state_for("t-alice") is not st
+
+    # A pass started by another path (a check-in's) holds the listener's memory lock: drop waits for it too.
+    lock = memory.lock_for({**demo.cfg, "listener_dir": str(demo.L / "t-bob")})
+    lock.acquire()
+    try:
+        th = threading.Thread(target=drop, args=("t-bob", "delete"))
+        th.start()
+        th.join(0.3)
+        assert th.is_alive()
+    finally:
+        lock.release()
+    th.join(5)
+    assert not th.is_alive()
+
+
+def test_dropping_a_tester_with_no_state_here_still_stops_their_build(demo, monkeypatch):
+    """After a restart this server has no state for the tester, but their build went on (KillMode=process)."""
+    app, drop = hooked_app(demo)
+    root = demo.L / "t-alice" / "chapters" / "concrete-20261116"
+    root.mkdir(parents=True)
+    (root / "status.json").write_text(json.dumps({"run": root.name, "state": "making", "pid": os.getpid()}))
+    stopped = []
+    monkeypatch.setattr(server.Pipeline, "stop", lambda self, run, cfg: stopped.append((self.listener, run)))
+    drop("t-alice", "delete")
+    assert stopped == [("t-alice", root.name)]
+
+
+def test_ending_a_chat_never_blocks_the_event_loop(demo):
+    """POST /api/chat/end waits for the chat lock (a turn in progress) off the event loop (review)."""
+    st = demo.app.state.state_for("t-alice")
+    with TestClient(demo.app, headers={"cookie": "wl_tester=tokA"}) as a:  # one event loop for every request
+        ended = []
+        with st.chat["lock"]:  # a turn in progress
+            th = threading.Thread(target=lambda: ended.append(a.post("/api/chat/end", json={"session": "x"}).json()))
+            th.start()
+            time.sleep(0.2)
+            got = []
+            other = threading.Thread(target=lambda: got.append(a.get("/healthz").json()))
+            other.start()
+            other.join(3)
+            assert got == [{"ok": True}]
+            assert not ended  # still waiting for the turn
+        th.join(5)
+        assert ended == [{"ended": False}]

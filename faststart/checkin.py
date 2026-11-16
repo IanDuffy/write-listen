@@ -418,7 +418,7 @@ def _pass(cfg: dict, path: Path) -> None:
     try:
         deadline = time.monotonic() + WAIT_MAX_SECONDS
         while True:
-            with memory.LOCK:  # a pass in flight finishes first
+            with memory.lock_for(cfg):  # a pass in flight finishes first
                 pass
             if path.with_suffix(".done").exists():
                 return

@@ -208,6 +208,33 @@ def test_delete_removes_folder_and_token_and_only_a_testers(dcfg, tmp_path):
     assert (common.LISTENERS_DIR / "ian").is_dir()
 
 
+def test_admin_hooks_run_outside_the_registry_lock(dcfg, monkeypatch):
+    """A hook can take seconds (stopping a build); every request's middleware takes _LOCK (review)."""
+    import threading
+    free = []
+
+    def hook(lid, action):  # another thread (a request) can take the lock while the hook runs
+        got = []
+
+        def take():
+            if testers._LOCK.acquire(timeout=1):
+                testers._LOCK.release()
+                got.append(True)
+        th = threading.Thread(target=take)
+        th.start()
+        th.join(5)
+        free.append((action, got == [True]))
+    monkeypatch.setattr(testers, "ON_CHANGE", [hook])
+    testers.create(dcfg, "Pilot 1")
+    testers.revoke("t-pilot-1")
+    testers.reset("t-pilot-1", dcfg)
+    testers.delete("t-pilot-1")
+    assert free == [("revoke", True), ("reset", True), ("delete", True)]
+    with pytest.raises(StageError):
+        testers.reset("t-nobody", dcfg)  # no tester: no hook either
+    assert len(free) == 3
+
+
 def test_set_name_writes_one_line_in_the_profile(dcfg):
     testers.create(dcfg, "Pilot 1")
     p = common.LISTENERS_DIR / "t-pilot-1" / "profile.md"

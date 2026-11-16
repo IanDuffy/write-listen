@@ -1,6 +1,8 @@
 """Phase 1, milestone 5: the listener's memory (profile, guide identity, seeds, history)."""
 
 import json
+import shutil
+import threading
 
 import pytest
 from fakes import FakeAnthropic, Responder, all_text
@@ -267,3 +269,42 @@ def test_recent_keeps_the_newest_lines_within_max_chars(mem, cfg):
     assert len(got) <= 250 and got.endswith("line 7 " + "x" * 90) and "line 5" not in got
     one = memory.recent(cfg, lines=1, max_chars=50)["conversation"]
     assert len(one) == 50 and one.startswith("…") and one.endswith("x" * 10)
+
+
+def test_a_pass_writes_nothing_once_its_folder_was_moved_or_made_afresh(mem, cfg, tmp_path, monkeypatch):
+    """An admin reset moves the folder aside (and makes a fresh one) while the pass is inside its call: the
+    pass must not write the old listener's memory into the new folder (review, tester demo)."""
+    listener, resp = mem
+    real = llm.call
+    for n, keep_transcript in enumerate((False, True)):
+        t = session(listener, f"20261112-09000{n}", TALK)
+
+        def call(*a, **kw):
+            out = real(*a, **kw)
+            listener.rename(tmp_path / f"cleared{n}")
+            (listener / "sessions").mkdir(parents=True)
+            if keep_transcript:  # even a copy of the transcript at the same path: still a different folder
+                shutil.copy(tmp_path / f"cleared{n}" / "sessions" / t.name, t)
+            return out
+        monkeypatch.setattr(llm, "call", call)
+        assert memory.after_session(cfg, t) is False
+        assert not (listener / "profile.md").exists() and not (listener / "guide.md").exists()
+        assert not t.with_suffix(".done").exists()
+        assert not (tmp_path / f"cleared{n}" / "sessions" / f"{t.stem}.done").exists()
+
+
+def test_each_listener_folder_has_its_own_memory_lock(mem, cfg, tmp_path):
+    """One tester's pass never waits behind another's (review, tester demo)."""
+    listener, resp = mem
+    other = tmp_path / "other"
+    (other / "sessions").mkdir(parents=True)
+    ocfg = {**cfg, "listener_dir": str(other)}
+    assert memory.lock_for(cfg) is memory.lock_for({**cfg, "listener_dir": str(listener / ".." / "listener")})
+    assert memory.lock_for(cfg) is not memory.lock_for(ocfg)
+    t = session(other, "20261112-090000", TALK)
+    done = []
+    with memory.lock_for(cfg):  # a pass in flight for the first listener
+        th = threading.Thread(target=lambda: done.append(memory.after_session(ocfg, t)))
+        th.start()
+        th.join(10)
+    assert done == [True] and "Pours concrete" in (other / "profile.md").read_text()

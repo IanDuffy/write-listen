@@ -747,12 +747,13 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     def drop(lid: str, action: str) -> None:
         """The admin resets, deletes or revokes a tester: their chapter being made stops and their
-        conversation is let go (no memory pass: the folder is being cleared), so nothing keeps writing into
-        the folder that replaces it."""
+        conversation is let go (no memory pass: the folder is being cleared), and memory passes in flight
+        finish, so nothing keeps writing into the folder that replaces it. With no state here (a server
+        restarted while the tester's build went on), a throwaway pipeline finds and stops the build."""
         with registry:
             st = states.pop(lid, None)
         if st is None:
-            return
+            st = State(Pipeline(listener=lid, queue=queue, cfg=cfg))
         st.chat["session"] = None
         status = st.pipe.status() or {}
         if status.get("run") and status.get("state") == "making":
@@ -760,6 +761,13 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 st.pipe.stop(status["run"], cfg)
             except Exception as e:
                 print(f"  tester {lid}: stopping {status['run']} on {action} failed: {e}")
+        for t in list(st.chat["passes"]):
+            t.join()
+        st.chat["passes"] = []
+        with common.listener_scope(lid):
+            lock = memory.lock_for(cfg)
+        with lock:  # a pass started elsewhere (a check-in's) finishes first
+            pass
     if demo_on(cfg):
         from demo import testers as demo_testers
         hooks = getattr(demo_testers, "ON_CHANGE", None)  # (a test's stand-in module may not have it)
@@ -792,7 +800,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     def remember(st: State, transcript=None) -> None:
         """The memory pass (profile.md, guide.md) in the background, for one ended conversation or
-        for every one still waiting (after a restart). Passes run one at a time (memory.LOCK).
+        for every one still waiting (after a restart). Passes run one at a time per listener (memory.lock_for).
         Pinned to the listener now: the thread has no request to tell it whose memory it is."""
         pcfg = common.pinned(cfg)
 
@@ -920,21 +928,26 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     @app.post("/api/chat/end")
     async def chat_end(request: Request) -> dict:
         """The page is closing: the conversation has ended, so update the memory. The beacon carries
-        the conversation's id, so a stale tab closing never ends another tab's conversation."""
+        the conversation's id, so a stale tab closing never ends another tab's conversation. The wait for
+        the chat lock (a turn in progress) runs in a thread, never on the event loop (asyncio.to_thread
+        carries the request's listener along)."""
         try:
             sid = (await request.json()).get("session")
         except Exception:
             sid = None
+        return await asyncio.to_thread(end_chat, here(), sid)
+
+    def end_chat(st: State, sid: str | None) -> dict:
+        chat = st.chat
         with chat["lock"]:
             if chat["session"] is None or sid != chat["session"].id:
                 return {"ended": False}
             session, chat["session"] = chat["session"], None
-        if session is not None:
-            remember(here(), session.transcript)
-            # ElevenLabs' record of each connection (latency per turn, cost), once it has processed it.
-            for n, cid in enumerate(session.voice_conversations, 1):
-                threading.Thread(target=_save_voice, args=(cfg, session.id, cid, n), daemon=True).start()
-        return {"ended": session is not None}
+        remember(st, session.transcript)
+        # ElevenLabs' record of each connection (latency per turn, cost), once it has processed it.
+        for n, cid in enumerate(session.voice_conversations, 1):
+            threading.Thread(target=_save_voice, args=(cfg, session.id, cid, n), daemon=True).start()
+        return {"ended": True}
 
     @app.post("/api/chat")
     def chat_turn(req: ChatRequest) -> dict:
@@ -965,7 +978,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             for t in chat["passes"]:
                 t.join()
             chat["passes"] = []
-            with memory.LOCK:
+            with memory.lock_for(cfg):
                 previous = common.listener_dir(cfg).name
                 cfg.pop("listener_dir", None)  # from now on, follow listeners/active.json
                 lid = profiles.reset()

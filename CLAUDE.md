@@ -115,7 +115,7 @@ the first is the gate for the rest:
   (`forget_chapters` in the pass's JSON) is removed from history.md and seeds/ by
   code; the raw transcripts in `sessions/` keep what was said (they are the
   record, like decisions.md).
-- Passes are serialized (`memory.LOCK`) and ordered: a conversation older than
+- Passes are serialized per listener folder (`memory.lock_for`) and ordered: a conversation older than
   the newest `.done` is marked skipped, not folded in. `server.new_session` runs
   the previous session's pass synchronously and joins background passes first.
   The module-level `server.app` does no catch-up at import; `python server.py` does.

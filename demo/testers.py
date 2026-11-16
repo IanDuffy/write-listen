@@ -204,6 +204,8 @@ def listener_for_request(scope) -> str | None:
 # --- admin actions --------------------------------------------------------------------
 
 def _notify(lid: str, action: str) -> None:
+    """Run the ON_CHANGE hooks. Never under _LOCK: a hook can take seconds (stopping a build, a memory pass
+    finishing), and every request's middleware takes _LOCK to read the registry."""
     for fn in list(ON_CHANGE):
         try:
             fn(lid, action)
@@ -220,8 +222,8 @@ def _drop_tokens(lid: str) -> None:
 
 def revoke(lid: str) -> None:
     """The link stops working; the folder stays until Ian deletes it."""
+    _notify(lid, "revoke")
     with _LOCK:
-        _notify(lid, "revoke")
         _drop_tokens(lid)
         rec = record(lid)
         if rec is not None:
@@ -232,9 +234,10 @@ def reset(lid: str, cfg: dict | None = None) -> Path:
     """A fresh start on the same link: the folder goes to listeners/_cleared_<time>/<lid> (recoverable by
     hand) and a new one is made with the same label, token and created time. Returns where the old one went."""
     cfg = cfg or common.load_config()
+    _need(lid)
+    _notify(lid, "reset")
     with _LOCK:
         rec = _need(lid)
-        _notify(lid, "reset")
         stamp = time.strftime("%Y%m%d-%H%M%S")
         dest = common.LISTENERS_DIR / f"_cleared_{stamp}" / lid
         n = 2
@@ -254,8 +257,8 @@ def delete(lid: str) -> None:
     """Everything of this tester's, on their request: the folder and the token. Cannot be undone."""
     if not re.fullmatch(r"t-[a-z0-9][a-z0-9._-]*", lid):
         raise StageError(f"{lid!r} is not a tester.")  # never rmtree a listener that isn't a tester's
+    _notify(lid, "delete")
     with _LOCK:
-        _notify(lid, "delete")
         _drop_tokens(lid)
         if folder(lid).exists():
             shutil.rmtree(folder(lid))

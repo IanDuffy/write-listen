@@ -26,6 +26,7 @@ session use them (Overnight Chapters round 2).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import threading
@@ -55,9 +56,18 @@ SCHEMA = {
                            "text": {"type": "string"}, "words": {"type": "string"}}}},
     },
 }
-# One pass at a time: each reads the files the last one wrote, so an older pass can never
-# overwrite a newer one (or bring back something the listener asked to forget).
-LOCK = threading.Lock()
+# One pass at a time per listener folder: each reads the files the last one wrote, so an older pass can
+# never overwrite a newer one (or bring back something the listener asked to forget). Per folder, so one
+# tester's pass never waits behind another's.
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def lock_for(cfg: dict) -> threading.Lock:
+    """The memory lock of cfg's listener folder (the request's listener, or a pinned one)."""
+    key = os.path.realpath(listener_dir(cfg))
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.Lock())
 
 
 def _read(p: Path, missing: str) -> str:
@@ -101,7 +111,7 @@ def after_session(cfg: dict, transcript: Path) -> bool:
     which the listener said nothing is skipped). Each session is passed once (sessions/<id>.done),
     in order: a conversation older than one already passed is skipped, since folding it in now
     would let older facts (or something since forgotten) override newer ones."""
-    with LOCK:
+    with lock_for(cfg):
         return _after_session(cfg, transcript)
 
 
@@ -114,6 +124,7 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
         done.write_text("skipped: older than a conversation already remembered\n", encoding="utf-8")
         return False
     d = listener_dir(cfg)
+    folder_id = _folder_id(d)
     from overnight import library  # the listener's library and seeds (overnight/library.py)
     known = [f"- ({w['kind']}) {w['title']}" for w in library.works(d)[-60:]] + \
             [f"- (seed, {s['kind']}) {s['text']}" for s in library.seeds(d)[-40:]]
@@ -125,6 +136,11 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
     res = llm.call(log_run, cfg, "memory", messages=[{"role": "user", "content": prompt}], json_schema=SCHEMA,
                    label="memory", preapproved=True, log_extra={"session": transcript.stem})
     data = parse_json(log_run, res.text, "memory")
+    if not transcript.exists() or _folder_id(d) != folder_id:
+        # The folder was moved or deleted during the call (an admin reset or delete): writing now would put
+        # this listener's memory into the fresh folder that replaced it.
+        print(f"  memory: {transcript.name}: the listener's folder changed during the pass; nothing written")
+        return False
     for name in ("profile", "guide"):
         text = (data.get(name) or "").strip()
         if text:
@@ -139,6 +155,16 @@ def _after_session(cfg: dict, transcript: Path) -> bool:
     remember_library(d, data, transcript)
     done.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
     return True
+
+
+def _folder_id(d: Path) -> tuple | None:
+    """Which folder is at d (device and inode), or None if none is: a folder moved aside and made afresh
+    at the same path is a different one."""
+    try:
+        st = d.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
 
 
 def remember_library(d: Path, data: dict, transcript: Path) -> None:
