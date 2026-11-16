@@ -204,3 +204,32 @@ def test_grade_checks_quotes(cfg, monkeypatch, tmp_path):
     assert "WHAT YOU NEVER SAY" in seen["prompt"] and "person: What is this?" in seen["prompt"]
     assert [m["found"] for m in g["product_talk"]] == [True, False] and g["quotes_not_found"] == 1
     assert json.loads((tmp_path / "intro-curious.grade.json").read_text())["score"] == 9
+
+
+def test_a_debrief_thanks_without_the_tool_closes_as_the_page_would(cfg, monkeypatch, tmp_path):
+    # Live (2026-11-16): "Thank you, Hannah. That really helps." after the closing question, and no end_debrief.
+    cfg.setdefault("demo", {}).setdefault("interviewer", {}).setdefault("page", {})["act_grace_ms"] = 50
+    use_ws(monkeypatch, FakeWS([
+        [says("Welcome back, Priya. Take me through what that was like, from the start.")],
+        [says("Was there a moment you were most into it? And a moment you drifted, or something felt off?")],
+        [says("About 3 minutes in, you asked \"Wait, what's a leverage point?\". How did that go?")],
+        [says("How would you describe it to a friend?")],
+        [says("If another one were waiting for you tomorrow morning, would you listen?")],
+        [says("Is there anything I didn't ask that I should have?")],
+        [says("Thank you, Priya. That really helps.")],
+    ]))
+    lines = iter(["It was lovely.", "The meeting story; the numbers lost me.", "Quick and clear.",
+                  "A podcast that knows you.", "Yes, if I picked it.", "No, that's it.", "Bye!"])
+    p = next(x for x in SI.personas("debrief") if x["key"] == "enjoyed")
+    t = arun(SI.converse(cfg, p, tmp_path, reply_fn=lambda tl, m: next(lines), sim_kwargs=FAST, wait_secs=2))
+    assert t["stop"] == "closed by page" and t["checks"]["ended"] and t["checks"]["ok"]
+
+
+def test_the_page_close_needs_the_closing_question_answered_first():
+    page = IV.PAGE_DEFAULTS
+    g = lambda s: {"who": "guide", "text": s}
+    me = lambda s: {"who": "listener", "text": s}
+    assert not SI.page_closes([g("Thanks, that helps. How would you describe it?")], page)
+    assert not SI.page_closes([g("Is there anything I didn't ask?"), g("Thank you.")], page)
+    assert SI.page_closes([g("Is there anything I didn't ask?"), me("No."), g("Thank you, Sam.")], page)
+    assert not SI.page_closes([g("Is there anything I didn't ask?"), me("No."), g("Thank you, Sam."), g("Oh, one more:")], page)

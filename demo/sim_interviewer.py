@@ -195,6 +195,21 @@ def code_checks(p: dict, timeline: list[dict], calls: list[dict], by_page: str |
     return out
 
 
+def page_closes(timeline: list, page: dict) -> bool:
+    """page/interview.js's rule: the voice's last line thanks them, after the closing question and an answer to it."""
+    ask, thanks = re.compile(page["closing_question"], re.I), re.compile(page["thanks"], re.I)
+    asked = answered = False
+    for e in timeline:
+        if e.get("who") == "guide":
+            if asked and answered and thanks.search(e.get("text", "")):
+                return e is [x for x in timeline if x.get("who") == "guide"][-1]
+            if ask.search(e.get("text", "")):
+                asked, answered = True, False
+        elif e.get("who") == "listener" and asked:
+            answered = True
+    return False
+
+
 async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, max_minutes: float | None = None,
                    run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None,
                    wait_secs: float = WAIT_SECS) -> dict:
@@ -213,6 +228,7 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
                 audio_out=out_dir / f"{mode}-{p['key']}.voice.wav", events_path=out_dir / f"{mode}-{p['key']}.events.jsonl",
                 **kw)
     handover = re.compile(I["page"]["handover"], re.I)
+    PAGE = {**IV.PAGE_DEFAULTS, **(I.get("page") or {})}
     await sim.connect()
     await sim.note("commentary", notes["opened"])  # the page's opening, as speakable context
     since, said, silent, stop, by_page, noted = 0, 0, 0, "turns", None, False
@@ -230,6 +246,12 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
                 await asyncio.sleep(I["page"]["act_grace_ms"] / 1000)
                 if not any(c["name"] == done_tool for c in sim.calls):
                     by_page, stop = "handover", "handover by page"
+                    break
+            if mode == "debrief" and new and page_closes(sim.timeline, PAGE):
+                # The page's close: thanks after the closing question has been answered (page/interview.js lineSaid).
+                await asyncio.sleep(I["page"]["act_grace_ms"] / 1000)
+                if not any(c["name"] == done_tool for c in sim.calls):
+                    by_page, stop = "close", "closed by page"
                     break
             if sim.closed.is_set():
                 stop = f"closed: {sim.closed_reason}"
