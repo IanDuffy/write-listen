@@ -1,7 +1,7 @@
 """Live checks for the GPT-Live guide (voice/gpt_live/persona.py, sim.py).
 
-    python -m voice.gpt_live persona [--n K] [--personas builder,reserved] [--max-turns 12] [--no-grade]
-    python -m voice.gpt_live asides [--only closing,lost] [--run runs/<fast run>] [--no-grade]
+    python -m voice.gpt_live persona [--n K] [--personas builder,reserved] [--max-turns 8] [--max-minutes 3] [--grade]
+    python -m voice.gpt_live asides [--only closing,lost] [--run runs/<fast run>] [--grade]
     python -m voice.gpt_live grade <folder or transcript.json>
     python -m voice.gpt_live spend
     python -m voice.gpt_live archive <run> [--runs-dir DIR] [--no-fetch] [--references]
@@ -34,7 +34,14 @@ def _names(spec: str | None, known: list[str]) -> list[str]:
     return names
 
 
+def checks(cfg: dict) -> dict:
+    """The live checks' defaults (config live.checks: short, graded only when asked, capped per run)."""
+    return {"max_minutes": 3, "max_turns": 8, "after_start": 1, "grade": False, "run_cap_usd": 0.40,
+            **(cfg["live"].get("checks") or {})}
+
+
 def cmd_persona(cfg: dict, a) -> None:
+    C = checks(cfg)
     people = P.personas()
     out = P.new_out_dir()
     log_run = P.claude_run()
@@ -43,8 +50,9 @@ def cmd_persona(cfg: dict, a) -> None:
             p = dict(people[name])
             if a.n > 1:
                 p["name"] = f"{name}-{k + 1}"
-            t = asyncio.run(P.converse(cfg, p, out, max_turns=a.max_turns, max_minutes=a.max_minutes, log_run=log_run))
-            g = None if a.no_grade else P.grade(cfg, out / f"{p['name']}.json", log_run)
+            t = asyncio.run(P.converse(cfg, p, out, max_turns=a.max_turns or C["max_turns"], after_start=C["after_start"],
+                                       max_minutes=a.max_minutes or C["max_minutes"], log_run=log_run))
+            g = P.grade(cfg, out / f"{p['name']}.json", log_run) if (a.grade or C["grade"]) else None
             print(P.summary(p["name"], t, g), flush=True)
     print(f"Saved in {out}. Build spend: ${S.spent():.2f}")
 
@@ -56,7 +64,7 @@ def cmd_asides(cfg: dict, a) -> None:
     log_run = P.claude_run()
     for name in _names(a.only, list(scenarios)):
         t = asyncio.run(P.aside(cfg, run_dir, scenarios[name], out))
-        g = None if a.no_grade else P.grade(cfg, out / f"aside-{name}.json", log_run)
+        g = P.grade(cfg, out / f"aside-{name}.json", log_run) if (a.grade or checks(cfg)["grade"]) else None
         print(P.summary(f"aside-{name}", t, g), flush=True)
         print(f"  checks: {json.dumps(t['checks'])}", flush=True)
     print(f"Saved in {out}. Build spend: ${S.spent():.2f}")
@@ -111,14 +119,16 @@ def main(argv=None) -> int:
     p = sub.add_parser("persona", help="simulated onboarding conversations by voice, then graded")
     p.add_argument("--n", type=int, default=1, help="conversations per persona")
     p.add_argument("--personas", help="comma-separated names from prompts/live_personas.md (default: all)")
-    p.add_argument("--max-turns", type=int, default=12, help="the listener's spoken lines at most")
-    p.add_argument("--max-minutes", type=float, default=6)
-    p.add_argument("--no-grade", action="store_true")
+    p.add_argument("--max-turns", type=int, default=None, help="the listener's spoken lines at most (live.checks.max_turns)")
+    p.add_argument("--max-minutes", type=float, default=None, help="connected time at most (live.checks.max_minutes)")
+    p.add_argument("--grade", action="store_true", help="grade each conversation (Sonnet; off by default: live.checks.grade)")
+    p.add_argument("--no-grade", action="store_true", help=argparse.SUPPRESS)  # the old default, kept as a no-op
     s = sub.add_parser("asides", help="scripted questions mid-chapter, then graded")
     s.add_argument("--only", help="comma-separated scenario names (default: all)")
     s.add_argument("--run", default="runs/ideas-behind-systems-stocks-20261113",
                    help="a fast run folder with 05_outline.json and 06_segments/ (read only)")
-    s.add_argument("--no-grade", action="store_true")
+    s.add_argument("--grade", action="store_true", help="grade each scenario (Sonnet; off by default)")
+    s.add_argument("--no-grade", action="store_true", help=argparse.SUPPRESS)
     g = sub.add_parser("grade", help="grade saved transcripts")
     g.add_argument("path")
     sub.add_parser("spend", help="the build's spending so far")

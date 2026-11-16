@@ -302,7 +302,8 @@ def test_grade_checks_quotes_and_saves(cfg, monkeypatch, tmp_path):
         return Res()
     monkeypatch.setattr(P.llm, "call", call)
     g = P.grade(cfg, path)
-    assert seen["stage"] == "live_grade" and seen["role"] == "writer" and seen["effort"] == "high"
+    # graded on Sonnet at medium effort (config live.checks.grade_role; Opus at high was most of the checks' bill)
+    assert seen["stage"] == "live_grade" and seen["role"] == "researcher" and seen["effort"] == "medium"
     assert seen["schema"] is P.GRADE_SCHEMA
     assert "HOW YOU TALK" in seen["prompt"] and "Hi there! I'm Wren" in seen["prompt"]
     assert "{{" not in seen["prompt"]
@@ -373,3 +374,11 @@ def test_wait_guide_does_not_time_out_mid_turn(cfg):
         return turns
     turns = arun(go())
     assert [t["text"] for t in turns] == ["A long pitch ends here."]
+
+
+
+def test_a_checks_session_is_capped_by_its_own_budget(cfg):
+    """config live.checks.run_cap_usd bounds a check's connected time ($0.40 at $0.05 a minute: 8 minutes)."""
+    cfg["live"]["checks"] = {"run_cap_usd": 0.10}
+    sim = S.Sim(cfg, {}, max_minutes=6)
+    assert sim.max_minutes == pytest.approx(2.0)

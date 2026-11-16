@@ -52,6 +52,7 @@ STUB = r"""
     constructor() { this.iceGatheringState = "complete"; this.connectionState = "new"; this.localDescription = null;
                     this.tracks = []; this.channel = null; window.__pcs = (window.__pcs || []).concat([this]); }
     addTrack(t, s) { this.tracks.push(t); }
+    addTransceiver(kind, init) { this.transceivers = (this.transceivers || []).concat([kind]); }
     createDataChannel(label) {
       this.channel = new FakeChannel(label, window.__channels.length);
       window.__channels.push(this.channel);
@@ -73,7 +74,8 @@ STUB = r"""
   const dest = ctx.createMediaStreamDestination();
   window.__track = dest.stream.getAudioTracks()[0];
   window.__mic = { ctx, dest };  // a test can play a sound into the mic (wake on sound)
-  navigator.mediaDevices.getUserMedia = async () => { const s = new MediaStream([dest.stream.getAudioTracks()[0].clone()]);
+  window.__mics = 0;  // how often the page asked for the mic
+  navigator.mediaDevices.getUserMedia = async () => { window.__mics++; const s = new MediaStream([dest.stream.getAudioTracks()[0].clone()]);
     window.__track = s.getAudioTracks()[0]; return s; };  // a fresh track each time, as a real browser gives
 })();
 """
@@ -165,7 +167,10 @@ def site(cfg, tmp_path, monkeypatch):
                                greet_fallback_ms=1500, answer_wait_ms=2500, start_nudge_ms=1500,
                                # the clock-driven cues are off unless a test turns them on (Live.S)
                                hello_silence_secs=1000, pitch_nudge_secs=[1000, 1000], ready_remind_secs=1000,
-                               aside_quiet_secs=1000, end_hold_secs=1000, talk_rest_secs=1000, wake_grace_secs=0)
+                               aside_quiet_secs=1000, end_hold_secs=1000, talk_rest_secs=1000, wake_grace_secs=0,
+                               # every listener counts as engaged (the guide keeps them company after the start)
+                               # unless a test says otherwise
+                               engaged_lines=0, engaged_words=0)
     monkeypatch.setattr(llm, "_client", FakeAnthropic(Responder()))
     monkeypatch.setattr(memory, "after_session", lambda *a, **k: False)
     offers = []
@@ -447,7 +452,7 @@ def test_mic_is_muted_for_every_reading_and_opened_only_for_instructions(world):
     p.wait("L.phase === 'aside'")
     assert p.js("window.__track.enabled") is True
     unmutes = [k for k, e in enumerate(p.sent()) if e["type"] == "session.input_audio.unmute"]
-    instr = [e["content"] for e in p.sent("session.instructions.append")]
+    instr = [e["content"] for e in p.sent("session.instructions.append") if not e["content"].startswith("[Their chapter is under way")]
     assert len(unmutes) == 1 and instr == [w.notes["tapped"]]  # the offer is said (speakable), not a note
     assert p.sent()[unmutes[0] + 1]["content"] == w.notes["tapped"]
     p.tool("resume_chapter")
@@ -681,12 +686,14 @@ def test_step_back_mutes_and_rests_after_the_guides_words(world):
     out = [e for e in p.sent("response.item.create") if e["item"]["call_id"] == "call_sb"][0]
     assert json.loads(out["item"]["output"])["quiet"] is True
     p.say("I'll be right here.")
-    p.wait("L.phase === 'resting'")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
     assert p.L("L.muted") is True and p.js("window.__track.enabled") is False
-    assert p.sent()[-1]["type"] == "session.input_audio.mute"
+    sent = [e["type"] for e in p.sent()]
+    assert sent[-2:] == ["session.input_audio.mute", "session.close"]  # then GPT-Live closed (Ian's fifth note)
     p.page.click("#orb")
-    p.wait("L.phase === 'talk'")
-    assert p.sent()[-1]["content"] == w.notes["wake"] and p.sent()[-2]["type"] == "session.input_audio.unmute"
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'")
+    session, _ = w.offers[-1]
+    assert session["input"][-1]["content"][0]["text"] == w.notes["back_from_rest"]
 
 
 def test_typed_text_while_live_goes_as_an_instruction(world):
@@ -920,32 +927,28 @@ def test_stop_during_a_section_boundary_reopen_does_not_read_on(world):
     assert not [m for m in p.marks("dropped")]  # a Stop, not a drop
 
 
-def test_the_chapter_waits_while_dropped_and_begins_after_the_tap_with_the_mic_on(world):
-    """Regressions: (1) the opening was written while the connection was down and the chapter began
-    anyway (phase resting was allowed), reading into no connection; now it waits, "Tap to talk", and
-    begins once the tap has reconnected. (2) The mic track, disabled by a rest before the drop, stayed
-    disabled in the new session, so the guide heard nothing."""
+def test_a_chapter_ready_while_the_guide_is_away_is_announced_then_a_tap_plays_it(world):
+    """Resting closes GPT-Live (Ian's fifth note). The opening written meanwhile: a session opens just to say it's
+    ready (the mic off), then closes; a tap opens one more, told to say nothing, and reads with the mic off.
+    (Earlier regressions kept: nothing is read into a closed connection, and the mic track comes back on in a
+    new session.)"""
     w = world
     p = connect(w)
-    p.page.click("#orb")  # talk -> resting: muted, the track off
-    p.wait("L.phase === 'resting' && L.muted")
+    p.page.click("#orb")  # talk -> resting: muted, the track off, the session closed
+    p.wait("L.phase === 'resting' && L.muted && !L.pc && !L.closing")
     assert p.js("window.__track.enabled") is False
-    dropped(p)
-    p.wait("L.phase === 'resting' && !L.pc")
     w.lock(1)
-    p.wait("L.status.sections && L.status.sections[0].text")
-    p.page.wait_for_timeout(2500)
-    assert p.phase() == "resting" and p.L("L.readStarted") is False and not p.reads(w.notes)
-    assert p.page.text_content("#line") == "Tap to talk"
-    p.page.click("#orb")  # connect("tap"): the same conversation, a new session
-    p.wait("L.started && L.phase === 'talk' && L.liveId === 'live_2'")
-    assert p.js("window.__track.enabled") is True and p.L("L.muted") is False
-    assert p.post_bodies("api/live/resume")[0]["reason"] == "tap"
-    p.say("Welcome back.")
-    p.wait("L.offer", timeout=6000)
-    say_yes(p)
-    assert p.L("L.feed.cur.id") == "s1-p01"
-    assert all(e["ch"] == 1 for e in p.sent("session.commentary.append") if e["content"].startswith(w.notes["read"]))
+    p.wait("L.offer && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "ready"
+    line = w.notes["opening_words"].replace("{words}", w.notes["ready_line_resting"])
+    assert p.sent("session.commentary.append")[-1]["content"] == line and p.L("L.muted") is True
+    p.say("Your chapter's ready whenever you are. Tap play when you'd like it.")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=8000)  # closed again
+    assert not p.reads(w.notes) and "tap to play" in p.page.text_content("#line")
+    p.page.click("#orb")
+    p.wait("L.phase === 'reading' && L.liveId === 'live_3' && L.feed.cur && L.feed.cur.sentAt", timeout=8000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "play"
+    assert all(e["ch"] == 2 for e in p.sent("session.commentary.append") if e["content"].startswith(w.notes["read"]))
     mic_rules(p, w.notes)
 
 
@@ -1075,15 +1078,12 @@ def test_typing_after_a_drop_goes_on_in_the_same_conversation(world):
     p.page.click("#type")
     p.page.fill("#say", "Still there?")
     p.page.click("#send")
-    deadline = time.monotonic() + 5
-    while not p.post_bodies("api/chat") and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert p.post_bodies("api/chat")[0] == {"message": "Still there?", "session": sid}
-    assert not p.post_bodies("api/chat/start")
-    p.wait("!L.thinking", timeout=8000)
-    p.page.click("#orb")
-    p.wait("L.started && L.phase === 'talk' && L.liveId === 'live_2'")
+    # Since the guide steps back with GPT-Live closed (Ian's fifth note), typing brings the live guide back in
+    # the same conversation, as a tap does (the typed guide only when voice can't come back).
+    p.wait("L.started && L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
     assert p.post_bodies("api/live/resume")[0]["session"] == sid and p.L("L.session") == sid
+    assert p.post_bodies("api/live/resume")[0]["reason"] == "dropped"
+    assert instructions(p)[-1] == w.notes["typed"].replace("{text}", "Still there?") and not p.post_bodies("api/chat")
 
 
 def test_reset_reports_the_sessions_cost_before_the_server_forgets_it(world, cfg):
@@ -1305,11 +1305,11 @@ def test_the_reminder_from_resting_shows_talk_then_rests_again(world):
     p.say("Lovely, I'll get started on it now.")
     p.tool("step_back")
     p.say("Enjoy the quiet.")
-    p.wait("L.phase === 'resting'", timeout=6000)
-    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['start_nudge'])})", timeout=5000)
+    # the reminder goes before the session closes for the rest (a rest closes GPT-Live)
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['start_nudge'])})", timeout=8000)
     assert p.phase() == "talk" and p.L("L.muted") is False
     p.say("Right.")
-    p.wait("L.phase === 'resting' && L.muted", timeout=6000)
+    p.wait("L.phase === 'resting' && L.muted && !L.pc", timeout=8000)
 
 
 def test_no_greeting_fallback_while_the_listener_speaks_first(world):
@@ -1543,7 +1543,8 @@ def test_pause_closes_gpt_live_and_play_opens_a_new_session_from_the_sentence(wo
     p.wait("L.phase === 'paused' && !L.pc", timeout=4000)
     assert any(e["type"] == "session.close" and e["ch"] == 0 for e in p.sent()) and p.L("L.stream") is None
     assert p.L("L.pausedAt") == {"id": "s1-p02", "sentence": 1}
-    assert p.post_bodies("api/live/usage")  # its cost reported as it closed
+    p.page.wait_for_timeout(1800)
+    assert p.post_bodies("api/live/usage")  # its cost reported once it has closed
     w.reported(state="paused", section=1, piece=1)
     p.page.wait_for_timeout(600)
     assert p.L("!L.pc") and p.js("document.getElementById('play').dataset.state") == "play"
@@ -1918,11 +1919,12 @@ def test_a_chapter_that_fails_while_they_rest_says_so_then_rests_again(world):
     p = connect(w)
     p.page.click("#orb")  # talk -> resting
     p.wait("L.phase === 'resting' && L.muted")
+    # Resting closes GPT-Live (Ian's fifth note): the page shows why, and Try again; the mic stays off.
     w.status(state="problem", message="It stopped.")
-    p.wait("L.phase === 'talk'", timeout=5000)
-    assert instructions(p)[-1] == w.notes["chapter_failed"]
-    p.say("Sorry, your chapter couldn't be made.")
-    p.wait("L.phase === 'resting' && L.muted", timeout=6000)
+    p.wait("L.runEnded", timeout=5000)
+    p.page.wait_for_timeout(800)
+    assert p.phase() == "resting" and p.L("L.muted") and p.page.text_content("#line") == "It stopped."
+    assert "problem" in p.js("document.body.className")
 
 
 def test_a_long_silence_in_conversation_turns_the_mic_off(world):
@@ -2107,9 +2109,9 @@ def test_a_ready_chapter_after_a_drop_plays_on_one_tap_without_a_second_offer(wo
     p.wait("L.offer")
     dropped(p)
     p.wait("!L.pc && L.phase === 'resting'")
-    says = len(p.marks("say"))
+    says, before = len(p.marks("say")), p.L("L.liveId")
     p.page.click("#orb")  # tap to play: reconnect and read
-    p.wait("L.phase === 'reading' && L.liveId === 'live_2' && L.feed.cur && L.feed.cur.sentAt", timeout=8000)
+    p.wait(f"L.phase === 'reading' && L.liveId !== {json.dumps(before)} && L.feed.cur && L.feed.cur.sentAt", timeout=8000)
     assert len(p.marks("say")) == says  # no second "want to hear it?"
 
 
@@ -2212,8 +2214,9 @@ def test_a_sound_wake_does_not_mute_a_later_conversation(world):
     tone(p, False)
     stop(p)
     p.wait("L.phase === 'idle'", timeout=6000)
+    before = p.L("L.liveId")
     p.page.click("#orb")  # a new conversation
-    p.wait("L.started && L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    p.wait(f"L.started && L.phase === 'talk' && L.liveId && L.liveId !== {json.dumps(before)}", timeout=6000)
     p.page.wait_for_timeout(2500)
     assert p.phase() == "talk" and not p.L("L.muted")
 
@@ -2299,3 +2302,188 @@ def test_a_rest_waits_its_grace_period_before_listening_for_a_voice(world):
     assert p.phase() == "resting"  # a sound in the grace period doesn't wake it
     tone(p, False)
     p.wait("window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=5000)
+
+
+
+# --- Ian's fifth note (2026-11-15): step back while it researches, unless they're chatting ---------------------
+
+def not_engaged(p):
+    cue(p, "engaged_lines", 1000)
+
+
+def test_after_the_start_the_guide_steps_back_and_gpt_live_closes(world):
+    w = world
+    p = connect(w, start=False)
+    not_engaged(p)
+    p.wait("Date.now() - L.spokeAt > 900 && !L.out")  # the hello said and done
+    start_chapter(p)
+    p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'step back')")
+    note = [x for x in instructions(p) if x.startswith("[Their chapter is under way")]
+    assert note and "step back" in note[-1]
+    p.say("It's under way. I'll step back while I research it; speak up or tap my circle any time.")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=6000)
+    assert any(e["type"] == "session.close" for e in p.sent()) and p.post_bodies("api/live/usage")
+    assert p.L("!!L.stream") and p.js("window.__track.enabled") is False  # kept here for the wake listener, sending nothing
+
+
+def test_after_the_start_an_engaged_listener_is_offered_company(world):
+    w = world
+    p = connect(w)  # the test config counts everyone as engaged
+    p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'company')")
+    assert instructions(p)[-1].startswith("[Their chapter is under way") and "keep talking" in instructions(p)[-1]
+    p.say("It's under way, and I'm happy to keep chatting while I research.")
+    p.page.wait_for_timeout(2500)
+    assert p.phase() == "talk" and p.L("!!L.pc")
+
+
+def test_talking_on_after_the_start_keeps_the_guide(world):
+    w = world
+    p = connect(w, start=False)
+    not_engaged(p)
+    start_chapter(p)
+    p.wait("L.stepBackAt")
+    p.hear("Actually, can I ask you something about falcons first?")
+    p.page.wait_for_timeout(600)
+    p.say("Of course, go ahead.")
+    p.page.wait_for_timeout(2500)
+    assert p.phase() == "talk" and p.marks("step-back-cancelled")
+
+
+def test_if_the_guide_never_mentions_stepping_back_it_steps_back_anyway(world):
+    w = world
+    p = connect(w, start=False)
+    not_engaged(p)
+    cue(p, "step_back_wait_secs", 1)
+    start_chapter(p)
+    p.wait("L.phase === 'resting' && !L.pc", timeout=8000)
+
+
+def test_a_voice_while_resting_opens_a_new_session_that_only_listens(world):
+    w = world
+    p = connect(w, start=False)
+    cue(p, "wake_listen_secs", 1)
+    room(p)
+    p.page.click("#orb")  # rest: the session closes
+    p.wait("L.phase === 'resting' && !L.pc && window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=6000)
+    p.page.wait_for_timeout(1200)
+    tone(p)
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2' && L.wokeAt", timeout=6000)
+    tone(p, False)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "wake"
+    p.wait("L.phase === 'resting' && !L.pc", timeout=6000)  # nobody spoke: closed again
+
+
+def test_a_tap_while_resting_opens_a_new_session(world):
+    w = world
+    p = connect(w, start=False)
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=6000)
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "tap"
+
+
+
+def test_a_line_already_under_way_at_the_start_is_not_the_step_back(world):
+    """"Alright, I'm on it" said as start_chapter returns isn't the guide stepping back: the mic stays on until
+    it has said so (here, the fallback after step_back_wait_secs)."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    not_engaged(p)
+    p.say("Alright, I'm")  # mid-line when the tool returns
+    start_chapter(p)
+    p.say("on it.")
+    p.page.wait_for_timeout(1500)
+    assert p.phase() == "talk"
+
+
+
+# --- regressions from the review of the fifth-note changes -------------------------------------------------------
+
+def test_a_tap_right_after_a_rest_opens_a_new_session_and_never_uses_the_closing_one(world):
+    w = world
+    p = connect(w, start=False)
+    p.page.click("#orb")  # rest: the session is let go of at once
+    p.wait("L.phase === 'resting' && !L.pc")
+    p.page.click("#orb")  # straight away, while the old one is still closing
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    late = [e for e in p.sent() if e["ch"] == 0 and e["type"] in ("session.instructions.append", "session.input_audio.unmute")]
+    assert not [e for e in late if e["type"] == "session.input_audio.unmute"]
+    p.page.wait_for_timeout(1800)  # the old session's close waited for on the side, then its cost reported
+    assert any(b["live_id"] == "live_1" for b in p.post_bodies("api/live/usage"))
+
+
+def test_okay_thanks_after_the_step_back_line_still_steps_back(world):
+    w = world
+    p = connect(w, start=False)
+    not_engaged(p)
+    p.wait("Date.now() - L.spokeAt > 900 && !L.out")
+    start_chapter(p)
+    p.wait("L.stepBackAt")
+    p.page.wait_for_timeout(100)
+    p.say("I'll step back while I research, unless there's anything else you'd like to chat about?")
+    p.wait("L.pending", timeout=4000)  # a question, but the step-back line
+    p.hear("Okay, thanks.")
+    p.wait("L.phase === 'resting' && !L.pc", timeout=8000)
+
+
+def test_typed_text_while_resting_brings_the_live_guide_back(world):
+    w = world
+    p = connect(w, start=False)
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.click("#type")
+    p.page.fill("#say", "how's it going?")
+    p.page.press("#say", "Enter")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert instructions(p)[-1] == w.notes["typed"].replace("{text}", "how's it going?") and not p.post_bodies("api/chat")
+
+
+def test_a_tap_after_a_dropped_connection_says_it_is_back(world):
+    w = world
+    p = connect(w, start=False)
+    dropped(p)
+    p.wait("L.phase === 'resting' && !L.pc")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "dropped"
+
+
+def test_after_an_outright_mic_off_the_ready_announcement_never_opens_a_mic(world):
+    w = world
+    p = connect(w)
+    p.hear("Can you turn off the microphone, please?")
+    p.page.wait_for_timeout(400)
+    p.say("Sure.")
+    p.wait("L.phase === 'resting' && !L.pc && !L.stream", timeout=6000)  # tap only: the mic released
+    mics = p.js("window.__mics")
+    w.lock(1)
+    p.wait("L.offer && L.liveId === 'live_2'", timeout=6000)  # also: ready while the rest's session was still closing
+    assert p.js("window.__mics") == mics and p.L("L.mic") is None  # no mic asked for, none sent
+    assert p.js("window.__pcs[window.__pcs.length - 1].tracks.length") == 0
+
+
+def test_a_rest_waits_for_a_tool_call_in_flight(world):
+    w = world
+    p = connect(w, start=False)
+    p.emit({"type": "session.delegation.created"})
+    p.wait("L.thinking")
+    p.page.click("#orb")  # rest while the backend works
+    p.page.wait_for_timeout(1200)
+    assert p.phase() == "talk" and p.L("!!L.pc")
+    p.emit({"type": "response.event", "event": {"type": "response.completed", "response": {"usage": None}}})
+    p.wait("L.phase === 'resting' && !L.pc", timeout=4000)
+
+
+def test_typed_lines_count_toward_engagement(world):
+    w = world
+    p = connect(w, start=False)
+    cue(p, "engaged_lines", 2)
+    cue(p, "engaged_words", 4)
+    p.page.click("#type")
+    for line in ("I've been building cabinets all week long", "the birch plywood is lovely to work with honestly"):
+        p.page.fill("#say", line)
+        p.page.press("#say", "Enter")
+        p.page.wait_for_timeout(200)
+    start_chapter(p)
+    p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'company')")

@@ -212,6 +212,16 @@ live:
     gpt-6-luna: [0.10, 0.50, 0.01]
   restart_bands_secs: [30, 120] # after a question: the interrupted sentence, one earlier, or the paragraph
   build_cap_usd: 20.00          # the build's own spending cap (voice/gpt_live/build_costs.jsonl)
+  # The live checks' own size and cost (python -m voice.gpt_live persona|asides, voice/gpt_live/pagecheck.py).
+  # Ian, 2026-11-16: "way too high for these small tests" ($15.84 by then: long sessions at $0.05 a connected
+  # minute, and an Opus grade of every conversation). Now short by default, graded only when asked, and capped.
+  checks:
+    run_cap_usd: 0.40           # one check (a conversation, a page check) at most: not started past it, cut off at it
+    max_minutes: 3              # a simulated conversation's connected time by default (was 6)
+    max_turns: 8                # the simulated listener's lines by default (was 12)
+    after_start: 1              # its lines after the chapter starts, then it stops (was 2)
+    grade: false                # graded only with --grade (the grades were most of the Claude bill)
+    grade_role: researcher      # and then on Sonnet 5.5 (models.researcher), effort medium, not Opus at high
   archive_wait_seconds: 120     # a chapter heard to the end: wait this long for OpenAI's recording, then archive
   archive_retry_seconds: 10
   # The guide's first words, said word for word when a new conversation starts (the Playground's
@@ -256,6 +266,11 @@ live:
     # rest, a longer sound needed (over voice.wake's settings), and none at all when they asked outright for the
     # mic off (mic_off_ask): then only a tap brings it back.
     wake_grace_secs: 15
+    # When the chapter starts (Ian's fifth note): the guide steps back while it researches, unless the listener has
+    # been chatting easily: at least engaged_lines lines so far, the last few averaging engaged_words words or more
+    engaged_lines: 8
+    engaged_words: 6
+    step_back_wait_secs: 12     # and if the guide says nothing about stepping back this long after the start, it steps back anyway
     wake: {need_ms: 600, window_ms: 1000, min_rms: 0.02}
     mic_off_ask: "\\b((turn|switch|shut) (off )?(your|the) (mic|microphone)( off)?|(turn|switch|shut) (it|that) off|mute (yourself|your mic|the mic)|stop listening)\\b"
     aside_quiet_secs: 30        # a tap nobody speaks after: the chapter stays paused and the mic goes off
@@ -263,7 +278,7 @@ live:
     # The listener asking for quiet, or saying they'll be away a minute (Ian's third test: "I'll pick up the
     # conversation later", "when it's ready we'll get back to ya", "you call me"), and the guide's parting words:
     # the page rests (the mic off) even when the guide doesn't call step_back (in his second test it didn't)
-    quiet_ask: "\\b(some quiet|(have|want|need|for) (some )?quiet time|a (little|bit of) quiet|peace and quiet|be quiet|stop talking|no more talking|i'?ll just (wait|listen|sit)( for it)?|let'?s (just )?(have|take) (some|a) (quiet|break|pause)|give me some space|shh+|(turn|switch|shut) (off )?(your|the) (mic|microphone)( off)?|mute (yourself|your mic)|stop listening|(i'?ll|we'?ll) be right back|be right back|back in a (minute|min|sec|second|bit)|brb|(just )?call me when (it'?s|you'?re) (ready|done)|you call me(?=\\W*$)|(we'?ll|i'?ll) get back to (you|ya)|(talk|chat) (to you )?later(?=\\W*$)|pick (this |it |that |the conversation )?(back )?up( this| it| that| the conversation)? later|step away for a (minute|sec|second|bit))\\b"
+    quiet_ask: "\\b(some quiet|(have|want|need|for) (some )?quiet time|a (little|bit of) quiet|peace and quiet|be quiet|stop talking|no more talking|i'?ll just (wait|listen|sit)( for it)?|let'?s (just )?(have|take) (some|a) (quiet|break|pause)|give me some space|shh+|(turn|switch|shut) (off )?(your|the) (mic|microphone)( off)?|mute (yourself|your mic)|stop listening|(i'?ll|we'?ll) be right back|be right back|back in a (minute|min|sec|second|bit)|brb|(just )?call me when (it'?s|you'?re) (ready|done)|you call me(?=\\W*$)|(we'?ll|i'?ll) get back to (you|ya)|(talk|chat) (to you )?later(?=\\W*$)|pick (this |it |that |the conversation )?(back )?up( this| it| that| the conversation)? later|step away for a (minute|sec|second|bit)|go (ahead and )?(do|start) (your|the) research|go research|i'?ll let you (work|research|get to it|do your thing))\\b"
     step_back_said: "\\b(give you (some )?(space|quiet|peace)|i'?ll (be|stay|keep|go) quiet|enjoy the quiet|tap (me )?(when|if) you)\\b"
     # A ready chapter starts on start_reading, or on the listener's yes (a short one, the first thing they say)
     # to the guide's latest question when it offers the chapter (offer_question and offer_action both in it),

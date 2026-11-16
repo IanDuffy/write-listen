@@ -14,6 +14,40 @@ in how the transcript spells them. The persona is better than at the start but d
 (graded 3-6/10): praise and long pitches persist, and going back after a question still leans on the
 page's own cues. Costs: $0.05 per connected minute; a 20-minute live chapter is about $1.10 of voice.
 
+## Ian's fifth note (2026-11-16): step back while it researches
+
+"It should default to silence the mic ... suggest she will step back for a bit to research, unless the listener
+has anything else they'd like to chat about ... if they were engaging a lot, continuing the conversation with
+the research in the background would be a good suggestion ... no point wasting GPT-Live credits."
+- **After the start**, the page sends one of two notes. If the listener has been chatting easily (8 lines or
+  more, the last four averaging 6 words or more: `engaged_lines`, `engaged_words`, typed lines count), the
+  guide says it'll research in the background and is happy to keep talking, or step back if they'd like quiet
+  (`started_company`). Otherwise it says it'll step back while it researches unless there's anything else
+  they'd like to chat about, and that they can speak up or tap its circle any time (`started_step_back`), and the
+  page steps back after that line. "Okay, thanks" or "no, go ahead" doesn't stop it; more than that does. If the
+  guide says nothing about it, the page steps back after 12 s. `start_chapter`'s backend reply is empty now.
+- **Stepping back closes GPT-Live** (it billed $0.05 a minute muted). The mic is kept on this machine for the
+  wake listener (released after an outright mic-off). Each way back is a new session told why: a voice
+  (`listening_again`: listen, answer only if spoken to), a tap (`back_from_rest`), play (`continue`), the
+  chapter ready (`ready_back`: a session with no mic at all says the ready line, then closes again), typed text.
+  A start promised and not kept is reminded before the session closes; a tool call in flight is waited for.
+- Live (persona runs, the page's notes sent as the page does): to a chatty listener, "I'll keep the slapstick to a
+  minimum while I dig into glowing sea creatures, unless you'd really rather some quiet"; to a reserved one who
+  chose quiet, step_back and "Sure, I'll just wait."
+- Review: three lenses, two skeptics each; 16 confirmed, all fixed with tests (the main ones: a tap within a
+  rest's 1.5 s close acted on the dying session, and the ready announcement was skipped in that window; "okay,
+  thanks" cancelled the step back; the ready announcement's reconnect turned the mic on; typed text while
+  resting went to the typed guide). Open: a quiet check-in (waiting for the next part) still keeps the session
+  open.
+
+**The checks' own cost** (Ian, 2026-11-16: "way too high for these small tests"). Of the $15.84 spent, $6.00 was
+GPT-Live time in persona and aside runs of 4-7 minutes each, $3.62 Claude (the simulated listeners and an Opus
+grade of every conversation), $3.04 two big page checks (a whole chapter read aloud, a real chapter made end to
+end); the recent small checks were $0.08-0.15 each. Now (`config.yaml` `live.checks`): a simulated conversation
+runs 3 minutes and 8 listener lines by default and stops one line after the start; grades only with `--grade`,
+and then on Sonnet at medium effort; and every check is capped at $0.40 (its session's connected time, and a
+page check stops there).
+
 ## After Ian's fourth test (2026-11-15)
 
 "Immense improvements, the quality of the conversation is so natural now." Two fixes:
