@@ -37,6 +37,7 @@
   body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
          display: flex; flex-direction: column; align-items: center; }
   /* The orb's screen fills the first screen; the library (page/library.js) sits below it, as you scroll. */
+  #toggle[hidden] { display: none; }  /* nothing said yet: no transcript to show */
   #screen { flex: none; width: 100%; min-height: calc(100vh - var(--lib-player-h, 0px));
             display: flex; flex-direction: column; align-items: center; }
   main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -139,7 +140,7 @@
     <button id="send">Send</button>
   </form>
   <div class="row">
-    <span><button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Start fresh</button></span>
+    <span><button id="toggle" aria-expanded="false" hidden>Show transcript</button><button id="reset">Start fresh</button></span>
     <button id="type" aria-label="Type instead" aria-pressed="false" title="Type instead">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
         <rect x="2.5" y="6" width="19" height="12" rx="2"/>
@@ -762,6 +763,10 @@ $("type").addEventListener("click", () => {  // the keyboard in the corner: show
   if (typing) $("say").focus();
 });
 
+// The transcript button shows only once there is something to show (Ian, 2026-11-15).
+new MutationObserver(() => { $("toggle").hidden = !$("transcript").textContent.trim(); })
+  .observe($("transcript"), { childList: true, subtree: true, characterData: true });
+$("toggle").hidden = !$("transcript").textContent.trim();
 $("toggle").addEventListener("click", () => {
   const open = $("transcript").classList.toggle("open");
   $("toggle").textContent = open ? "Hide transcript" : "Show transcript";

@@ -54,6 +54,7 @@ def test_an_adopted_scout_and_a_continued_run_do_not_count_where_they_would_misl
 
 def test_update_load_and_estimate(tmp_path, cfg, run):
     cfg["fast"]["timings_file"] = str(tmp_path / "state" / "timings.json")
+    cfg["live"] = {**(cfg.get("live") or {}), "provider": "elevenlabs"}  # the live estimate: test_fast_live.py
     assert T.load(cfg) is None and T.estimate(cfg) is None  # no run measured yet: the guide gives no time
     T_path = base.path(run, "timeline")
     T_path.write_text("".join(json.dumps(e) + "\n" for e in timeline()), encoding="utf-8")

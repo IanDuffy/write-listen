@@ -39,7 +39,7 @@ from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from stages import llm, research
+from stages import common, llm, research
 from stages.common import Run, StageError, load_prompt, parse_json
 
 from . import library, locks, profiles, schedule
@@ -526,3 +526,42 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime, info: 
             library.mark_used(listener, [n["id"] for n in taken], pid, library.NEXT_NOTES)
     print(f"  planned {up['title']!r} for {up['for_morning']} ({mode}, {choice['decided']}), ${cost:.3f}")
     return up
+
+# --- planning right after a conversation's chapter ------------------------------------------------------
+
+def needs_plan(card: dict | None, settings: dict) -> bool:
+    """No plan is waiting for the next build: none at all, or only last night's finished one. A planned,
+    building or failed card is left alone (a failed one is retried first)."""
+    return bool(settings["overnight"]["enabled"]) and (card is None or card.get("status") == "ready")
+
+
+def plan_if_needed(cfg: dict, listener: Path, now: datetime | None = None) -> dict | None:
+    """`wl overnight plan --if-needed`: plan the next chapter now if nothing is planned for it. Called when
+    a chapter made from a conversation finishes (Ian, 2026-11-15: a new listener's first plan shouldn't
+    wait for 18:00), so the plan builds on that chapter and is ready for tonight's build."""
+    from . import runner
+    card = runner.reconcile(listener)
+    if not needs_plan(card, profiles.settings(cfg, listener=listener)):
+        return None
+    return plan(cfg, listener, now=now)
+
+
+def spawn_if_needed(cfg: dict, chapter_root: Path) -> None:
+    """Start `wl overnight plan --if-needed` for the chapter's listener in its own process: the chapter
+    that just finished never waits for it, and a failure there only shows in shared/logs/plan-after.log.
+    (Tests replace this: tests/conftest.py.)"""
+    import os
+    import subprocess
+    import sys
+    listener = common.owner_of(Path(chapter_root))
+    if listener is None or not listener.is_dir():
+        return
+    if not needs_plan(profiles.read_json(listener / "up_next.json"), profiles.settings(cfg, listener=listener)):
+        return
+    log = common.shared_dir() / "logs" / "plan-after.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, common.LISTENER_ENV: listener.name}
+    with open(log, "a", encoding="utf-8") as out:
+        subprocess.Popen([sys.executable, str(common.ROOT / "cli.py"), "overnight", "plan", "--if-needed",
+                          "--listener", listener.name], cwd=common.ROOT, env=env, stdout=out,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)

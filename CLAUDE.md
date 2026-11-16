@@ -366,6 +366,80 @@ and Ian's live-try script: `faststart/REPORT.md`. Code in `faststart/`, tests in
 - Prompts `prompts/fast_*.md` were tuned once after a blind comparison (commit `e4b37ac`); the
   diagnosis and what remains are in the report.
 
+## One live voice: GPT-Live (branch `claude/hungry-germain-1ac517`, 2026-11-13/14)
+
+Spec: "One Live Voice (GPT-Live replaces ElevenLabs)" (Ian, 2026-11-13; not in the repo, summarized in
+`voice/gpt_live/REPORT.md`). The guide's conversation and the fast-start chapter's reading run in **one
+OpenAI GPT-Live session**, in one voice (Gleam). Ian: onboarding first; the overnight chapter work is a
+later phase. Report, doc answers, live results, costs and Ian's script: `voice/gpt_live/REPORT.md`.
+
+- `config.yaml live:`: `provider: gpt_live` serves `page/live.html` at `/` (`elevenlabs` puts the old page
+  and agents back; ElevenLabs code is left in place, unused, until Ian has tried this). `?chapter=<run>`
+  still opens the old page. Models: voice `gpt-live-1`, backend `gpt-6.1-terra` (Terra), voice `gleam`.
+- **GPT-Live is not the Realtime API** (checked live): full duplex, it decides when to speak; no
+  `response.create` for speech, no "response done"/"audio played" events, no cancel/truncate/item delete,
+  no `opening` session field (refused). Text goes in as appended context (500 tokens each): the page
+  reads paragraphs as `session.commentary.append` ("Read this passage aloud now, word for word...");
+  notes as `session.instructions.append`, which GPT-Live **ignores while the mic is muted**, so the page
+  unmutes first. The guide's tools run through **delegation** to a Responses backend (Terra): the voice
+  says "Generate <|SpawnThinking|>", the backend calls a function, the page runs it at `/api/live/tool`
+  and answers `response.item.create` (function_call_output) + `response.create`.
+- `voice/gpt_live/`: `session.py` (instructions, tools, session config, WebRTC SDP exchange: no client
+  keys exist for GPT-Live, so the page's offer goes through our server), `chapter.py` (locked sections
+  as paragraphs `s<n>-p<kk>`, restart points, the question's context, the reading check),
+  `routes.py` (`/api/live/*`, `/live.js`, `/align.js`), `instructions/` (the guide's instructions, one
+  file per part, assembled in name order; `backend.md` is the backend's; Ian edits them, notes above
+  `---` as in prompts/), `notes.md` (the page's notes to the guide), `pagecheck.py` (live checks of the
+  real page in headless Chromium with a TTS-spoken listener), `sim.py`/`persona.py` (WebSocket harness,
+  simulated listeners, Opus grading), `archive.py` (the session recording to the episode).
+  The instruction files live outside prompts/ because the spec asks for `voice/gpt_live/instructions/`.
+- `page/live.js` follows the **output transcript** word by word against the paragraph being read
+  (`page/align.js`: deltas can split a word); the next paragraph goes once the current one is heard to
+  its end (sent earlier, GPT-Live dropped it or cut a sentence). A tap ducks the audio, opens the mic and
+  appends a stop note plus silent context; `resume_chapter` (or the page, after a silence) re-feeds from
+  the restart sentence. A check-in when the next part isn't written runs in the same session.
+  A new session takes over at a section boundary near GPT-Live's context or 2-hour limit.
+- Fast runs started from the page are **live runs** (`fast.json` `"voice": "live"`, `faststart/live.py`):
+  no narration step, "ready" means locked, status pieces are paragraphs, the archive has no audio until
+  `voice/gpt_live/archive.py` builds it from the session recording (`store: true`, kept 30 days by OpenAI).
+- **Whose chapter** (after Ian's first test, 2026-11-14: an older finished chapter, the newest run, was read
+  the moment he spoke). The page reads only `L.own`: the run its `start_chapter` returned (the tool route
+  adds `run`, the page strips it before the backend sees it), or the one `/api/live/start` returns as
+  `continue` (`routes.continuing`: still making, or its reading stopped under `live.continue_minutes`
+  ago and not archived; opened with notes `reloaded`/`reopened`). Older runs are neither read nor shown,
+  and live `get_status` (`guide.Session(own_only=True)`) doesn't report them. The lead-in waits for the
+  session's first line, an answer to the guide's question and a pause; a promised start with no
+  `start_chapter` gets one reminder (`start_promise`, `start_nudge`). The page greets with speakable context
+  at the session's start (no startup message: `session_config(greet=False)`); `live.opening` sets first
+  words (no API field exists for it). Pagecheck worlds have no status until `adopt()`.
+- **After Ian's second test** (2026-11-15; report section of that name). The meeting unfolds a turn at a
+  time (`opened`: a hello alone; names next; an offer to say what this is), warmer and less of an interview
+  (laughs, guesses, small pieces of itself); the page nudges toward a pitch at `pitch_nudge_secs` and checks
+  in once on an unanswered hello. A ready chapter is **offered**, never begun mid-talk: it starts on the
+  `start_reading` tool (`prompts/live_tools.json`), the listener's yes to an offer question, the guide's
+  lead-in, a tap or the play button; resting, it is led into as before (`first_ready_waiting`). Delegation
+  misses tools, so the page also reads lines: quiet asked for + the guide's parting words rest the page
+  (mic off) without `step_back`. Play/pause and a slider over the script at `words_per_second` (pause and a
+  move stop the guide with `paused`/`moved`; a long pause closes the session, play opens one with reason
+  `paused`); the end holds the session `end_hold_secs`. A tap's reading tail isn't an answer, and a tap
+  nobody speaks after becomes a pause. The ring fills from the run's start. `routes.tool` drops
+  `while_waiting` (the older guides' wait rules). Tests turn the clock cues on through `Live.S`.
+- **After Ian's third test** (2026-11-15; report section of that name; his run saved in
+  `listener/_saved_20261115-132151/`). Leave-taking ("we'll get back to you") rests the page too; resting has
+  wake on sound again (`page/wake.js` on a clone of the mic track; `wake_listen_secs`, `voice.wake`). The ready
+  chapter is said word for word through `opening_words` (`offer_line` in talk; `ready_line_resting` with the mic
+  off, where the play button shows); no play button in talk. Pause closes the GPT-Live session (`closeLive`);
+  play reconnects with reason `paused`, a tap while paused with `paused-ask` (`asking`). In a question, stalls
+  and a bare "okay" aren't answers (`live.page.stall`, anchored), `unanswered` asks it to answer, the backend may
+  answer a handed-over question, and a quiet aside ends (resumed if answered, else paused).
+- **After Ian's fourth test** (2026-11-15). The "what I do" offer is `{{offer}}` in 20_meeting.md:
+  `offer_first.md` until the listener has been told (a returning listener, or `session.explained()` on resume),
+  then `offer_known.md`. An outright "turn off your mic" (`mic_off_ask`) rests tap-only; other rests wait
+  `wake_grace_secs` before listening, with `live.page.wake` over `voice.wake`.
+- Costs: GPT-Live $0.05 per connected minute (muted and silent time too) + backend tokens, logged per
+  session in `listener/sessions/log.jsonl`; build checks in `voice/gpt_live/build_costs.jsonl` (cap $20).
+- Tests: `tests/live/`; `tests/conftest.py`'s `cfg` pins `live.provider: elevenlabs` for the older tests.
+
 ## Overnight Chapters (branch `feature/overnight`, 2026-11-15)
 
 Spec: `docs/overnight-chapters.md` (Ian). Every weeknight the app builds the listener's next 20-minute chapter;
@@ -398,10 +472,12 @@ opens a short live intro by the guide, then the recording. Report, live results 
   plans at `plan_at`, builds at `start` on build days (`overnight/schedule.py` is pure). A card lock
   (`overnight/locks.py`) keeps the tick and the server's Change from crossing; a dead build counts as failed
   (`runner.reconcile`); a failed card is retried once on the next build day; failed planning passes back off.
-- **The library page** `/library` (`page/library.html`, `page/library.js`, `overnight/routes.py`,
-  `overnight/live.py`): GPT-Live sessions opened through the server (intro, change, ask), prompts
-  `prompts/overnight_voice_*.md`. Written apart from the live-voice switchover (uncommitted when this was built):
-  merge the two GPT-Live clients and personas when it lands.
+- **The library** (`page/library.js`, mounted below the orb on `/` (`page/live.html`, and `page/index.html`
+  for the ElevenLabs provider); `/library` is a standalone shell): Up next (Change, Add a note), the latest chapter,
+  every past chapter, a chapter view at `#/chapter/<run>` and one mini player whose audio survives navigation.
+  Its GPT-Live sessions (intro, change, ask on a recording) are `overnight/live.py` with prompts
+  `prompts/overnight_voice_*.md`: a second, smaller GPT-Live client beside the live page's; they never run at
+  once (`window.Orb` / `window.Library` busy/end). Merging the two clients and personas is open.
 
 ## Local setup
 
@@ -544,7 +620,7 @@ real key), so locally it must be in `.env`.
 - The transcript is copyrighted. Never commit `runs/` (gitignored); quote the
   episode sparingly.
 - Never put keys in code, logs, prompts or commits.
-- Prompts live only in `prompts/*.md`, never inline in code. Inputs are listed
+- Prompts live only in `prompts/*.md` (the live guide's in `voice/gpt_live/instructions/`, per its spec), never inline in code. Inputs are listed
   above a `---` line, which `load_prompt` drops; `{{placeholders}}` below it
   must all be supplied, or it raises.
 - Run the tests before every commit. Add a regression test with each bug fix.

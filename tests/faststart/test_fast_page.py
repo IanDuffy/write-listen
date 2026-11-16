@@ -841,6 +841,8 @@ def test_a_fast_chapter_finished_before_this_visit_is_an_ordinary_chapter(world)
     b.wait("status.state === 'ready' && document.body.classList.contains('past')")
     assert b.js("Fast.active()") is False and b.js("Fast.onTap()") is False
     assert b.js("getComputedStyle(document.getElementById('sections')).display") == "none"
+    b.page.evaluate("document.documentElement.classList.remove('has-library')")  # the orb's own path: with the
+    # library mounted below, past chapters are the library's and #last is hidden (overnight/DESIGN.md Round 2)
     b.page.click("#last")
     # play() clears `paused` at once and fires the play event a task later: wait for the event
     b.wait("window.__a.plays.length === 1 && !document.getElementById('audio').paused")

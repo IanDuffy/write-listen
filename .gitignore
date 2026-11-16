@@ -34,3 +34,7 @@ ask/_runs/
 
 # Fast Start: medians of this machine's runs (build costs are in faststart/build_costs.jsonl, committed)
 faststart/timings.json
+
+# GPT-Live live checks: the listener's cached speech, transcripts, grades, audio (costs are in voice/gpt_live/build_costs.jsonl)
+voice/gpt_live/_cache/
+voice/gpt_live/_runs/

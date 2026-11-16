@@ -134,9 +134,13 @@ class Session:
     (raising to refuse); `status()` returns the current run's status.json. `fast`: what a fast run
     changes (faststart.guide_hooks.Hooks); without it the conversation is as it was before them."""
 
-    def __init__(self, cfg: dict, start, status, runs_dir: Path, rng: random.Random | None = None, fast=None):
+    def __init__(self, cfg: dict, start, status, runs_dir: Path, rng: random.Random | None = None, fast=None,
+                 own_only: bool = False):
         self.cfg, self.start_fn, self.status_fn, self.runs_dir = cfg, start, status, runs_dir
         self.fast = fast
+        # own_only (the live page): get_status speaks of this conversation's chapter, or of one being made
+        # now; never of an older finished, failed or stopped one, which the guide would take for its own.
+        self.own_only = own_only
         self.tools = [t for t in API_TOOLS if fast is not None or t["name"] not in FAST_ONLY]
         sessions = listener_dir(cfg) / "sessions"
         sessions.mkdir(parents=True, exist_ok=True)
@@ -285,7 +289,10 @@ class Session:
         if name == "scout_topic":
             return self.fast.scout_topic(args.get("topic") or "") if self.fast else {"scouting": False}
         if name == "get_status":
-            return self._plain(self.status_fn() or {"state": "idle"})
+            now = self.status_fn() or {"state": "idle"}
+            if self.own_only and now.get("run") != self.run and now.get("state") != "making":
+                return {"state": "idle", "note": "No chapter has been started in this conversation yet."}
+            return self._plain(now)
         if name == "step_back":  # typed, nothing else happens; by voice, the page ends the connection
             return {"quiet": True, "note": STEP_BACK_NOTE}
         return {"error": f"no tool named {name}"}

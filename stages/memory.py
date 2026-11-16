@@ -219,6 +219,9 @@ def record_chapter(cfg: dict, r: Run) -> None:
         entry.append("- Parked, for a later chapter: " + "; ".join(x for x in parked if x))
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(text.rstrip() + "\n" + "\n".join(entry) + "\n", encoding="utf-8")
+    if not (r.root / "00_source" / "up_next.json").exists():  # a chapter from a conversation, not a nightly build
+        from overnight import planner
+        planner.spawn_if_needed(cfg, r.root)  # its next chapter is planned now, not at 18:00 (Ian, 2026-11-15)
 
 
 def _guide_name(text: str) -> str | None:

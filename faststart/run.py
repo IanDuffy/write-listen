@@ -37,6 +37,8 @@ Every step is resumable from its files, so the same command again continues a st
 
 Before anything is paid for, the ElevenLabs balance is read: a chapter that would run out of
 narration characters part-way is not started (a balance that cannot be read stops nothing).
+A live run (fast.json "voice": "live", faststart/live.py) has no narration to pay for: a locked
+section's paragraphs go straight to the page's queue, and the archive keeps no audio of its own.
 When a run stops, calls already in flight are waited for (fast.exit_wait_seconds at most), so
 what they cost is in the log and what they found is on disk for the run that continues.
 """
@@ -53,7 +55,7 @@ from stages import ledger, llm
 from stages import new as overnight
 from stages.common import PATHS, Run, StageError, word_count
 
-from . import archive, base, checkin, narrate, notes, research, scout, sections, status
+from . import archive, base, checkin, live, narrate, notes, research, scout, sections, status
 from . import outline as outline_mod
 from . import timings as T
 from .dossier import Dossier
@@ -102,6 +104,7 @@ def done_from_files(r: Run, outline: dict, led: dict, dossier: Dossier, episode:
     locked = [n for n in numbers if sections.locked_text(r, n) is not None]
     saved = base.read_json(base.path(r, "work") / "archive.json")
     gone = {e.get("row") for e in base.read_timeline(r) if e["event"] == T.RESEARCH_TIMEOUT}
+    voice = live.module(r)  # a live run's sections are paragraphs (live.json), with no audio
     return {
         "rows": [row["id"] for row in led["rows"] if dossier.has(row["id"])],
         # given up on before a restart and still not in: not researched a second time (findings that
@@ -110,10 +113,11 @@ def done_from_files(r: Run, outline: dict, led: dict, dossier: Dossier, episode:
                       and not (r.path("research_dir") / f"{row['id']}.md").exists()],
         "drafts": [n for n in numbers if n in locked or sections.latest_draft(r, n) is not None],
         "locked": locked,
-        "narrated": [n for n in locked if narrate.narrated(r, n)],
-        "pieces": {n: [p.seconds for p in narrate.pieces(r, n)] for n in locked},
+        "narrated": [n for n in locked if voice.narrated(r, n)],
+        "pieces": {n: [p.seconds for p in voice.pieces(r, n)] for n in locked},
         "solo": [n for n in locked if (lk := sections.saved_lock(r, n)) is not None and lk.mode == "solo"],
-        "archived": bool(saved and (saved.get("episode") or not episode) and r.path("chapter_mp3").exists()),
+        "archived": bool(saved and (saved.get("live") or ((saved.get("episode") or not episode)
+                                                          and r.path("chapter_mp3").exists()))),
     }
 
 
@@ -126,7 +130,10 @@ def chars_ahead(cfg: dict, r: Run | None = None) -> int:
     chapter the outline may plan (narrate.needed_chars), less what is already narrated by the
     voice. With fast.narration.simulate_after_chars set (a build test) only up to that many are
     real, and none once the run has gone over to silence. Nothing for a chapter whose sections
-    are all narrated. `r` None: a run that does not exist yet."""
+    are all narrated, and nothing for a live run (no ElevenLabs narration). `r` None: a run that
+    does not exist yet."""
+    if r is not None and base.is_live(r):
+        return 0
     limit = base.settings(cfg)["narration"].get("simulate_after_chars")
     real = 0
     if r is not None:
@@ -185,6 +192,7 @@ class _Driver:
         self.r, self.cfg, self.player, self.listener, self.clock, self.episode = r, cfg, player, listener, clock, episode
         self.again = again or f"python cli.py new {r.name} --unattended"   # the command that continues this run
         self.f = base.settings(cfg)
+        self.read_live = base.is_live(r)          # read live: no narration step, locked is ready
         self.q: queue.Queue = queue.Queue()
         self.lanes: dict[str, _Lane] = {}
         self.tl: base.Timeline | None = None
@@ -297,9 +305,10 @@ class _Driver:
     def _prepare(self) -> None:
         """Scout and outline, in this thread; then everything the loop needs."""
         r, cfg, f = self.r, self.cfg, self.f
-        self.narrator = narrate.Narrator(r, cfg)  # first: it refuses a build test continued as a real chapter
+        # first: the ElevenLabs narrator refuses a build test continued as a real chapter
+        self.narrator = live.LiveNarrator(r, cfg) if self.read_live else narrate.Narrator(r, cfg)
         self._voice()
-        self.medians = T.load(cfg) or {}
+        self.medians = T.load(cfg, live=self.read_live) or {}
         had, t0 = base.path(r, "scout").exists(), self.clock()
         self.step_at = t0
         if not had:  # a continued run's first status is the loop's, with its sections: never "making" from nothing
@@ -789,7 +798,7 @@ class _Driver:
             return "archive", "Finishing"
         if kind == "research":
             return f"research {action[1]}", "Researching"
-        doing = {"draft": "Writing", "lock": "Editing", "narrate": "Recording"}[kind]
+        doing = {"draft": "Writing", "lock": "Editing", "narrate": "Preparing" if self.read_live else "Recording"}[kind]
         return f"{kind} {action[1]}", f"{doing} part {action[1]} of {total}"
 
     def _where(self) -> tuple[str, str]:
@@ -801,8 +810,13 @@ class _Driver:
         if sched.archived:
             return "archive", "Finishing"
         if not self.first_audio:
-            return "opening", "Writing the opening" if 1 not in sched.locked else "Recording the opening"
-        n = next((k for k in sched.sections if k not in sched.narrated), total)
+            return "opening", "Writing the opening" if 1 not in sched.locked or self.read_live else "Recording the opening"
+        if self.read_live:  # locked is ready: the next section not locked is the one being worked on
+            n = next((k for k in sched.sections if k not in sched.locked), None)
+            if n is None:
+                return "archive", "Finishing"
+        else:
+            n = next((k for k in sched.sections if k not in sched.narrated), total)
         snap = sched.snapshot()  # the word is the marker's (status.section_step), so the two agree
         step = status.section_step(n, snap["sections"][n], snap["rows"], snap["running"])
         doing = {"researching": "Researching", "writing": "Writing", "editing": "Editing"}.get(step, "Recording")
@@ -816,7 +830,7 @@ class _Driver:
             return None, None
         if sched is None:
             return self.stage, self.step_at
-        if 1 not in sched.locked:
+        if 1 not in sched.locked or self.read_live:  # a live run's first audio is the opening's lock
             return "opening", sched.running.get(("opening",))
         return "first_piece", sched.running.get(("narrate", 1))
 
@@ -849,7 +863,7 @@ class _Driver:
         self.stage, self.label = self._where()
         done, total = status.progress(snapshot, len(self.outline["sections"]) if self.outline else self.f["sections"][1])
         step, started = self._opening_step()
-        first_by = status.first_audio_by(step, started, now, self.medians)
+        first_by = status.first_audio_by(step, started, now, self.medians, live=self.read_live)
         # The step's own end: the page and the guide drop the countdown once it passes, with no new
         # status (the scout and the outline write none while they run). Fixed while first_by is.
         step_by = None if first_by is None else started + float(self.medians[step])
@@ -896,12 +910,17 @@ class _Driver:
             self.player_seen = len(self.player.events)
         held = sum(h["seconds"] for h in sched.holds)
         words, seconds = saved.get("words", 0), saved.get("seconds", 0.0)
+        # A live run's reading is the live session's own recording, archived by its own step.
+        # (once voice/gpt_live/archive.py has cut it into chapter.mp3, a run started again keeps pointing at it)
+        audio = (None if self.read_live and not r.path("chapter_mp3").exists()
+                 else str(r.path("chapter_mp3").relative_to(r.root)))
+        heard = "reading, estimated (read live)" if self.read_live else f"audio ({audio})"
         cost = round(r.spent(), 2)
         if self.worked:  # a finished run started again did nothing: it is not ready a second time
             tl.event(T.READY, words=words, audio_seconds=seconds, holds=len(sched.holds), held_seconds=round(held, 1),
                      solo=list(sched.solo), cost_usd=cost)
             r.decide("done", f"Finished: {len(sched.sections)} sections, {words:,} words, {seconds / 60:.1f} minutes "
-                             f"of audio ({r.path('chapter_mp3').relative_to(r.root)}); {len(sched.holds)} hold(s), "
+                             f"of {heard}; {len(sched.holds)} hold(s), "
                              f"{held:.0f} s in all; {len(sched.solo)} solo edit(s); ${cost:.2f} spent in all.")
         for what, step in (("the listener's history", lambda: _record(cfg, r)),
                            ("the timings", lambda: T.update(cfg, r))):
@@ -911,11 +930,11 @@ class _Driver:
                 r.decide("after the chapter", f"Could not update {what}: {_error(e)}")
         snapshot = sched.snapshot()
         _, total = status.progress(snapshot, len(sched.sections))
-        overnight.write_status(r, cfg, "ready", audio=str(r.path("chapter_mp3").relative_to(r.root)), minutes_left=0,
+        overnight.write_status(r, cfg, "ready", audio=audio, minutes_left=0,
                                stages_done=total, stages_total=total, title=self.outline["title"],
                                **status.fields(r, self.outline, snapshot, self.titles, first_audio=True))
         base.write_json(base.path(r, "state"), snapshot)
-        print(f"\n  {r.name} is ready: {r.path('chapter_mp3').relative_to(r.root)}, {words:,} words, "
+        print(f"\n  {r.name} is ready: {audio or 'read live'}, {words:,} words, "
               f"{seconds / 60:.1f} min, ${cost:.2f}\n  Decisions: {r.path('decisions')}")
         return {"run": r.name, "words": words, "seconds": seconds, "sections": len(sched.sections),
                 "holds": [dict(h) for h in sched.holds], "solo": list(sched.solo), "cost_usd": cost,

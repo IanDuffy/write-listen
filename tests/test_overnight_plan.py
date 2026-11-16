@@ -400,3 +400,31 @@ def test_a_change_over_a_failed_card_keeps_the_notes_added_to_it(world, cfg):
                        now=TUESDAY_EVENING.replace(minute=30))
     assert [n["text"] for n in up2["notes_added"]] == ["More on the fishermen", "and the tides"]
     assert "- More on the fishermen" in planner.seed_text(up2)
+
+
+def test_a_conversations_chapter_plans_the_next_one_at_once_if_none_waits(tmp_path, cfg, monkeypatch):
+    """Ian (2026-11-15): the plan shouldn't wait for 18:00 when the first conversation's chapter is done.
+    A finished conversation chapter starts `plan --if-needed`; a nightly build's own finish doesn't."""
+    from overnight import planner
+    from stages import memory
+    from stages.common import Run
+    spawned = []
+    monkeypatch.setattr(planner, "spawn_if_needed", lambda cfg, root: spawned.append(root.name))
+    listener = profiles.create("sam")
+    cfg = {**cfg, "listener_dir": str(listener)}
+    talk = Run.open("octopus-hearts-20261115", create=True, runs_dir=listener / "chapters")
+    memory.record_chapter(cfg, talk)
+    night = Run.open("2026-11-16-tides", create=True, runs_dir=listener / "chapters")
+    (night.root / "00_source").mkdir()
+    (night.root / "00_source" / "up_next.json").write_text("{}")
+    memory.record_chapter(cfg, night)
+    assert spawned == ["octopus-hearts-20261115"]
+
+    s = profiles.settings(cfg, listener=listener)
+    assert planner.needs_plan(None, s) and planner.needs_plan({"status": "ready"}, s)
+    assert not any(planner.needs_plan({"status": st}, s) for st in ("planned", "building", "failed"))
+    calls = []
+    monkeypatch.setattr(planner, "plan", lambda cfg, listener, now=None, request=None: calls.append(1) or {"title": "x"})
+    assert planner.plan_if_needed(cfg, listener) == {"title": "x"}
+    profiles.write_json(listener / "up_next.json", {"id": "p", "status": "planned"})
+    assert planner.plan_if_needed(cfg, listener) is None and calls == [1]

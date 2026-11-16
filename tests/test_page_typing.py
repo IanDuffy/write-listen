@@ -55,7 +55,11 @@ def test_text_box_hidden_while_voice_works(cfg, tmp_path):
         page.click("#orb")
         page.wait_for_selector("body.voice")
         assert not page.is_visible("#say")  # talking: still no text box
-        assert page.is_visible("#toggle")   # the transcript is still there
+        # The transcript button shows once there is something in it (Ian, 2026-11-15), not before.
+        if not page.evaluate("document.getElementById('transcript').textContent.trim()"):
+            assert not page.is_visible("#toggle")
+            page.evaluate("document.getElementById('transcript').append('Hi.')")
+        page.wait_for_selector("#toggle", state="visible")
     finally:
         browser.close(), pw.stop()
 

@@ -174,8 +174,10 @@ def install(monkeypatch, sections: int = 4, **chain) -> tuple[Chain, FakeVoice]:
 
 
 def settings(cfg: dict, tmp_path) -> dict:
-    """Point everything personal or shared at the temp folder: the listener's memory, the timings file."""
+    """Point everything personal or shared at the temp folder: the listener's memory, the timings file.
+    The next chapter's voice is ElevenLabs, as these runs are (test_fast_live.py marks its runs live)."""
     cfg["listener_dir"] = str(tmp_path / "listener")
+    cfg["live"] = {**(cfg.get("live") or {}), "provider": "elevenlabs"}
     cfg["fast"]["timings_file"] = str(tmp_path / "timings.json")
     cfg["fast"]["tick_seconds"] = 0.02
     cfg["fast"]["exit_wait_seconds"] = 20  # a test whose fake never answers fails in seconds, not minutes

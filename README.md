@@ -353,6 +353,27 @@ All the knobs are under `research:` in `config.yaml`.
   The log records which model served it. Set the option to `null` to turn it
   off.
 
+## The live voice (GPT-Live)
+
+The page talks and reads through one OpenAI GPT-Live session (`config.yaml live:`; design, live
+results and costs in `voice/gpt_live/REPORT.md`). It needs `OPENAI_API_KEY` in `.env`, then:
+
+```bash
+.venv/bin/python server.py      # open http://127.0.0.1:8765 and tap the circle
+```
+
+The guide's instructions are the files in `voice/gpt_live/instructions/` (one per part, in name
+order); edit them and reload the page. Live checks (each costs a little, logged in
+`voice/gpt_live/build_costs.jsonl`):
+
+```bash
+.venv/bin/python -m voice.gpt_live.pagecheck smoke      # the real page in headless Chromium, a spoken listener
+.venv/bin/python -m voice.gpt_live persona              # simulated listeners by voice, graded by Opus
+.venv/bin/python -m voice.gpt_live archive <run>        # a live-read chapter's recording to the episode
+```
+
+`live.provider: elevenlabs` puts the ElevenLabs page and agents back.
+
 ## Tests
 
 ```bash

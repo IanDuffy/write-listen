@@ -42,6 +42,8 @@ def plist_text(listener: str | None = None) -> str:
     <array>{items}
     </array>
     <key>WorkingDirectory</key><string>{ROOT}</string>
+    <key>EnvironmentVariables</key>
+    <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
     <key>StartCalendarInterval</key>
     <array>{times}
     </array>
@@ -91,6 +93,8 @@ def main(argv: list[str]) -> int:
             p.add_argument("--mode", choices=["surprise", "continue", "topic"])
             p.add_argument("--topic", default="")
             p.add_argument("--notes", default="")
+            p.add_argument("--if-needed", action="store_true",
+                           help="only if no plan is waiting for the next build (after a conversation's chapter)")
     sc = sub.add_parser("schedule")
     sc.add_argument("action", choices=["show", "install", "remove"])
     sc.add_argument("--listener")
@@ -105,6 +109,10 @@ def main(argv: list[str]) -> int:
             print(json.dumps({k: out.get(k) for k in ("run", "state", "cost_usd")}))
         elif args.cmd == "status":
             print(json.dumps(runner.state(cfg, args.listener), indent=1, ensure_ascii=False))
+        elif args.cmd == "plan" and args.if_needed:
+            from . import planner
+            card = planner.plan_if_needed(cfg, runner.listener_folder(args.listener))
+            print(json.dumps({"planned": bool(card), "title": (card or {}).get("title")}, ensure_ascii=False))
         elif args.cmd == "plan":
             from . import planner
             request = ({"mode": args.mode or "topic", "topic": args.topic, "notes": args.notes, "session": None}

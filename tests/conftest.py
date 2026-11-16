@@ -18,6 +18,8 @@ def own_listeners(tmp_path, monkeypatch):
     monkeypatch.setattr(common, "LISTENERS_DIR", tmp_path / "_listeners")
     monkeypatch.setattr(common, "SHARED_DIR", tmp_path / "_shared")
     monkeypatch.delenv(common.LISTENER_ENV, raising=False)
+    from overnight import planner  # a finished chapter starts a planning process: never from a test
+    monkeypatch.setattr(planner, "spawn_if_needed", lambda cfg, root: None)
     return tmp_path / "_listeners"
 
 
@@ -25,6 +27,9 @@ def own_listeners(tmp_path, monkeypatch):
 def cfg():
     c = load_config()
     c["narration"]["voice_id"] = "voice_fake"
+    # The ElevenLabs page and agents are what these tests pin; tests of the live voice
+    # (tests/live/) set live.provider to gpt_live themselves.
+    c["live"]["provider"] = "elevenlabs"
     return c
 
 

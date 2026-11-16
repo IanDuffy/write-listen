@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from stages.common import ROOT, Run, StageError
+from stages.common import ROOT, Run, StageError, load_config
 
 from . import base
 
@@ -41,13 +41,16 @@ class Position(BaseModel):
     reason: Literal["end_of_audio", "skip"] | None = None
 
 
-def mode_args(r: Run, mode: str) -> list[str]:
+def mode_args(r: Run, mode: str, cfg: dict | None = None, live: bool = False) -> list[str]:
     """What `new <run> --unattended` needs added for this mode. A chapter started fast is marked
     fast here, when its seed is set: that moment is the zero of its timeline, and from it on the
-    folder is a fast run's whatever happens to the process (a seed lookup, Try again, add_note)."""
+    folder is a fast run's whatever happens to the process (a seed lookup, Try again, add_note).
+    It is marked to be read live only when a live session started it (`live`: the page's GPT-Live
+    conversation) and config.yaml's live.provider is gpt_live; a chapter from the typed chat or the
+    text box is narrated as before, so it can be played. A run already marked keeps its voice."""
     if mode != "fast":
         return []
-    base.mark_fast(r)
+    base.mark_fast(r, cfg=(cfg if cfg is not None else load_config()) if live else None)
     return ["--mode", "fast"]
 
 

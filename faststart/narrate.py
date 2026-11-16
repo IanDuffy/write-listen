@@ -46,8 +46,8 @@ CHARS_PER_WORD = 6  # a spoken word and its space, a little high (the 20-minute 
 class Piece:
     section: int      # 1-based
     index: int        # 0-based within the section
-    wav: Path         # speech only
-    mp3: Path         # pause, then speech
+    wav: Path | None  # speech only (None for a live run's paragraph: faststart/live.py)
+    mp3: Path | None  # pause, then speech
     seconds: float    # pause + speech, exactly as the section and the chapter are joined (the MP3 matches it)
     pause_ms: int     # silence before the speech
     chars: int

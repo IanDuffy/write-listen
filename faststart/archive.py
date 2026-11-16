@@ -13,6 +13,12 @@ chapter in the overnight layout, so the episode page and ask-by-voice open a fas
 
 Conversations during the chapter (questions and check-ins) are text in 12_asks/asides.jsonl, never
 audio: this step does not touch them, and the episode page shows each at the sentence it names.
+
+A live run (faststart/live.py) has no audio of its own: the reading is the live session's recording,
+archived by a step of its own. Its archive is the script, the brief and fast/archive.json with
+"live": true and the estimated seconds; no chapter.mp3, no timing, no episode build. Once the reading
+has been cut from the session recordings (voice/gpt_live/archive.py, which stitches with _assemble),
+fast/archive.json says "estimated": false and this step leaves it as it is.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from episode import timing
 from stages import tts
 from stages.common import MARKER, PATHS, Run, StageError, entry_numbers, join_script_segments
 
-from . import base, narrate, status
+from . import base, live, narrate, status
 
 STAGE = "fast_archive"
 LENGTH_TOLERANCE = 0.25  # seconds between the stitched chapter and the sum of its sections
@@ -82,11 +88,12 @@ def _sections(r: Run, so_far: bool = False) -> list[tuple[int, str, list[narrate
     """(number, locked text, pieces) for every section of the outline: all must be locked and narrated,
     with every piece still on disk. With so_far, the sections that are, in order from the first."""
     outline = _outline(r)
+    voice = live.module(r)
     out = []
     for n in ([s["n"] for s in outline["sections"]] if outline else itertools.count(1)):
-        ps = narrate.pieces(r, n) if r.segment_path(n).exists() and narrate.narrated(r, n) else []
+        ps = voice.pieces(r, n) if r.segment_path(n).exists() and voice.narrated(r, n) else []
         manifest = base.read_json(base.section_dir(r, n) / "section.json") or {}
-        if not ps or len(ps) != manifest.get("pieces"):
+        if not ps or (voice is narrate and len(ps) != manifest.get("pieces")):
             if outline and not so_far:
                 raise StageError(f"Section {n} is not locked and narrated in full yet: the archive needs "
                                  "every section.")
@@ -126,6 +133,10 @@ def rolling(r: Run, cfg: dict) -> dict | None:
     if (base.path(r, "work") / "archive.json").exists():
         return base.read_json(r.root / timing.EPISODE_DIR / "timing.json")
     write_brief(r)
+    if base.is_live(r):  # no audio, so no timing: the script so far, for anything that reads it
+        if so_far := _sections(r, so_far=True):
+            base.write_atomic(r.path("script_final"), join_script_segments([(n, text) for n, text, _ in so_far]))
+        return None
     sections = []
     for sec in _sections(r, so_far=True):
         if narrate.section_timing(r, sec[0]) is None:
@@ -180,6 +191,13 @@ def run(r: Run, cfg: dict, build_episode: bool = True) -> dict:
     layout = _offsets(sections)
     result_path = base.path(r, "work") / "archive.json"
     saved = base.read_json(result_path)
+    if base.is_live(r):
+        if saved and saved.get("live") and saved.get("estimated") is False and r.path("chapter_mp3").exists():
+            return saved  # cut from the recordings (voice/gpt_live/archive.py): its seconds are real
+        if not (saved and saved.get("live") and saved.get("sections") == layout and r.path("script_final").exists()):
+            saved = _assemble_live(r, sections, layout)
+            base.write_json(result_path, saved)
+        return saved
     whole = (r.path("chapter_mp3").exists() and r.path("script_final").exists()
              and (r.root / timing.EPISODE_DIR / "timing.json").exists())
     if not (saved and saved.get("sections") == layout and whole):
@@ -236,6 +254,18 @@ def _assemble(r: Run, cfg: dict, sections, layout: list[dict]) -> dict:
            "timing": how})
     words = sum(len(x["words"]) for s in t["segments"] for x in s["sentences"])  # as heard: no [pause], no markers
     return {"seconds": round(duration, 3), "sections": layout, "words": words, "episode": False, "timing": how}
+
+
+def _assemble_live(r: Run, sections, layout: list[dict]) -> dict:
+    """A live run's archive: the script and the brief. Its seconds are the paragraphs' estimates."""
+    base.write_atomic(r.path("script_final"), join_script_segments([(n, text) for n, text, _ in sections]))
+    write_brief(r)
+    seconds = round(sum(x["seconds"] for x in layout), 3)
+    words = sum(len(p.text.split()) for _, _, ps in sections for p in ps)  # as read: no [pause], no markers
+    r.log({"stage": STAGE, "label": "archive (read live: no audio)", "audio_seconds": seconds,
+           "sections": len(sections)})
+    return {"seconds": seconds, "sections": layout, "words": words, "episode": False, "timing": None,
+            "live": True, "estimated": True}
 
 
 def write_brief(r: Run) -> bool:
