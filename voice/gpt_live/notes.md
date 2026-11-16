@@ -21,6 +21,9 @@ minutes): `offer_line` in conversation and `ready_line_resting` with the mic off
 `opening_words` as speakable context. In a question mid-chapter, `unanswered` after a silence when the guide
 only stalled, `silence` when it answered. `asking` is the first message of a session opened by a tap while
 paused (pause closes the session); `continue` is play's.
+After Ian's fifth note (2026-11-15): when the chapter starts the guide steps back by default (`started_step_back`) or, if
+the listener has been chatting easily, offers to keep them company (`started_company`). Stepping back closes the session,
+so a rest ends in a new one: `back_from_rest` (a tap), `listening_again` (a voice), `ready_back` (the chapter ready).
 Placeholders in single braces ({title}, {text}) are filled by the page.
 ---
 opened: Say hello now: only a warm hello of two to four words, in your own words, different every time. Nothing else yet: no name, no question. Then wait for them.
@@ -54,3 +57,8 @@ moved: [The listener moved the chapter to another place. Stop now, even mid-sent
 offer_line: Your chapter's ready: "{title}". Want to hear it now?
 ready_line_resting: Your chapter's ready whenever you are. Tap play when you'd like it.
 asking: This session carries on the same conversation. The chapter is paused and the listener is about to ask you something: listen, and answer as your rules for questions say.
+started_step_back: [Their chapter is under way; the opening should be ready in {when}. In a sentence or two, in your own words: say so, that you'll step back for a bit while you research it unless there's anything else they'd like to chat about, and that while you're away they can speak up or tap your circle any time to talk. Then say nothing more.]
+started_company: [Their chapter is under way; the opening should be ready in {when}. They've been enjoying the chat: say so in a sentence, that you'll research in the background and you're happy to keep talking, or to step back if they'd rather have quiet. Then carry on the conversation.]
+back_from_rest: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener has tapped to talk. Let them know you're here in a word or two, and listen.
+listening_again: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener may be about to speak to you. Say nothing first: listen, and answer only if they talk to you.
+ready_back: This session carries on the same conversation: you had stepped back while their chapter was made, and it's ready now. Say nothing until the app gives you the words to say.

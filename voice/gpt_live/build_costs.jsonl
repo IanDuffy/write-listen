@@ -485,3 +485,51 @@
 {"t": "2026-11-15T15:13:29", "what": "pagecheck:20261115-150915-player", "usd": 0.0866, "seconds": 95.0, "sessions": 4}
 {"t": "2026-11-15T15:17:28", "what": "pagecheck:20261115-151356-player", "usd": 0.1145, "seconds": 118.0, "sessions": 3}
 {"t": "2026-11-15T15:23:21", "what": "pagecheck:20261115-152047-player", "usd": 0.1299, "seconds": 134.0, "sessions": 3}
+{"t": "2026-11-16T00:00:52", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.00122}
+{"t": "2026-11-16T00:01:02", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001248}
+{"t": "2026-11-16T00:01:20", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001466}
+{"t": "2026-11-16T00:01:21", "what": "tts listener line", "seconds": 4.1, "backend_tokens": null, "usd": 0.001025}
+{"t": "2026-11-16T00:01:42", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001712}
+{"t": "2026-11-16T00:01:44", "what": "tts listener line", "seconds": 6.85, "backend_tokens": null, "usd": 0.001712}
+{"t": "2026-11-16T00:02:02", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001614}
+{"t": "2026-11-16T00:02:30", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001968}
+{"t": "2026-11-16T00:02:31", "what": "tts listener line", "seconds": 4.15, "backend_tokens": null, "usd": 0.001038}
+{"t": "2026-11-16T00:02:51", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002234}
+{"t": "2026-11-16T00:02:54", "what": "tts listener line", "seconds": 6.8, "backend_tokens": null, "usd": 0.0017}
+{"t": "2026-11-16T00:03:14", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002304}
+{"t": "2026-11-16T00:03:15", "what": "tts listener line", "seconds": 5.05, "backend_tokens": null, "usd": 0.001262}
+{"t": "2026-11-16T00:03:29", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002298}
+{"t": "2026-11-16T00:03:31", "what": "tts listener line", "seconds": 2.9, "backend_tokens": null, "usd": 0.000725}
+{"t": "2026-11-16T00:04:05", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002766}
+{"t": "2026-11-16T00:04:13", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002962}
+{"t": "2026-11-16T00:04:15", "what": "tts listener line", "seconds": 8.8, "backend_tokens": null, "usd": 0.0022}
+{"t": "2026-11-16T00:04:30", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002698}
+{"t": "2026-11-16T00:04:52", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002838}
+{"t": "2026-11-16T00:04:53", "what": "tts listener line", "seconds": 3.35, "backend_tokens": null, "usd": 0.000837}
+{"t": "2026-11-16T00:05:20", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.00309}
+{"t": "2026-11-16T00:05:21", "what": "tts listener line", "seconds": 3.0, "backend_tokens": null, "usd": 0.00075}
+{"t": "2026-11-16T00:05:45", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.003284}
+{"t": "2026-11-16T00:05:46", "what": "tts listener line", "seconds": 4.05, "backend_tokens": null, "usd": 0.001012}
+{"t": "2026-11-16T00:05:57", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.003238}
+{"t": "2026-11-16T00:06:20", "what": "gpt-live persona reserved", "seconds": 335.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 46228, "output": 209, "cached": 37936}, "usd": 0.2904}
+{"t": "2026-11-16T00:06:26", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.001494}
+{"t": "2026-11-16T00:06:28", "what": "tts listener line", "seconds": 10.95, "backend_tokens": null, "usd": 0.002737}
+{"t": "2026-11-16T00:06:50", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.001466}
+{"t": "2026-11-16T00:06:52", "what": "tts listener line", "seconds": 5.05, "backend_tokens": null, "usd": 0.001262}
+{"t": "2026-11-16T00:07:09", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.001808}
+{"t": "2026-11-16T00:07:12", "what": "tts listener line", "seconds": 9.45, "backend_tokens": null, "usd": 0.002363}
+{"t": "2026-11-16T00:07:32", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.001996}
+{"t": "2026-11-16T00:07:34", "what": "tts listener line", "seconds": 11.05, "backend_tokens": null, "usd": 0.002763}
+{"t": "2026-11-16T00:08:02", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.002386}
+{"t": "2026-11-16T00:08:05", "what": "tts listener line", "seconds": 14.25, "backend_tokens": null, "usd": 0.003562}
+{"t": "2026-11-16T00:08:44", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.00283}
+{"t": "2026-11-16T00:08:47", "what": "tts listener line", "seconds": 12.8, "backend_tokens": null, "usd": 0.0032}
+{"t": "2026-11-16T00:09:12", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.002578}
+{"t": "2026-11-16T00:09:14", "what": "tts listener line", "seconds": 7.2, "backend_tokens": null, "usd": 0.0018}
+{"t": "2026-11-16T00:09:43", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.002864}
+{"t": "2026-11-16T00:09:44", "what": "tts listener line", "seconds": 6.9, "backend_tokens": null, "usd": 0.001725}
+{"t": "2026-11-16T00:10:20", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.00302}
+{"t": "2026-11-16T00:10:21", "what": "tts listener line", "seconds": 7.75, "backend_tokens": null, "usd": 0.001938}
+{"t": "2026-11-16T00:10:41", "what": "claude live_listener joker", "seconds": null, "backend_tokens": null, "usd": 0.003346}
+{"t": "2026-11-16T00:10:43", "what": "tts listener line", "seconds": 8.85, "backend_tokens": null, "usd": 0.002212}
+{"t": "2026-11-16T00:11:04", "what": "gpt-live persona joker", "seconds": 280.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 22549, "output": 147, "cached": 14712}, "usd": 0.242641}

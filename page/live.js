@@ -39,7 +39,9 @@
   const LEAD_IN = new RegExp(S.lead_in, "i");
   const READY_ASK = new RegExp(S.ready_ask, "i");           // the listener asking for the ready chapter outright
   const MIC_OFF = new RegExp(S.mic_off_ask, "i");           // "turn off your mic": then only a tap wakes it
-  const STALL = new RegExp(S.stall, "i");                   // "Let me give that a thought": not an answer (the whole line)
+  const STALL = new RegExp(S.stall, "i");
+  const STEPPING = /\b(step (back|away)|tap (my|the) (circle|dot)|speak up)\b/i;  // the guide's step-back line, question or not
+  const DECLINE = /^\W*(no|nope|nah|okay|ok|sure|thanks|thank you|sounds good|go ahead|i'?m good|all good|perfect|great|not really|that'?s fine)\b/i;                   // "Let me give that a thought": not an answer (the whole line)
   const ACK = /^\W*(ok(ay)?|yeah|yes|sure|right|alright|go ahead|go on|mm+[- ]?hmm|uh[- ]huh|got it|of course)\W*$/i;  // nor a bare "Okay."               // the guide leading into the chapter
   const WPS = S.words_per_second || 2.5;
   const $ = (id) => document.getElementById(id);
@@ -157,8 +159,9 @@
     if (!resume) newConversation();
     L.phase = "connecting";
     render();
+    const sayOnly = resume === "ready";  // only to say the chapter is ready: no mic, never on (Ian asked for it off)
     try {
-      if (!L.stream) {
+      if (!L.stream && !sayOnly) {
         L.stream = await navigator.mediaDevices.getUserMedia(
           { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
         L.mic = L.stream.getAudioTracks()[0];
@@ -167,19 +170,30 @@
     } catch (e) {
       note("No microphone, so let's type instead.");
       if (resume && resume.startsWith("paused")) { notLive(resume); render(); }
+      else if (resume) { L.phase = "resting"; render(); }
       return false;
     }
     if (mine !== L.epoch) { if (!L.pc && L.phase !== "connecting") notLive(null); return true; }
     const pc = new RTCPeerConnection();
     L.pc = pc;
     pc.ontrack = (e) => { remote.srcObject = e.streams[0]; meters.output(e.streams[0]); };
-    pc.addTrack(L.mic, L.stream);
+    if (L.mic) {
+      if (sayOnly) L.mic.enabled = false;
+      pc.addTrack(L.mic, L.stream);
+    } else pc.addTransceiver("audio", { direction: "sendrecv" });  // no mic at all: it only speaks
     const dc = pc.createDataChannel("oai-events");
     L.dc = dc;
     // Only the current session's events count: a closed one's last words (errors, its session.closed) once
     // ended the new session play had just opened (live check after Ian's third test).
     dc.onmessage = (e) => {
-      if (dc !== L.dc) return;
+      if (dc !== L.dc) {  // a session being let go of: only its close and its usage count matter now
+        try {
+          const m = JSON.parse(e.data);
+          if (m.usage && m.usage.seconds != null) dc.seconds = m.usage.seconds;
+          if (m.type === "session.closed") dc.closedAt = now();
+        } catch (err) { /* not ours to read */ }
+        return;
+      }
       try { onEvent(JSON.parse(e.data)); } catch (err) { mark("bad-event", String(err)); }
     };
     pc.onconnectionstatechange = () => {
@@ -210,26 +224,29 @@
       note(err.message || "Voice couldn't start.");
       L.phase = resume && resume.startsWith("paused") ? "paused" : resume ? "resting" : "idle";
       if (L.phase === "paused" || L.phase === "idle") notLive(resume);
+      if (L.phase === "resting") { L.restAt = now(); setTimeout(() => { if (L.phase === "resting") listenForWake(); }, 1000); }
       render();
       return false;
     }
-    L.started = false; L.muted = false;
-    if (L.mic) L.mic.enabled = true;  // kept from before a drop, it may still be disabled
+    L.started = false; L.muted = sayOnly;
+    if (L.mic) L.mic.enabled = !sayOnly;  // kept from before a drop, it may still be disabled
     const ok = await until(() => L.started || mine !== L.epoch, 10000);
     if (mine !== L.epoch) return true;
     if (!ok) {
-      note("Voice couldn't start.");
+      note(resume ? "Voice couldn't come back. Tap to try again." : "Voice couldn't start.");
       reportUsage();
       hangUp();
-      L.phase = "idle";
+      L.phase = resume ? "resting" : "idle";
       notLive(resume);
+      if (L.phase === "resting") { L.restAt = now(); setTimeout(() => { if (L.phase === "resting") listenForWake(); }, 1000); }
       render();
       return false;
     }
     if (!resume) L.convAt = now();
-    L.wokeAt = 0;
-    L.phase = resume && resume.startsWith("paused") ? "paused" : L.chapter && L.readStarted && (!L.finished || L.replaying) ? "aside" : "talk";
+    L.wokeAt = 0; L.stepBackAt = 0; L.restFrom = null;
+    L.phase = resume && resume.startsWith("paused") ? "paused" : resume === "ready" ? "resting" : L.chapter && L.readStarted && (!L.finished || L.replaying) ? "aside" : "talk";
     if (L.phase === "paused") L.pauseAt = now();
+    if (L.phase === "resting") { L.muted = false; mute(true); }  // back only to say the chapter is ready: muted, and the session told so
     if (L.phase === "aside" && resume !== "section boundary") {  // back after a drop: an aside, so resume_chapter can go on
       L.aside = { t0: now(), at: L.dropAt ? { id: L.dropAt.id, sentence: L.dropAt.sentence } : null,
                   lastGuide: 0, lastListener: 0, silenced: false, lines: [] };
@@ -257,7 +274,7 @@
     } else if (resume && resume !== "section boundary" && !L.readStarted && L.cont && L.cont.begun && L.own === L.cont.run) {
       const c = L.cont;  // dropped before the picked-up chapter went on: go on from its place, not its opening
       afterGuide(() => pickUp(c), S.lead_in_max_ms, 5000);
-    } else if (resume !== "section boundary" && !L.readStarted && !(L.cont && L.cont.begun) && mine_(L.status) && (L.status.sections || []).some((x) => x.n === 1 && x.text)) {
+    } else if (!["section boundary", "ready", "wake"].includes(resume) && !L.readStarted && !(L.cont && L.cont.begun) && mine_(L.status) && (L.status.sections || []).some((x) => x.n === 1 && x.text)) {
       // This conversation's opening was written (or offered) while the connection was down: offer it again
       // after the guide's line (the new session didn't hear the offer).
       if (!L.wantPlay) { L.offer = null; afterGuide(() => beginChapter(), S.lead_in_max_ms); }
@@ -274,6 +291,7 @@
     L.runEnded = false; L.leading = false; L.lastAt = null; L.stalled = null; L.lastGuideLine = ""; L.lastGuideAt = 0; L.lastListenerAt = 0;
     L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
+    L.heardLines = 0; L.recentWords = []; L.stepBackAt = 0;
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
   }
@@ -325,7 +343,7 @@
     }
     note("The connection dropped. Tap to talk again.");
     mute(true);  // the device stays open for the reconnect, but nothing is heard
-    L.phase = "resting"; L.restAt = now();
+    L.phase = "resting"; L.restAt = now(); L.restFrom = "drop";
     render();
   }
 
@@ -428,7 +446,7 @@
       if (text && !tail) {
         note(text, "guide");
         L.lastGuideLine = text; L.lastGuideAt = t;
-        guideSaid(text, t);
+        guideSaid(text, t, L.lineAt || t);
         // A promise to start never counts in a line that asks (a pitch or an offer: the listener hasn't agreed
         // yet), and is dropped once the guide asks something else.
         if (["talk", "resting"].includes(L.phase) && !L.own && !L.startCalled && !text.includes("?") && START_PROMISE.test(text)) L.promiseAt = L.promiseAt || t;
@@ -455,6 +473,7 @@
       if (text) {
         note("You: " + text, "you");
         L.lastListenerAt = t;
+        countLine(text);
         listenerSaid(text, t);
         if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
         if (L.aside || L.wait) (L.aside || L.wait).lines.push({ who: "listener", text });
@@ -498,6 +517,12 @@
         if (W.sounds >= 2 || W.total >= ((S.wake && S.wake.max_sound_wakes) || 8)) W.off = true;
         rest();
       }
+    }
+    if (L.stepBackAt && L.phase === "talk" && t - L.stepBackAt > (S.step_back_wait_secs || 12) * 1000 && !L.inp && !L.out && !L.pending
+        && t - L.spokeAt > 2000 && t - L.heardAt > 3000) {
+      L.stepBackAt = 0;
+      mark("rest-said", "after start, unsaid");
+      rest();
     }
     if (L.dc && L.dc.readyState === "open") conversationCues(t);
     if (L.phase === "paused" && L.pc && !L.closing) closeLive();  // never open while paused (a session that came up meanwhile)
@@ -549,8 +574,15 @@
 
   // --- cues in what was said (Ian's second test, 2026-11-15) -------------------------------------------
   // Delegation misses tools (step_back never came when he asked for quiet), so the page also reads the lines.
-  function guideSaid(text, t) {
+  function guideSaid(text, t, began = t) {
     const asks = text.includes("?");
+    // Its line about stepping back (one begun after the note, not an "I'm on it" already under way): then the mic off.
+    if (L.stepBackAt && (began > L.stepBackAt || L.outAt - L.stepBackAt > 1500) && L.phase === "talk" && !L.pending
+        && (!asks || STEPPING.test(text))) {
+      L.stepBackAt = 0;
+      mark("rest-said", "after start");
+      return restSoon(true);
+    }
     // Quiet: the guide's first line after the listener asked for it (or its own plain parting words) says
     // whether it is stepping back; a line that asks something means it isn't. The mic goes off once it has
     // finished, step_back or not, unless the listener speaks first.
@@ -571,9 +603,18 @@
     }
   }
 
+  function countLine(text) {  // for engaged(): spoken or typed
+    L.heardLines = (L.heardLines || 0) + 1;
+    L.recentWords = (L.recentWords || []).concat([text.split(/\s+/).length]).slice(-4);
+  }
+
   function listenerSaid(text, t) {
     // An ask for quiet waits for the guide's next line; anything else said clears it.
     L.quietAt = ["talk", "checkin"].includes(L.phase) && QUIET.test(text) ? t : 0;
+    // About to step back after the start, and they say something more than "okay" or "no, go ahead": they'd like to talk.
+    const talk = !L.quietAt && text.split(/\s+/).length > 3 && !DECLINE.test(text);
+    if (talk) L.talkedAt = t;
+    if (L.stepBackAt && talk) { L.stepBackAt = 0; mark("step-back-cancelled"); }
     if (MIC_OFF.test(text)) L.micOffAt = t;
     // Their answer to the guide's offer (the first thing they say after it): a short yes, with no "not yet"
     // in it, starts the reading once the guide's few words of lead-in are said (start_reading usually comes
@@ -598,9 +639,13 @@
   }
 
   // Rest once the guide has finished, unless the listener starts speaking first (a parting line they answer).
-  function restSoon() {
+  // `lenient` (the step back after a start): only real talk cancels it, not "okay, thanks" or "no, go ahead".
+  function restSoon(lenient = false) {
     const at = now();
-    afterGuide(() => { if (L.heardAt > at || L.inp) { mark("rest-cancelled"); return; } rest(); }, 6000, 1500);
+    afterGuide(() => {
+      if (L.inp || (lenient ? L.talkedAt > at : L.heardAt > at)) { mark("rest-cancelled"); return; }
+      rest();
+    }, 6000, 1500);
   }
 
   // A check-in they'd rather spend in quiet: the mic off until the next part is ready (arrived() reads on).
@@ -652,7 +697,7 @@
   async function playOffer(how) {
     if (L.pc) return startFromOffer(how);
     L.wantPlay = true;
-    const ok = await connect("tap");
+    const ok = await connect("play");  // told to say nothing: the reading follows
     L.wantPlay = false;
     if (ok && L.pc) afterGuide(() => startFromOffer(how), S.lead_in_max_ms, 2500);
   }
@@ -714,18 +759,59 @@
       L.own = own;
       note("Making your chapter…");
       if (L.status.run === own) onStatus(L.status);  // its status may have come first
+      afterStart(out);
     }
   }
 
-  function rest() {  // the guide stepped back: the mic off, the session open; a tap, a voice or the chapter brings it back
+  // Started (Ian's fifth note): by default the guide steps back while it researches (the mic off, GPT-Live
+  // closed), saying they can speak up or tap the circle any time; if they've been chatting easily, it offers
+  // to keep them company while it works instead. Engaged: engaged_lines lines so far, their last few
+  // averaging engaged_words words or more.
+  function engaged() {
+    const r = L.recentWords || [];
+    const words = r.length ? r.reduce((a, b) => a + b, 0) / r.length : 0;
+    return (L.heardLines || 0) >= S.engaged_lines && (!S.engaged_words || words >= S.engaged_words);
+  }
+
+  function afterStart(out) {
+    const m = out && out.first_audio_minutes;
+    const when = m ? `about ${m} minute${m === 1 ? "" : "s"}` : "a few minutes";
+    if (engaged()) {
+      mark("after-start", "company");
+      return instruct(N.started_company.replace("{when}", when));
+    }
+    mark("after-start", "step back");
+    L.stepBackAt = now();
+    instruct(N.started_step_back.replace("{when}", when));
+  }
+
+  // The guide stepped back: the mic off and GPT-Live closed (it bills per connected minute; Ian's fifth note:
+  // "no point wasting GPT-Live credits"). A voice (wake.js, on this machine), a tap or the chapter being ready
+  // opens a new session in the same conversation.
+  function rest() {
     if (L.phase !== "talk") return;
+    // A tool call in flight (start_chapter, say) would be lost with the session: wait for it, up to 8 s.
+    if (L.thinking && (!L.restWaitAt || now() - L.restWaitAt < 8000)) {
+      L.restWaitAt = L.restWaitAt || now();
+      return setTimeout(rest, 400);
+    }
+    L.restWaitAt = 0; L.stepBackAt = 0;
+    // It said it would start the chapter and hasn't: remind it while the session is still open, then rest.
+    if (L.promiseAt && !L.startCalled && !L.own && L.nudges < 2 && L.dc && L.dc.readyState === "open") {
+      L.promiseAt = 0; L.nudges++;
+      mark("start-nudge", "before rest");
+      instruct(N.start_nudge);
+      return afterGuide(rest, S.lead_in_max_ms, 4000);
+    }
     mute(true);
     L.phase = "resting"; L.restAt = now(); L.wokeAt = 0;
     quietPost("/api/live/line", { session: L.session, who: "page", text: "[The guide stepped back.]" });
     // They asked outright for the mic off: no waking on a sound this time, only a tap (Ian's fourth test: it
-    // kept coming back while he talked to his son). Otherwise the listener starts after a grace period.
+    // kept coming back while he talked to his son), and the mic is released. Otherwise the local listener
+    // starts after a grace period on the mic kept here (nothing of it is sent anywhere).
     W.tapOnly = !!(L.micOffAt && now() - L.micOffAt < 30000);
     if (W.tapOnly) mark("tap-only");
+    closeLive(!W.tapOnly);
     const rest_ = L.restAt;
     setTimeout(() => { if (L.phase === "resting" && L.restAt === rest_) listenForWake(); }, Math.max(800, (S.wake_grace_secs || 0) * 1000));
     render();
@@ -740,7 +826,7 @@
   const W = { ctx: null, track: null, token: 0, sounds: 0, total: 0, off: false };
   async function listenForWake() {
     stopWake();
-    if (W.off || W.tapOnly || !L.mic || !L.pc || L.phase !== "resting") return;
+    if (W.off || W.tapOnly || !L.mic || L.phase !== "resting") return;
     const token = W.token;
     if (now() - L.spokeAt < 1500 || L.out) {  // the guide still speaking (its voice would wake it, or set the room's level)
       setTimeout(() => { if (token === W.token && L.phase === "resting") listenForWake(); }, 500);
@@ -774,16 +860,21 @@
     W.ctx = W.track = null;
   }
 
-  function soundWake() {
-    if (L.phase !== "resting" || !L.pc) return stopWake();
+  async function soundWake() {
+    if (L.phase !== "resting" || L.closing) return stopWake();
     if (now() - L.spokeAt < 1500) return listenForWake();  // its own voice: the detector fires once, so start it afresh
     stopWake();
     if (chapterPlayer() || libraryLive()) return;  // the library's chapter or its guide: not the listener
     W.sounds++; W.total++;
     mark("sound-wake", W.sounds);
     chime();
-    L.phase = "talk"; L.restAt = 0; L.wokeAt = now();
-    mute(false);  // no note: the guide listens, and answers if it was them
+    if (!L.pc) {  // a new session, told only to listen (it may not have been the listener)
+      if (!(await connect("wake")) || L.phase !== "talk") return;
+    } else {
+      L.phase = "talk"; L.restAt = 0;
+      mute(false);
+    }
+    L.wokeAt = now();
     render();
   }
 
@@ -1000,7 +1091,27 @@
     quietPost("/api/fast/position", { run: L.run, state, section: n, piece: at ? at.i : 0, t, chapter_t: total, ...extra });
   }
 
+  // Ready while the guide was away (resting, GPT-Live closed): a session opens just to say so (the mic stays
+  // off), then closes again; play, the circle or a voice brings it back.
+  async function readyWhileAway() {
+    if (L.readyConnecting || L.readStarted || L.offer) return;  // a rest's old session still closing doesn't matter: it's let go of
+    L.readyConnecting = true;
+    try {
+      if (!(await loadChapter()) || !sectionLocked(1) || L.phase !== "resting" || L.pc) return;
+      if (!(await connect("ready")) || L.phase !== "resting") return;
+      L.offer = { at: now(), askedAt: 0, reminded: true };
+      mark("offer", "away");
+      say(N.ready_line_resting);
+      afterGuide(() => {
+        if (L.phase !== "resting" || L.readStarted || !L.pc) return;
+        closeLive(!W.tapOnly);
+        if (!W.tapOnly) setTimeout(() => { if (L.phase === "resting") listenForWake(); }, 1500);
+      }, 9000, 4000);
+    } finally { L.readyConnecting = false; }
+  }
+
   async function beginChapter() {
+    if (L.phase === "resting" && !L.pc && L.session && !L.readStarted && !L.offer && (mine_(L.status) || L.run === L.own)) return readyWhileAway();
     if (L.readStarted || L.leading || L.offer || !L.session || !L.dc || L.dc.readyState !== "open" || !["talk", "resting"].includes(L.phase)) return;
     if (!mine_(L.status) && L.run !== L.own) return;  // only this conversation's chapter
     if (!(await loadChapter()) || !sectionLocked(1)) return;
@@ -1390,19 +1501,26 @@
 
   // The session closed and the mic released; the conversation (server side) goes on. The audio is cut at once
   // (the mic track off, the voice muted); the session's own close waits a moment for its last usage count.
-  async function closeLive() {
-    if (L.closing) return;
-    L.closing = true;
+  // The page lets go of the session at once (so a tap, play or the chapter in the next moment opens a new one,
+  // never acting on this one); its close, and its last usage count, are waited for on the side.
+  async function closeLive(keepMic = false) {
+    const pc = L.pc, dc = L.dc;
     if (L.mic) L.mic.enabled = false;
     L.muted = true;
-    const dc = L.dc;
+    if (!keepMic && L.stream) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; }
+    if (!pc && !dc) return;
+    const snap = { session: L.session, live_id: L.liveId, seconds: L.seconds, backend: L.backend.model ? { ...L.backend } : null };
+    reported = L.liveId;  // reported below, once
+    L.seconds = 0; L.backend = { model: null, input: 0, output: 0, cached: 0 };
+    L.pc = null; L.dc = null; L.thinking = false;
+    L.closing = true;
     if (dc && dc.readyState === "open") {
-      send("session.close");
-      await until(() => L.closed || dc.readyState !== "open", 1500);
+      try { dc.send(JSON.stringify({ type: "session.close", event_id: `p${++seq}_${now() % 1e7}` })); } catch (e) { /* closed */ }
+      await until(() => dc.closedAt || dc.readyState !== "open", 1500);
     }
-    reportUsage();
-    if (L.dc === dc) hangUp();
-    if (L.stream && !L.pc) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; }
+    if (dc && dc.seconds != null) snap.seconds = dc.seconds;
+    if (snap.session && snap.live_id) quietPost("/api/live/usage", snap);
+    try { if (pc) pc.close(); } catch (e) { /* closed */ }
     L.closing = false;
     setTimeout(() => { remote.volume = 1; }, 300);  // ducked for the stop; the next session's voice is heard
   }
@@ -1599,7 +1717,10 @@
     const title = (L.chapter && L.chapter.title) || "Your chapter";
     switch (L.phase) {
       case "connecting": return "Connecting…";
-      case "resting": return L.offer ? `${title} is ready · tap to play` : "Tap to talk";
+      case "resting":
+        if (L.offer) return `${title} is ready · tap to play`;
+        if (mine_(s) && ["problem", "stopped"].includes(L.status.state)) return L.status.message || "Your chapter stopped.";
+        return "Tap to talk";
       case "leadin": return title;
       case "reading": return "Tap to ask a question";
       case "aside": return "Listening · tap to go back to the chapter";
@@ -1624,7 +1745,7 @@
       L.thinking ? "thinking" : "", L.phase === "resting" ? "resting" : "", L.typing ? "typing" : "",
       L.phase !== "idle" ? "talking" : "", offerShown() ? "offer" : ""].filter(Boolean).join(" ");
     $("line").textContent = lineText();
-    const voiceWake = L.phase === "resting" && L.pc && !W.off && !W.tapOnly, ready = L.offer && !L.readStarted;
+    const voiceWake = L.phase === "resting" && L.mic && !W.off && !W.tapOnly, ready = L.offer && !L.readStarted;
     $("how").textContent = voiceWake ? (ready ? "Say something, or tap to play" : "Say something, or tap, to talk") : (ready ? "Tap to play" : "Tap to talk");
     renderRing();
     renderPlayer();
@@ -1763,9 +1884,14 @@
       if (!(await closed()) || !(await connect("paused-ask")) || L.phase !== "paused") return;
       ask(at);
     }
+    if (L.phase === "resting" && !L.pc && L.session) {  // stepped back (GPT-Live closed): typing brings it back
+      W.sounds = 0; W.total = 0; W.off = false;
+      if (!(await connect(L.restFrom === "drop" ? "dropped" : "tap"))) return typedChat(text);
+    }
     if (!L.pc) return typedChat(text);
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
     L.heardAt = L.inAt = L.lastListenerAt = now();  // typed counts as said for every cue
+    countLine(text);
     listenerSaid(text, now());
     if (L.phase === "waiting" && L.wait) { L.wait.checkedIn = true; L.phase = "checkin"; }
     if (L.phase === "reading") ask();
@@ -1784,7 +1910,7 @@
       case "talk": return offerShown() ? startFromOffer("tap") : rest();  // the mic off (tap to talk again)
       case "resting":
         if (L.offer && !L.readStarted) return playOffer("tap");  // "… is ready · tap to play"
-        if (!L.pc) { W.sounds = 0; W.total = 0; W.off = false; return connect("tap"); }
+        if (!L.pc) { W.sounds = 0; W.total = 0; W.off = false; return connect(L.restFrom === "drop" ? "dropped" : "tap"); }
         return wake();
       case "reading": return ask();
       case "paused": {  // ask from where it paused, in a new session (the pause closed the last one)

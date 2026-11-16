@@ -677,3 +677,15 @@ def test_the_live_wake_settings_are_stricter_than_the_old_pages(app, cfg):
     settings = json.loads(js.split("const S = ", 1)[1].split(";  // config", 1)[0])
     assert settings["wake"]["need_ms"] == cfg["live"]["page"]["wake"]["need_ms"] > cfg["voice"]["wake"]["need_ms"]
     assert settings["wake"]["ratio"] == cfg["voice"]["wake"]["ratio"]  # the rest kept from voice.wake
+
+
+
+def test_a_rests_end_opens_a_session_told_why(app, cfg):
+    """Stepping back closes the session (Ian's fifth note), so each way back is a new session with its own note."""
+    c, offers, _ = app
+    sid = c.post("/api/live/start", json={"sdp": "OFFER"}).json()["session"]
+    notes = S.notes()
+    for reason, key in (("tap", "back_from_rest"), ("wake", "listening_again"), ("ready", "ready_back"),
+                        ("play", "continue"), ("dropped", "returned")):
+        c.post("/api/live/resume", json={"session": sid, "sdp": "O", "reason": reason})
+        assert offers[-1][0]["input"][-1]["content"][0]["text"] == notes[key], reason

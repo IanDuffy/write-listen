@@ -179,6 +179,10 @@ class Sim:
                  verbose: bool = True):
         self.cfg, self.session_cfg, self.label = cfg, session_cfg, label
         self.tool_handler = tool_handler or FakeTools()
+        # A check's own cap (config live.checks.run_cap_usd) bounds its connected time too.
+        cap = float((cfg["live"].get("checks") or {}).get("run_cap_usd") or 0)
+        if cap:
+            max_minutes = min(max_minutes, cap / float(cfg["live"]["price_per_minute"]))
         self.max_minutes, self.greet, self.tts_fn = max_minutes, greet, tts_fn or tts
         self._connect = connect or _ws_connect
         self.audio_out, self.events_path, self.costs = audio_out, events_path, costs
