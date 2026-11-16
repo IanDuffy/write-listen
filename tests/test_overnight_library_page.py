@@ -135,7 +135,7 @@ def test_the_cards(site, page):
 
 def test_play_opens_the_intro_and_the_tool_starts_the_recording(site, page):
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     pg.wait_for_function("window.__types().includes('session.commentary.append')")
     first = [m for m in pg.evaluate("window.__rtc.sent") if m["type"] == "session.commentary.append"][0]
@@ -148,12 +148,12 @@ def test_play_opens_the_intro_and_the_tool_starts_the_recording(site, page):
     pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
     assert pg.evaluate("document.getElementById('chapter-audio').currentTime") < 2  # from the beginning
     assert page.ends[-1]["how"] == "tool" and "session.close" in pg.evaluate("window.__types()")
-    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+    assert pg.inner_text("#lib-play") == "Ask a question" and page.errors == []
 
 
 def test_without_the_tool_the_lead_in_line_and_a_silence_start_it(site, page):
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     say(pg, "I found something odd about herons. Here it is.")
     pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
@@ -163,7 +163,7 @@ def test_without_the_tool_the_lead_in_line_and_a_silence_start_it(site, page):
 def test_at_ninety_seconds_at_the_latest(site, page, monkeypatch):
     pg = page.p
     site.cfg["overnight"]["live"]["page"]["intro_max_secs"] = 2
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     say(pg, "Good morning, this one took a while to find.")
     pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
@@ -172,18 +172,18 @@ def test_at_ninety_seconds_at_the_latest(site, page, monkeypatch):
 
 def test_a_tap_during_the_recording_asks_and_resumes_with_the_rewind(site, page):
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     tool(pg, "start_chapter", "c1")
     say(pg, "Here it is.")
     pg.wait_for_function("!document.getElementById('chapter-audio').paused", timeout=8000)
     pg.evaluate("document.getElementById('chapter-audio').currentTime = 20")
     pg.wait_for_timeout(300)
-    pg.click("#play")  # "Ask a question"
+    pg.click("#lib-play")  # "Ask a question"
     pg.wait_for_function("document.getElementById('chapter-audio').paused")
     pg.wait_for_function("window.__rtc.channels.length > 1")
     start_session(pg)
-    assert pg.inner_text("#play") == "Back to the chapter"
+    assert pg.inner_text("#lib-play") == "Back to the chapter"
     assert [t["name"] for t in site.posts[-1]["delegation"]["responses"]["tools"]] == ["resume_chapter", "save_seed"]
     pg.wait_for_function("window.__types().includes('session.instructions.append')")
     say(pg, "Because the fish can't see it. Anyway, where were we.")
@@ -212,7 +212,7 @@ def test_read_live_reads_the_chapter_in_the_same_session(site, page):
     """playback.read_live: start_chapter switches the session into reading mode instead of closing it."""
     pg = page.p
     profiles.save_settings(site.cfg, {"playback": {"read_live": True}}, "ian")
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     tool(pg, "start_chapter", "c1")
     say(pg, "Here it is.")
@@ -224,7 +224,7 @@ def test_read_live_reads_the_chapter_in_the_same_session(site, page):
     say(pg, first)
     pg.wait_for_function("window.__rtc.sent.filter((m) => m.type === 'session.commentary.append' && m.content.startsWith('Read this')).length === 2", timeout=8000)
     assert pg.evaluate("document.getElementById('chapter-audio').paused")  # the guide reads; the recording stays off
-    pg.click("#play")  # "Stop"
+    pg.click("#lib-play")  # "Stop"
     pg.wait_for_function("window.__types().includes('session.close')")
     assert page.ends[-1]["how"] == "read-live-stopped" and page.errors == []
 
@@ -251,7 +251,7 @@ def playing(pg):
 
 
 def into_the_recording(pg):
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     tool(pg, "start_chapter", "c1")
     say(pg, "Here it is.")
@@ -261,9 +261,9 @@ def into_the_recording(pg):
 def test_a_tap_while_the_intro_connects_abandons_it(site, page):
     """C9: the server had opened GPT-Live; the tap goes straight to the chapter and ends that session."""
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     pg.wait_for_function("window.__library.opening")  # /start returned; not started yet
-    pg.click("#play")  # "Skip to the chapter"
+    pg.click("#lib-play")  # "Skip to the chapter"
     playing(pg)
     pg.evaluate("window.__emitTo(0, {type: 'session.started'})")  # the abandoned session starting late
     pg.wait_for_timeout(700)
@@ -271,14 +271,14 @@ def test_a_tap_while_the_intro_connects_abandons_it(site, page):
     assert pg.evaluate("[window.__rtc.closed, window.__rtc.mics, window.__rtc.stopped]") == [1, 1, 1]
     ended = wait_for(lambda: server_log(site))
     assert ended[-1]["ended"] == "abandoned" and ended[-1]["mode"] == "intro"
-    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+    assert pg.inner_text("#lib-play") == "Ask a question" and page.errors == []
 
 
 def test_a_tap_before_the_server_opened_anything_opens_nothing(site, page):
     pg = page.p
     pg.evaluate("window.__micDelay = 800")
-    pg.click("#play")
-    pg.click("#play")
+    pg.click("#lib-play")
+    pg.click("#lib-play")
     playing(pg)
     pg.wait_for_timeout(1300)
     assert site.posts == [] and pg.evaluate("[window.__rtc.mics, window.__rtc.stopped]") == [1, 1]
@@ -289,22 +289,22 @@ def test_back_to_the_chapter_while_the_aside_connects(site, page):
     from ask import aside as A
     pg = page.p
     into_the_recording(pg)
-    pg.click("#play")  # "Ask a question"
+    pg.click("#lib-play")  # "Ask a question"
     pg.wait_for_function("window.__library.opening")
-    pg.click("#play")  # "Back to the chapter"
+    pg.click("#lib-play")  # "Back to the chapter"
     playing(pg)
     pg.evaluate("window.__emitTo(1, {type: 'session.started'})")
     pg.wait_for_timeout(500)
     assert "session.instructions.append" not in pg.evaluate("window.__types()")
     ended = wait_for(lambda: [x for x in server_log(site) if x["mode"] == "ask"])
     assert ended[-1]["ended"] == "abandoned" and A.load_asides(site.root) == []
-    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+    assert pg.inner_text("#lib-play") == "Ask a question" and page.errors == []
 
 
 def test_one_conversation_at_a_time(site, page):
     """C10: Change waits while the intro is on; Change pauses the recording; Play ends Change first."""
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     pg.click("#change")
     pg.wait_for_timeout(500)
@@ -318,7 +318,7 @@ def test_one_conversation_at_a_time(site, page):
     start_session(pg)
     pg.wait_for_function("document.getElementById('change').textContent === 'Done'")
     assert len(site.posts) == 2
-    pg.click("#play")  # Play: Change ends first, then the recording goes on
+    pg.click("#lib-play")  # Play: Change ends first, then the recording goes on
     playing(pg)
     ended = wait_for(lambda: [x for x in server_log(site) if x["mode"] == "change"])
     assert ended[-1]["ended"] == "button" and pg.inner_text("#change") == "Change"
@@ -334,7 +334,7 @@ def test_a_failed_start_releases_the_microphone(site, page, monkeypatch):
         raise StageError("No OpenAI key: set OPENAI_API_KEY in .env.")
     monkeypatch.setattr(live, "create_webrtc", refuse)
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     playing(pg)
     assert pg.evaluate("[window.__rtc.closed, window.__rtc.mics, window.__rtc.stopped]") == [1, 1, 1]
     assert pg.evaluate("window.__library.pc === null && window.__library.stream === null") and page.errors == []
@@ -344,7 +344,7 @@ def test_a_start_that_fails_after_the_server_opened_it_is_ended(site, page):
     """C13: the server's side of a session that never connected is ended (its cost logged)."""
     pg = page.p
     pg.evaluate("window.__failRemote = true")
-    pg.click("#play")
+    pg.click("#lib-play")
     playing(pg)
     ended = wait_for(lambda: server_log(site))
     assert ended[-1]["ended"] == "failed" and pg.evaluate("window.__rtc.stopped") == 1 and page.errors == []
@@ -353,7 +353,7 @@ def test_a_start_that_fails_after_the_server_opened_it_is_ended(site, page):
 def test_closing_the_page_ends_the_session(site, page):
     """C13: pagehide sends the end as a beacon."""
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     pg.wait_for_function("window.__types().includes('session.commentary.append')")
     pg.goto("about:blank")
@@ -365,7 +365,7 @@ def test_a_lead_in_right_after_they_ask_to_skip_starts_the_chapter(site, page):
     """C12: 'just play it' and 'Here it is.' at a few seconds: honoured inside intro_min_secs."""
     pg = page.p
     site.cfg["overnight"]["live"]["page"]["intro_min_secs"] = 20
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     pg.evaluate("window.__emit({type: 'session.input_transcript.delta', delta: 'Just play it.'})")
     pg.wait_for_timeout(500)
@@ -377,7 +377,7 @@ def test_a_lead_in_right_after_they_ask_to_skip_starts_the_chapter(site, page):
 def test_a_lead_in_needs_them_to_ask_before_the_minimum(site, page):
     pg = page.p
     site.cfg["overnight"]["live"]["page"]["intro_min_secs"] = 20
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     say(pg, "Morning. Here it is.")
     pg.wait_for_timeout(2000)
@@ -387,7 +387,7 @@ def test_a_lead_in_needs_them_to_ask_before_the_minimum(site, page):
 def test_a_stray_enjoy_or_a_lead_in_mid_line_does_not_cut_the_guide_off(site, page):
     pg = page.p
     assert "enjoy" not in site.cfg["overnight"]["live"]["page"]["lead_in"]
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     say(pg, "I think you'll enjoy this one. Have you ever watched a heron fish?")
     pg.wait_for_timeout(1800)
@@ -423,7 +423,7 @@ def test_a_conversation_is_recorded_and_kept(site, page):
                              o.frequency.value = hz; o.connect(d); o.start(); return d.stream; };
       window.__guideVoice = () => tone(660);
       return tone(440); }""")
-    pg.click("#play")
+    pg.click("#lib-play")
     start_session(pg)
     pg.evaluate("window.__rtc.pcs[0].ontrack({ streams: [window.__guideVoice()] })")
     pg.wait_for_function("window.__library.rec && window.__library.rec.mr && window.__library.rec.mr.state === 'recording'")

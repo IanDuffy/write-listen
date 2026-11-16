@@ -133,7 +133,7 @@ def test_the_home_shows_the_orb_and_the_library_below_it(site, browser):
     hrefs = pg.eval_on_selector_all("#history a.lib-htitle", "els => els.map((e) => e.getAttribute('href'))")
     assert hrefs == [f"#/chapter/{LATEST}", f"#/chapter/{OLDER}"]
     assert pg.get_attribute("#episode", "href") == f"#/chapter/{LATEST}"  # not the old standalone episode page
-    assert not pg.is_visible("#player")  # nothing loaded yet
+    assert not pg.is_visible("#lib-player")  # nothing loaded yet
     assert page.errors == []
 
 
@@ -143,13 +143,13 @@ def test_moving_between_the_home_and_a_chapter_keeps_the_same_audio_playing(site
     pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")  # a past chapter just plays: no intro, no mic
     playing(pg)
     assert site.posts == [] and pg.evaluate("window.__rtc.mics") == 0
-    assert pg.is_visible("#player") and pg.inner_text("#player-title") == "Octopus Eyes"
+    assert pg.is_visible("#lib-player") and pg.inner_text("#player-title") == "Octopus Eyes"
     first = audio_state(pg)
     assert first["src"].endswith(f"/api/chapters/{OLDER}/audio")
     pg.click(f"#history li[data-run='{OLDER}'] a.lib-htitle")  # its chapter view
     pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 0")
     assert pg.evaluate("location.hash") == f"#/chapter/{OLDER}"
-    assert not pg.is_visible("#orb") and not pg.is_visible("#lib-home") and pg.is_visible("#player")
+    assert not pg.is_visible("#orb") and not pg.is_visible("#lib-home") and pg.is_visible("#lib-player")
     pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")  # read along with the player
     pg.wait_for_timeout(600)
     mid = audio_state(pg)
@@ -181,7 +181,7 @@ def test_a_sentence_click_seeks_and_plays(site, browser):
     playing(pg)
     pg.wait_for_function(f"document.getElementById('library').dataset.sentence === '{target}'", timeout=5000)
     assert abs(audio_state(pg)["t"] - starts[target]) < 1.5
-    assert pg.is_visible("#player") and pg.inner_text("#ch-play") == "Pause"
+    assert pg.is_visible("#lib-player") and pg.inner_text("#ch-play") == "Pause"
     assert pg.evaluate("document.querySelector('#ch-cardlist .lib-ref.latest .title').textContent") == "A study of herons"
     earlier = "seg01-s002"
     pg.click(f"#ch-text .lib-s[data-id='{earlier}']")
@@ -198,7 +198,7 @@ def test_skip_the_intro_plays_at_once_and_ask_runs_from_the_player(site, browser
     playing(pg)
     assert site.posts == [] and pg.evaluate("window.__rtc.mics") == 0  # no session, no microphone
     assert audio_state(pg)["src"].endswith(f"/api/chapters/{LATEST}/audio")
-    assert pg.inner_text("#play") == "Ask a question" and not pg.is_visible("#skip")
+    assert pg.inner_text("#lib-play") == "Ask a question" and not pg.is_visible("#skip")
     pg.click("#player-ask")  # Ask, from the mini player
     pg.wait_for_function(f"{AUDIO}.paused")
     start_session(pg)
@@ -212,9 +212,9 @@ def test_skip_the_intro_plays_at_once_and_ask_runs_from_the_player(site, browser
 def test_play_on_the_latest_says_the_guide_introduces_it_live(site, browser):
     page = open_page(site, browser, "/library")
     pg = page.p
-    pg.click("#play")
+    pg.click("#lib-play")
     pg.wait_for_function("document.getElementById('live').textContent.includes('live')")
-    assert "introduces" in pg.inner_text("#live") and pg.inner_text("#play") == "Skip to the chapter"
+    assert "introduces" in pg.inner_text("#live") and pg.inner_text("#lib-play") == "Skip to the chapter"
     start_session(pg)
     assert pg.inner_text("#live") == "" and site.posts[-1]["delegation"]["responses"]["tools"][0]["name"] == "start_chapter"
     assert page.errors == []
@@ -417,7 +417,7 @@ def test_a_sentence_clicked_during_the_intro_plays_from_that_sentence(site, brow
     import ask_fixture
     page = open_page(site, browser)
     pg = page.p
-    pg.click("#play")  # the intro, live
+    pg.click("#lib-play")  # the intro, live
     start_session(pg)
     pg.evaluate(f"location.hash = '#/chapter/{LATEST}'")
     pg.wait_for_function("document.querySelectorAll('#ch-text .lib-s').length > 20")
@@ -440,7 +440,7 @@ def test_the_chapter_view_takes_over_the_orbs_audio(site, browser):
     playing(pg)
     pg.wait_for_function(f"{ORB_AUDIO}.paused")
     assert audio_state(pg)["t"] >= 40  # where the orb had got to, not the start
-    assert pg.is_visible("#player") and pg.inner_text("#player-title") == "Why Herons Wait"
+    assert pg.is_visible("#lib-player") and pg.inner_text("#player-title") == "Why Herons Wait"
     pg.wait_for_function("document.querySelector('#ch-text .lib-s.current')")
     assert pg.inner_text("#ch-play") == "Pause"
     pg.click("#ch-play")
@@ -456,12 +456,12 @@ def test_play_on_the_latest_while_the_orb_plays_it_carries_on_without_an_intro(s
     page = open_page(site, browser)
     pg = page.p
     orb_plays(pg, LATEST, at=40)
-    pg.locator("#play").scroll_into_view_if_needed()
-    pg.click("#play")
+    pg.locator("#lib-play").scroll_into_view_if_needed()
+    pg.click("#lib-play")
     playing(pg)
     pg.wait_for_function(f"{ORB_AUDIO}.paused")
     assert audio_state(pg)["t"] >= 40 and site.posts == [] and pg.evaluate("window.__rtc.mics") == 0
-    assert pg.inner_text("#play") == "Ask a question" and page.errors == []
+    assert pg.inner_text("#lib-play") == "Ask a question" and page.errors == []
 
 
 # R6: Ask only on a chapter with a timed transcript; when it can't start, the listener is told why.
@@ -473,7 +473,7 @@ def test_ask_is_not_offered_on_a_chapter_without_a_timed_transcript(site, browse
     pg.click(f"#history li[data-run='{OLDER}'] .lib-hplay")
     playing(pg)
     pg.wait_for_timeout(300)
-    assert pg.is_visible("#player") and not pg.is_visible("#player-ask")
+    assert pg.is_visible("#lib-player") and not pg.is_visible("#player-ask")
     assert pg.evaluate("window.__rtc.mics") == 0 and site.posts == [] and page.errors == []
 
 
@@ -500,3 +500,22 @@ def test_the_orb_leaves_past_chapters_to_the_library(site, browser):
     pg.wait_for_function("document.documentElement.classList.contains('has-library')")
     pg.evaluate("document.body.classList.add('past'); document.getElementById('last').textContent = 'Play the last chapter: x'")
     assert not pg.is_visible("#last")
+
+
+def test_on_the_live_page_the_player_bar_pauses_and_plays_again(site, browser):
+    """After the merge (Ian, 2026-11-15): on the live page the library's bar paused the chapter but never
+    played it again, and the live page's own player sat pinned to the bottom left. Both pages had #player
+    and #play; the library's are #lib-player and #lib-play now."""
+    site.cfg["live"]["provider"] = "gpt_live"  # what main serves at /; tests/conftest.py pins the old page
+    pg = open_page(site, browser).p
+    assert pg.evaluate("!!window.Live")
+    assert pg.evaluate("document.querySelectorAll('#player').length + document.querySelectorAll('#play').length") == 2
+    assert pg.evaluate("getComputedStyle(document.getElementById('player')).position") != "fixed"
+    pg.click("#skip")
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused")
+    pg.click("#player-toggle")
+    pg.wait_for_function("document.getElementById('chapter-audio').paused")
+    t = pg.evaluate("document.getElementById('chapter-audio').currentTime")
+    pg.click("#player-toggle")
+    pg.wait_for_function(f"!document.getElementById('chapter-audio').paused && document.getElementById('chapter-audio').currentTime > {t}")
+    assert pg.evaluate("!!document.querySelector('#play svg')")  # the live page's own play button, untouched
