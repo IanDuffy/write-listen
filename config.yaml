@@ -540,3 +540,8 @@ fast:
     agent_name: write-listen guide (check-in)
     reasoning_effort: low
     turn_timeout_secs: 30       # the page handles silence itself; the platform should not nudge first
+
+# Tester demo (docs/tester-demo-design.md). Each part adds only its own keys.
+demo:
+  enabled: false            # tester mode: cookies required, gate, interviewer. Off: the app as today (Ian's own)
+  max_builds: 3             # chapter builds running at once, server-wide; more wait in a queue (server.BuildQueue)

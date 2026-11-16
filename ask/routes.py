@@ -32,7 +32,7 @@ from pydantic import BaseModel
 
 from faststart import checkin
 from stages import voice
-from stages.common import ROOT, Run, StageError, load_prompt
+from stages.common import REQUEST_LISTENER, ROOT, Run, StageError, load_prompt, pinned
 
 from . import aside as A
 
@@ -124,12 +124,14 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
             raise HTTPException(400, "This chapter has no timed transcript, so it can't be asked about yet.")
         key = (str(root), (root / A.TIMING).stat().st_mtime)
         if key not in state["chapters"]:
-            state["chapters"] = {key: A.Chapter(root, cfg)}  # one chapter at a time is plenty
+            if len(state["chapters"]) >= 8:  # a few at a time: several testers may be asking at once
+                state["chapters"].pop(next(iter(state["chapters"])))
+            state["chapters"][key] = A.Chapter(root, cfg)
         return state["chapters"][key]
 
     def current(aside_id: str) -> dict:
         a = state["open"].get(aside_id)
-        if a is None:
+        if a is None or a["lid"] != REQUEST_LISTENER.get():  # a tester only ever reaches their own
             raise HTTPException(409, "That aside has ended.")
         return a
 
@@ -155,10 +157,12 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
                   "conversation_id": a.get("conversation_id"), "cost_usd": None, "credits": None}
         A.append_aside(ch.run, record)
         if a.get("conversation_id"):
-            threading.Thread(target=_save_cost, args=(cfg, ch.run, a["id"], a["conversation_id"]), daemon=True).start()
+            threading.Thread(target=_save_cost, args=(a["cfg"], ch.run, a["id"], a["conversation_id"]),
+                             daemon=True).start()
         # A fast run still being made: a question becomes a note, and goes to the profile as a check-in does.
+        # a["cfg"] is pinned to the aside's listener: the memory pass runs in a thread of its own.
         after(lambda: checkin.question_notes(ch.run, a["lines"], segment, how) and checkin.remember(
-            cfg, {**a, "run": ch.run, "section": segment}, ch.title, kind="ask"))
+            a["cfg"], {**a, "run": ch.run, "section": segment}, ch.title, kind="ask"))
         return record
 
     def finish_check_in(a: dict, how: str, seconds: float, timings: dict) -> dict:
@@ -173,8 +177,9 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
                   "conversation_id": a.get("conversation_id"), "cost_usd": None, "credits": None}
         A.append_aside(a["run"], record)
         if a.get("conversation_id"):
-            threading.Thread(target=_save_cost, args=(cfg, a["run"], a["id"], a["conversation_id"]), daemon=True).start()
-        after(lambda: checkin.remember(cfg, a, checkin.chapter_title(a["run"])))
+            threading.Thread(target=_save_cost, args=(a["cfg"], a["run"], a["id"], a["conversation_id"]),
+                             daemon=True).start()
+        after(lambda: checkin.remember(a["cfg"], a, checkin.chapter_title(a["run"])))
         return record
 
     def after(work) -> None:
@@ -185,15 +190,18 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
             print(f"  after an aside: {type(e).__name__}: {e}")
 
     def drop_open() -> None:
+        lid = REQUEST_LISTENER.get()
         with lock:
-            for old in list(state["open"].values()):  # one aside at a time
-                state["open"].pop(old["id"], None)
-                finish(old, "dropped", {})
+            for old in list(state["open"].values()):  # one aside at a time, per listener (each tester has theirs)
+                if old["lid"] == lid:
+                    state["open"].pop(old["id"], None)
+                    finish(old, "dropped", {})
 
     def new_aside(kind: str, t: float, sentence_id: str, **more) -> dict:
+        # lid and a pinned cfg: whose aside it is, for the routes and for the threads its ending starts.
         return {"id": time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4], "kind": kind, "t": t,
                 "sentence_id": sentence_id, "t0": time.monotonic(), "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "lines": [], "seeds": [], "resume": None, **more}
+                "lines": [], "seeds": [], "resume": None, "lid": REQUEST_LISTENER.get(), "cfg": pinned(cfg), **more}
 
     def check_in_start(req: AskStart) -> dict:
         root = folder(req.run)
@@ -286,9 +294,8 @@ def mount(app: FastAPI, cfg: dict, runs_dir) -> None:
     @app.post("/api/ask/end")
     def ask_end(req: AskEnd) -> dict:
         with lock:
-            a = state["open"].pop(req.aside, None)
-            if a is None:
-                raise HTTPException(409, "That aside has ended.")
+            a = current(req.aside)
+            state["open"].pop(req.aside, None)
             record = finish(a, req.how, {"tap_to_ready_ms": req.tap_to_ready_ms,
                                          "tap_to_first_sound_ms": req.tap_to_first_sound_ms})
         return {"restart": record["restart"], "ended": record["ended"], "seconds": record["seconds"]}

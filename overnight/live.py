@@ -449,7 +449,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
 
     def get(sid: str) -> dict:
         s = open_.get(sid)
-        if s is None:
+        if s is None or s.get("lid") != common.REQUEST_LISTENER.get():  # a tester only ever reaches their own
             raise HTTPException(409, "That conversation has ended.")
         return s
 
@@ -458,9 +458,10 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
         page's last usage figure or the wall clock since the start, whichever is more (the page's lags)."""
         if seconds is None:
             seconds = time.monotonic() - s["t0"]
+        scfg = s.get("cfg") or cfg  # pinned at the start: the sweep may close it from another listener's request
         billed = round(max(page_seconds or 0.0, seconds), 1)
         usd = cost(cfg, billed, backend)
-        log = Run(name="sessions", root=common.listener_dir(cfg) / "sessions")
+        log = Run(name="sessions", root=common.listener_dir(scfg) / "sessions")
         log.log({"stage": "voice", "session": s["id"], "mode": s["mode"], "provider": "openai",
                  "live_id": s["live_id"], "seconds": billed, "page_seconds": page_seconds, "backend": backend,
                  "cost_usd": usd, "ended": how})
@@ -476,18 +477,19 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                                            "transcript": s["lines"], "ended": reason, "seconds": round(seconds, 1),
                                            "restart": restart, "rewind_asked": rewind, "seeds": s["seeds"],
                                            "live_id": s["live_id"], "cost_usd": usd})
-                aside_seeds(s)
+                aside_seeds(s, scfg)
             out["restart"] = restart
         write_line(s, {"who": "session", "ended": how, "seconds": billed, "cost_usd": usd})
         if s["mode"] != "ask" and chat is not None:  # the usual after-conversation pass (profile, library, seeds)
             from stages import memory
-            t = threading.Thread(target=memory.after_session, args=(cfg, s["path"]), name="overnight-memory",
+            t = threading.Thread(target=memory.after_session, args=(scfg, s["path"]), name="overnight-memory",
                                  daemon=True)
-            chat["passes"].append(t)
+            with common.listener_scope(s.get("lid")):  # the passes of the listener it belongs to
+                chat["passes"].append(t)
             t.start()
         return out
 
-    def aside_seeds(s: dict) -> None:
+    def aside_seeds(s: dict, scfg: dict) -> None:
         """An aside's saved topics (kind idea) and the listener's questions (in their words) into seeds.jsonl:
         after_chapter ran when the chapter was built, before any morning aside existed."""
         items, last = [], None
@@ -503,7 +505,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                 if topic:  # the text after_chapter gives a saved seed, so the two dedupe
                     items.append({"kind": "idea", "text": topic + (f" ({why})" if why else ""), "words": last})
         if items:
-            library.add_seeds(common.listener_dir(cfg), items,
+            library.add_seeds(common.listener_dir(scfg), items,
                               source={"chapter": s["run"], "aside": s["aside"], "session": s["id"]})
 
     def sweep() -> None:
@@ -550,7 +552,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             raise HTTPException(503, str(e)) from None
         sid = new_id()
         s = {"id": sid, "mode": req.mode, "run": req.run, "live_id": got["id"], "t0": time.monotonic(),
-             "last": time.monotonic(),
+             "last": time.monotonic(), "lid": common.REQUEST_LISTENER.get(), "cfg": common.pinned(cfg),
              "path": common.listener_dir(cfg) / "sessions" / f"{sid}.jsonl", "tools": [], **extra}
         write_line(s, {"who": "session", "mode": req.mode, "run": req.run, "live_id": got["id"],
                        "voice": session["audio"]["output"]["voice"], "model": session["model"]})
@@ -610,9 +612,11 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             return {"queued": True, "when": schedule.next_label(settings, datetime.now()),
                     "note": f"{why} Saved for the next build day."}
 
+        pcfg = common.pinned(cfg)  # the thread has no request to tell it whose card it is
+
         def replan():
             try:
-                planner.plan(cfg, listener, request=request)  # past the cutoff mid-pass, it queues it itself
+                planner.plan(pcfg, listener, request=request)  # past the cutoff mid-pass, it queues it itself
             except Exception as e:  # the card keeps the old plan; the request waits for the next pass
                 print(f"  replanning failed: {type(e).__name__}: {e}; the request goes to the queue")
                 library.queue_add(listener, request)
@@ -658,7 +662,11 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
     @app.post("/api/overnight/live/end")
     def end(req: End) -> dict:
         with lock:
-            s = open_.pop(req.session, None)
+            s = open_.get(req.session)
+            if s is not None and s.get("lid") != common.REQUEST_LISTENER.get():
+                s = None  # another tester's: not theirs to end
+            if s is not None:
+                open_.pop(req.session, None)
         if s is None:
             raise HTTPException(409, "That conversation has ended.")
         return close(s, req.seconds, req.backend, req.how)

@@ -32,6 +32,12 @@ exposed to the network. One listener, one run at a time.
 
 The page and the status may name a finished chapter (?chapter=<run>), to play and ask about it.
 
+Tester mode (config demo.enabled; docs/tester-demo-design.md): each request runs as the tester its cookie
+names (TesterScope, common.listener_scope), with a Pipeline and a conversation of their own (state_for);
+without a tester only GET /, /t/<token>, /admin*, /healthz and the gate's script answer. Chapter builds
+share a limit of demo.max_builds at once; more wait their turn (BuildQueue). GET /healthz says the server
+is up. With demo off, one listener as before.
+
 A run is `python cli.py new <run> --unattended` in its own process and session, so
 the server stays responsive, and stopping or restarting the server does not stop
 the run. Its console
@@ -43,7 +49,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import importlib.util
 import json
+import re
 import os
 import signal
 import subprocess
@@ -51,9 +59,9 @@ import sys
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Literal
 
+import yaml
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -99,22 +107,48 @@ class Pipeline:
 
     A run is its own process in its own session, so stopping the server (Ctrl-C) does not
     stop the run. Whether a run is still going is read from the pid in its status.json, so
-    it holds for runs started from the terminal and across server restarts."""
+    it holds for runs started from the terminal and across server restarts.
 
-    def __init__(self, runs_dir: Path | None = None):
-        self._runs_dir = runs_dir  # fixed (tests), or None: the active listener's chapters
+    `listener`: a tester's pipeline (docs/tester-demo-design.md): its chapters are that listener's,
+    whatever request or thread asks. `queue`: the server-wide build limit (demo.max_builds), or None."""
+
+    def __init__(self, runs_dir: Path | None = None, listener: str | None = None, queue=None,
+                 cfg: dict | None = None):
+        self._runs_dir = runs_dir  # fixed (tests), or None: the listener's chapters
+        self.listener = listener
+        self.queue = queue
+        self.cfg = cfg  # for the run-sizing hook; create_app fills it in
         self.run: str | None = None
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
 
     @property
     def runs_dir(self) -> Path:
-        return self._runs_dir or common.default_runs_dir()
+        if self._runs_dir:
+            return self._runs_dir
+        if self.listener and common.RUNS_DIR is None:  # a thread (the queue's watcher) has no request to go by
+            return common.LISTENERS_DIR / self.listener / "chapters"
+        return common.default_runs_dir()
 
     def start(self, args: list[str], run: str) -> None:
+        """Start the run's process, or, past the server's build limit, queue it (it waits its turn)."""
+        if self.queue is not None and not self.queue.submit(self, args, run):
+            self.run = run  # the page follows it while it waits
+            return
+        try:
+            self._launch(args, run)
+        except BaseException:
+            if self.queue is not None:
+                self.queue.release(self.runs_dir / run)
+            raise
+        if self.queue is not None:
+            self.queue.started(self.runs_dir / run, self.proc)
+
+    def _launch(self, args: list[str], run: str) -> None:
         env = dict(os.environ)
-        if self._runs_dir is None and common.RUNS_DIR is None:  # the child finds the run where we put it
-            env[common.LISTENER_ENV] = common.active_listener_id()
+        # Always pinned: the child resolves its run folder, profile and memory by this id, never by whichever
+        # listener happens to be active (or whichever tester's request came last) when it looks.
+        env[common.LISTENER_ENV] = self.listener or common.active_listener_id()
         with open(self.runs_dir / run / "run.log", "a", encoding="utf-8") as log:  # the child keeps its own copy
             self.proc = subprocess.Popen([sys.executable, str(ROOT / "cli.py"), *args], cwd=ROOT, env=env,
                                          stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -144,8 +178,48 @@ class Pipeline:
                     seed_stage.write(r, topic, why, notes, said=said)
                 except StageError as e:
                     raise HTTPException(400, str(e)) from None
-            self.start(["new", name, "--unattended", *fast_routes.mode_args(r, mode, live=live)], name)
+            args = ["new", name, "--unattended", *fast_routes.mode_args(r, mode, live=live)]
+            if mode == "fast":
+                self._size(r)  # before the start: the run reads its config.yaml as it begins
+            self.start(args, name)
+        if mode == "fast" and live:
+            self._card(r.root)
         return name
+
+    def _size(self, r: Run) -> None:
+        """A listener whose chapter.minutes differs from config.yaml's (a tester's 10 minutes) gets the run
+        sized to it: <run>/config.yaml's fast: block, from faststart.base.sized_overrides (fast runs
+        otherwise ignore chapter.minutes). Skipped while that function is not there."""
+        sized = getattr(fast_base, "sized_overrides", None)
+        owner = common.owner_of(r.root)
+        if sized is None or owner is None:
+            return
+        cfg = self.cfg or load_config()
+        minutes = profiles.settings(cfg, listener=owner)["chapter"]["minutes"]
+        if minutes == ((cfg.get("listener_settings") or {}).get("chapter") or {}).get("minutes"):
+            return
+        p = r.root / "config.yaml"
+        over = (yaml.safe_load(p.read_text(encoding="utf-8")) or {}) if p.exists() else {}
+        fast = common._merge(over.get("fast") or {}, sized(minutes))
+        if fast != over.get("fast"):
+            fast_base.write_atomic(p, yaml.safe_dump({**over, "fast": fast}, sort_keys=False, allow_unicode=True))
+
+    def _card(self, root: Path) -> None:
+        """The chapter card (title, overview, summary) at t = 0, in a thread: faststart/card.py, when there.
+        Only for the live page's chapters, the one place a card is shown."""
+        if importlib.util.find_spec("faststart.card") is None:
+            return
+        from faststart import card
+        cfg = self.cfg or load_config()
+        owner = common.owner_of(root)
+        cfg = {**cfg, "listener_dir": str(owner)} if owner is not None else common.pinned(cfg)
+
+        def work():
+            try:
+                card.start(root, cfg)
+            except Exception as e:  # a card is a nicety; never the chapter
+                print(f"  chapter card for {root.name} failed: {type(e).__name__}: {e}")
+        threading.Thread(target=work, name=f"card-{root.name}", daemon=True).start()
 
     def stop(self, run: str, cfg: dict) -> dict:
         """Stop the run being made. Ctrl-C first, so the pipeline records where it stopped
@@ -155,6 +229,8 @@ class Pipeline:
         becomes "stopped"; the run can be continued later (python cli.py new <run> --unattended)."""
         with self.lock:
             r = Run.open(run, runs_dir=self.runs_dir)
+            if self.queue is not None:  # waiting its turn: it never starts
+                self.queue.remove(r.root)
             r.unattended = True  # so decide() writes to decisions.md, as the run itself does
             status = self._read(run) or {}
             own = self.proc is not None and self.proc.poll() is None and self.run == run
@@ -193,12 +269,19 @@ class Pipeline:
         except json.JSONDecodeError:  # written atomically, so only a hand edit gets here
             return None
 
+    def _waiting(self, run: str | None, status: dict) -> bool:
+        """The run is in the build queue, waiting its turn (its status has no pid yet)."""
+        return bool(run and status.get("queued") and self.queue is not None and self.queue.holds(self.runs_dir / run))
+
     def busy(self) -> bool:
-        """A run is going: this server's child, or any run whose status says making with a live pid."""
+        """A run is going: this server's child, any run whose status says making with a live pid, or one
+        waiting its turn in the build queue."""
         if self._own_child_running():
             return True
-        latest = self._read(self._latest())
-        return bool(latest and latest.get("state") == "making" and alive(latest.get("pid")))
+        name = self._latest()
+        latest = self._read(name)
+        return bool(latest and latest.get("state") == "making"
+                    and (alive(latest.get("pid")) or self._waiting(name, latest)))
 
     def status(self) -> dict:
         if not self._own_child_running():
@@ -212,7 +295,8 @@ class Pipeline:
             if not self._own_child_running():  # no status and nothing running: it never got going
                 status = {**status, "state": "problem", "message": "The chapter stopped before it started.",
                           "retryable": True, "detail": f"see runs/{self.run}/run.log"}
-        elif status.get("state") == "making" and not self._own_child_running() and not alive(status.get("pid")):
+        elif (status.get("state") == "making" and not self._own_child_running() and not alive(status.get("pid"))
+              and not self._waiting(self.run, status)):
             # The process ended without writing ready or problem (killed, or a crash).
             status = {**status, "state": "problem", "message": "The chapter stopped unexpectedly.",
                       "retryable": True, "detail": f"see runs/{self.run}/run.log"}
@@ -279,6 +363,244 @@ def _cancel_batches(root: Path) -> list[str]:
     return done
 
 
+# --- the build limit (docs/tester-demo-design.md, Per-listener server state) ----------------------
+
+QUEUE_WATCH_SECONDS = 2.0
+QUEUED_STATUS = {"state": "making", "stage": "queued", "label": "Waiting its turn", "queued": True, "pid": None,
+                 "stages_done": 0, "stages_total": 1, "minutes_left": None, "title": None, "audio": None,
+                 "message": "Other chapters are being made; this one starts as soon as one of them is done.",
+                 "detail": None, "retryable": True}
+
+
+class BuildQueue:
+    """At most `limit` chapter builds at once, server-wide (demo.max_builds), so several testers' runs don't
+    hit the APIs' rate limits together. Running builds are counted from every listener's status.json (making,
+    with a live pid) plus the processes this server started that haven't written one yet. A start beyond
+    the limit waits in shared/build_queue.json (first in, first out; it survives a restart) behind a
+    server-written status.json that says so, and a watcher thread starts it when a slot frees.
+
+    Locks: a Pipeline's lock is always taken before this one, never after (start_seed and stop hold theirs
+    when they call in; the watcher pops entries under this lock and launches them after releasing it).
+
+    One watcher per process: the queue of the app that last served a request (importing server.py makes an
+    app too, which never serves when server.py is run as a script). A watcher whose queue was superseded, or
+    whose queue file moved (a test's temporary folder, gone), stops."""
+
+    def __init__(self, limit: int, launch):
+        self.limit = max(1, int(limit))
+        self.launch = launch      # launch(entry) -> bool: start the entry's run now (False: it was stopped)
+        self.lock = threading.Lock()
+        self.reserved: set[str] = set()                 # admitted, process not started yet
+        self.own: dict[str, subprocess.Popen] = {}      # started here, maybe no status.json yet
+
+    @staticmethod
+    def path() -> Path:
+        return common.shared_dir() / "build_queue.json"
+
+    def entries(self) -> list[dict]:
+        data = fast_base.read_json(self.path(), {}) or {}
+        return [e for e in data.get("queue") or [] if isinstance(e, dict) and e.get("root") and e.get("run")]
+
+    def _save(self, entries: list[dict]) -> None:
+        fast_base.write_json(self.path(), {"queue": entries})
+
+    def holds(self, root) -> bool:
+        return any(e["root"] == str(root) for e in self.entries())
+
+    def running(self) -> set[str]:
+        """The run folders being built now (call with the lock held)."""
+        out = set(self.reserved)
+        for root, proc in list(self.own.items()):
+            if proc.poll() is None:
+                out.add(root)
+            else:
+                self.own.pop(root, None)
+        for p in common.LISTENERS_DIR.glob("*/chapters/*/status.json"):
+            s = fast_base.read_json(p) or {}
+            if s.get("state") == "making" and not s.get("queued") and alive(s.get("pid")):
+                out.add(str(p.parent))
+        return out
+
+    def submit(self, pipe: "Pipeline", args: list[str], run: str) -> bool:
+        """True: a slot is reserved, start it now (then started()). False: it is queued."""
+        root = pipe.runs_dir / run
+        with self.lock:
+            entries = [e for e in self.entries() if e["root"] != str(root)]
+            if not entries and len(self.running() - {str(root)}) < self.limit:
+                self.reserved.add(str(root))
+                return True
+            old = fast_base.read_json(root / "status.json") or {}
+            entries.append({"lid": pipe.listener, "run": run, "root": str(root), "args": list(args),
+                            "queued_at": fast_base.now_iso(), "fresh": not old})
+            self._save(entries)
+            _write_queued_status(root, run, old)
+        print(f"  build queue: {run} waits its turn ({len(entries)} waiting)")
+        self.ensure_watcher()
+        return False
+
+    def started(self, root, proc) -> None:
+        with self.lock:
+            self.reserved.discard(str(root))
+            if proc is not None:
+                self.own[str(root)] = proc
+
+    def release(self, root) -> None:
+        with self.lock:
+            self.reserved.discard(str(root))
+
+    def remove(self, root) -> bool:
+        """Take a run out of the queue (stopped while it waited). Whether it was there."""
+        with self.lock:
+            entries = self.entries()
+            keep = [e for e in entries if e["root"] != str(root)]
+            if len(keep) != len(entries):
+                self._save(keep)
+            return len(keep) != len(entries)
+
+    def tick(self) -> list[str]:
+        """Start queued runs while slots are free; returns the runs started."""
+        with self.lock:
+            entries = self.entries()
+            # A run stopped or removed by hand while it waited leaves the queue.
+            keep = [e for e in entries if (fast_base.read_json(Path(e["root"]) / "status.json") or {}).get("queued")]
+            free = max(0, self.limit - len(self.running()))
+            go, keep = keep[:free], keep[free:]
+            if len(keep) != len(entries):
+                self._save(keep)
+            self.reserved.update(e["root"] for e in go)
+        started = []
+        for e in go:
+            try:
+                if self.launch(e):
+                    started.append(e["run"])
+            except Exception as ex:  # the run shows as a problem the listener can retry; the queue moves on
+                print(f"  build queue: {e['run']} could not start: {type(ex).__name__}: {ex}")
+                root = Path(e["root"])
+                if root.is_dir():
+                    fast_base.write_json(root / "status.json", {
+                        **(fast_base.read_json(root / "status.json") or {}), "run": e["run"], "state": "problem",
+                        "queued": False, "message": "The chapter couldn't start.", "retryable": True,
+                        "detail": f"{type(ex).__name__}: {ex}", "updated": fast_base.now_iso()})
+            finally:
+                self.release(e["root"])
+        return started
+
+    def ensure_watcher(self) -> None:
+        with _WATCHER_LOCK:
+            t = _WATCHER.get("thread")
+            if _WATCHER.get("queue") is self and t is not None and t.is_alive():
+                return
+            _WATCHER["queue"] = self
+            _WATCHER["thread"] = t = threading.Thread(target=self._watch, args=(self.path(),), name="build-queue",
+                                                      daemon=True)
+            t.start()
+
+    def _watch(self, path: Path) -> None:
+        while True:
+            time.sleep(QUEUE_WATCH_SECONDS)
+            if _WATCHER.get("queue") is not self or self.path() != path:
+                return
+            try:
+                if self.entries():
+                    self.tick()
+            except Exception as e:  # never let the watcher die over one bad pass
+                print(f"  build queue: {type(e).__name__}: {e}")
+
+
+_WATCHER: dict = {"queue": None, "thread": None}
+_WATCHER_LOCK = threading.Lock()
+
+
+def _write_queued_status(root: Path, run: str, old: dict) -> None:
+    """The status of a run waiting its turn. It keeps what the page and the guide know a run by (a fast run's
+    mode and voice, a retried run's sections), and no start time: the run's own first status sets that."""
+    info = fast_base.read_json(root / fast_base.FILES["mode"]) or {}
+    keep = {k: old[k] for k in ("started", "history", "sections", "first_audio") if k in old}
+    if info.get("mode") == "fast":
+        keep["mode"] = "fast"
+        if info.get("voice"):
+            keep["voice"] = info["voice"]
+    fast_base.write_json(root / "status.json", {"run": run, **QUEUED_STATUS, **keep, "updated": fast_base.now_iso()})
+
+
+def _reset_zero(root: Path) -> None:
+    """A fast run that waited its turn: its timeline starts now, not when it was queued, so the time to the
+    first audio (faststart/timings.py's medians, the page's ring) doesn't count the wait."""
+    p = root / fast_base.FILES["mode"]
+    info = fast_base.read_json(p)
+    if isinstance(info, dict) and info.get("seed_set") is not None:
+        fast_base.write_json(p, {**info, "seed_set": time.time(), "seed_set_at": fast_base.now_iso()})
+
+
+# --- testers (docs/tester-demo-design.md, Identity) ---------------------------------------------
+
+LID_RE = re.compile(r"[a-z0-9][a-z0-9._-]*")
+# What answers without a tester's cookie when demo.enabled: the blank dot page and the gate's needs, the
+# link that sets the cookie, the admin (part B guards it) and the health check. Everything else is a 404.
+OPEN_EXACT = {("GET", "/"), ("HEAD", "/"), ("GET", "/healthz"), ("HEAD", "/healthz"), ("GET", "/interview.js")}
+OPEN_PREFIX = ("/admin", "/api/admin")
+
+
+def demo_on(cfg: dict) -> bool:
+    return bool((cfg.get("demo") or {}).get("enabled"))
+
+
+def _open_without_tester(method: str, path: str) -> bool:
+    if (method, path) in OPEN_EXACT or path.startswith("/favicon"):
+        return True
+    if method in ("GET", "HEAD") and path.startswith("/t/"):
+        return True
+    return path.startswith(OPEN_PREFIX)  # /admin* and /api/admin*: part B guards them itself
+
+
+def tester_for(scope) -> tuple[str | None, dict | None]:
+    """(lid, tester record) for a request, from demo.testers (part B) reading its cookie. A missing module,
+    an error or an id that isn't a plain folder name all count as no tester."""
+    try:
+        from demo import testers
+    except ImportError:
+        return None, None
+    try:
+        lid = testers.listener_for_request(scope)
+    except Exception as e:
+        print(f"  tester lookup failed: {type(e).__name__}: {e}")
+        return None, None
+    if not lid or not LID_RE.fullmatch(str(lid)):
+        return None, None
+    record = profiles.read_json(common.LISTENERS_DIR / lid / "tester.json", {}) or {}
+    return lid, {"lid": lid, **record}
+
+
+class TesterScope:
+    """Pure ASGI middleware: with demo.enabled, each request runs as the tester its cookie names
+    (common.listener_scope), so every listener_dir() under it, in the threadpool and in the event stream
+    alike, is that tester's folder; request.state.tester is their record. Without a tester only the paths
+    above answer. With demo off it passes everything through untouched. (Pure ASGI rather than
+    BaseHTTPMiddleware: the context it sets must reach the streamed body of /api/events.)"""
+
+    def __init__(self, app, cfg: dict, on_request=None):
+        self.app, self.cfg, self.on_request = app, cfg, on_request
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket") or not demo_on(self.cfg):
+            await self.app(scope, receive, send)
+            return
+        lid, record = tester_for(scope)
+        scope.setdefault("state", {})["tester"] = record
+        if self.on_request is not None:
+            self.on_request()
+        if lid is None:
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
+            if not _open_without_tester(scope.get("method", "GET"), scope.get("path", "")):
+                await send({"type": "http.response.start", "status": 404, "headers": [(b"content-length", b"0")]})
+                await send({"type": "http.response.body", "body": b""})
+                return
+        with common.listener_scope(lid):
+            await self.app(scope, receive, send)
+
+
 class ChapterRequest(BaseModel):
     seed: str
     why: str = ""
@@ -309,11 +631,118 @@ class VoiceLine(BaseModel):
     conversation_id: str | None = None  # sent once, when the voice connection opens
 
 
+class State:
+    """One listener's server state: the pipeline its page follows and its conversation with the guide
+    (the current guide.Session, the lock that keeps its turns in order, memory passes in flight)."""
+
+    def __init__(self, pipe: Pipeline):
+        self.pipe = pipe
+        self.chat = {"session": None, "lock": threading.Lock(), "passes": []}
+
+
+class _Here:
+    """Attributes of the current request's listener's object: what the routes mounted with `pipe` hold,
+    so the route code written for one listener serves each tester its own."""
+
+    def __init__(self, get):
+        object.__setattr__(self, "_get", get)
+
+    def __getattr__(self, name):
+        return getattr(self._get(), name)
+
+
+class _ChatHere:
+    """The current request's listener's chat dict (overnight/live.py appends its memory passes to it)."""
+
+    def __init__(self, get):
+        self._get = get
+
+    def __getitem__(self, key):
+        return self._get()[key]
+
+    def __setitem__(self, key, value):
+        self._get()[key] = value
+
+
+class _Conversation:
+    """voice/gpt_live/routes.py's handle on the conversation: lock, new_session(), current(id)."""
+
+    def __init__(self, chat, new_session, current):
+        self._chat, self.new_session, self.current = chat, new_session, current
+
+    @property
+    def lock(self) -> threading.Lock:
+        return self._chat()["lock"]
+
+
+_APP = {"state_for": None}  # the newest app's registry, for state_for() below
+
+
+def state_for(lid: str | None) -> State:
+    """A listener's server state in the newest app (created on first use). Part B's admin reset and
+    delete use it to drop a tester's conversation and stop their chapter before moving the folder."""
+    if _APP["state_for"] is None:
+        raise RuntimeError("no app has been created yet")
+    return _APP["state_for"](lid)
+
+
 def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, remember_on_start: bool = True) -> FastAPI:
-    pipe = pipeline or Pipeline()
+    pipe0 = pipeline or Pipeline()
     cfg = cfg or load_config()
+    if pipe0.cfg is None:
+        pipe0.cfg = cfg
     app = FastAPI(title="write-listen")
-    app.state.pipeline = pipe
+    app.state.pipeline = pipe0
+    # With demo off there is one listener, as there always was: one State, the pipeline given. With demo on,
+    # each tester gets a State of their own on first use, and their runs share the server's build limit.
+    default = State(pipe0)
+    states: dict[str, State] = {}
+    registry = threading.Lock()
+    queue = BuildQueue((cfg.get("demo") or {}).get("max_builds", 3), lambda e: launch(e)) if demo_on(cfg) else None
+    if queue is not None and remember_on_start:  # the real server: runs queued before a restart go on waiting
+        queue.ensure_watcher()
+
+    def state_for(lid: str | None) -> State:
+        if not demo_on(cfg) or not lid:
+            return default
+        with registry:
+            st, fresh = states.get(lid), False
+            if st is None:
+                st = states[lid] = State(Pipeline(listener=lid, queue=queue, cfg=cfg))
+                fresh = True
+        if fresh and remember_on_start:  # conversations a restart left without their memory pass
+            with common.listener_scope(lid):
+                remember(st)
+        return st
+
+    def here() -> State:
+        return state_for(common.REQUEST_LISTENER.get())
+
+    def launch(entry: dict) -> bool:
+        """The queue's watcher starts a run that waited its turn, in its listener's pipeline."""
+        p = state_for(entry.get("lid")).pipe
+        root = Path(entry["root"])
+        with p.lock:
+            if not (fast_base.read_json(root / "status.json") or {}).get("queued"):
+                return False  # stopped while it waited
+            if entry.get("fresh"):
+                _reset_zero(root)
+            p._launch(list(entry["args"]), entry["run"])
+            queue.started(root, p.proc)
+        print(f"  build queue: {entry['run']} started")
+        return True
+
+    app.state.state_for = state_for
+    app.state.build_queue = queue
+    _APP["state_for"] = state_for
+    pipe = _Here(lambda: here().pipe)  # what the routes below and the mounted ones hold
+    chat = _ChatHere(lambda: here().chat)
+    app.add_middleware(TesterScope, cfg=cfg, on_request=queue.ensure_watcher if queue is not None else None)
+    # Part B mounts the demo routes here, before the page route, so its GET / wins in tester mode.
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True}
 
     @app.get("/", response_class=HTMLResponse)
     def page(chapter: str | None = None) -> str:
@@ -334,37 +763,43 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return {"run": pipe.start_seed(req.seed, req.why, req.notes, mode=req.mode)}
 
     # --- the guide's conversation (milestone 3) ---------------------------------------
-    chat = {"session": None, "lock": threading.Lock(), "passes": []}
 
-    def remember(transcript=None) -> None:
+    def remember(st: State, transcript=None) -> None:
         """The memory pass (profile.md, guide.md) in the background, for one ended conversation or
-        for every one still waiting (after a restart). Passes run one at a time (memory.LOCK)."""
+        for every one still waiting (after a restart). Passes run one at a time (memory.LOCK).
+        Pinned to the listener now: the thread has no request to tell it whose memory it is."""
+        pcfg = common.pinned(cfg)
+
         def work():
             try:
-                memory.after_session(cfg, transcript) if transcript else memory.run_pending(cfg)
+                memory.after_session(pcfg, transcript) if transcript else memory.run_pending(pcfg)
             except Exception as e:  # never take the server down over memory
                 print(f"  memory pass failed: {e}")
         t = threading.Thread(target=work, daemon=True)
-        chat["passes"].append(t)
+        st.chat["passes"].append(t)
         t.start()
 
     if remember_on_start:
-        remember()
+        remember(default)
 
     def new_session(live: bool = False) -> guide.Session:
+        st = here()
+        chat, p = st.chat, st.pipe
         if chat["session"] is not None:  # the previous conversation has ended: remember it first
-            memory.after_session(cfg, chat["session"].transcript)
+            memory.after_session(chat["session"].cfg, chat["session"].transcript)
         for t in chat["passes"]:  # a returning guide must know who it is: wait for passes in flight
             t.join()
         chat["passes"] = []
         # The guide's chapters are made the fast way (docs/fast-start.md); the hooks are what that changes for it.
         # `live`: the page's GPT-Live conversation, whose chapters are read live in the same session.
-        chat["session"] = guide.Session(cfg, functools.partial(pipe.start_seed, mode="fast", live=live), pipe.status,
-                                        pipe.runs_dir,
-                                        fast=fast_hooks.Hooks(cfg, pipe.runs_dir, pipe.status), own_only=live)
+        # The session holds this listener's own pipeline, not the proxy: its tools act for this listener.
+        chat["session"] = guide.Session(cfg, functools.partial(p.start_seed, mode="fast", live=live), p.status,
+                                        p.runs_dir,
+                                        fast=fast_hooks.Hooks(cfg, p.runs_dir, p.status), own_only=live)
         return chat["session"]
 
     def talk(text: str | None, fresh: bool, session_id: str | None = None) -> dict:
+        chat = here().chat
         with chat["lock"]:  # one turn at a time
             if not fresh and (chat["session"] is None or session_id != chat["session"].id):
                 # The server restarted, or another conversation took over: don't answer out of context.
@@ -469,7 +904,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 return {"ended": False}
             session, chat["session"] = chat["session"], None
         if session is not None:
-            remember(session.transcript)
+            remember(here(), session.transcript)
             # ElevenLabs' record of each connection (latency per turn, cost), once it has processed it.
             for n, cid in enumerate(session.voice_conversations, 1):
                 threading.Thread(target=_save_voice, args=(cfg, session.id, cid, n), daemon=True).start()
@@ -489,12 +924,16 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
             raise HTTPException(404, "No such chapter.") from None
 
     @app.post("/api/reset")
-    def reset() -> dict:
+    def reset(request: Request) -> dict:
         """Start fresh as a new demo listener (docs/overnight-chapters.md, Reset): the conversation in
         progress ends without a memory pass (that would write it into the listener being left),
         passes in flight finish, then listeners/demo-<date>-<letter>/ is created and made active.
         Nothing is moved, stopped or deleted: the previous listener's folder (ian/ above all) stays
-        byte for byte, and a chapter being made for it keeps writing into its own folder."""
+        byte for byte, and a chapter being made for it keeps writing into its own folder.
+        A tester can't: it would make a new active listener for the whole server (the admin page resets
+        a tester instead)."""
+        if common.REQUEST_LISTENER.get() or getattr(request.state, "tester", None):
+            raise HTTPException(403, "Ask Ian to reset this.")
         with chat["lock"]:
             chat["session"] = None
             for t in chat["passes"]:
@@ -560,7 +999,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     ask_routes.mount(app, cfg, lambda: pipe.runs_dir)
     overnight_routes.mount(app, cfg, pipe, chat)
-    live_routes.mount(app, cfg, pipe, SimpleNamespace(lock=chat["lock"], new_session=new_session, current=current))
+    live_routes.mount(app, cfg, pipe, _Conversation(lambda: here().chat, new_session, current))
     fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
     app.mount("/runs", _RunsFiles(pipe), name="runs")

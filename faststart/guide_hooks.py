@@ -36,7 +36,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from stages.common import load_prompt
+from stages.common import load_prompt, pinned
 
 from . import base, notes, scout, timings
 from . import status as fast_status
@@ -122,7 +122,8 @@ class Hooks:
     """One conversation's fast hooks. `status()` is the current run's status (the server's)."""
 
     def __init__(self, cfg: dict, runs_dir: Path, status=None, early=None):
-        self.cfg, self.runs_dir, self.status_fn = cfg, Path(runs_dir), status
+        # Pinned: the early scout runs in a thread of its own, which has no request (and so no listener) to go by.
+        self.cfg, self.runs_dir, self.status_fn = pinned(cfg), Path(runs_dir), status
         self.early = early or scout.early
         self.topics: list[str] = []          # scouted in this conversation, normalised
         self.threads: list[threading.Thread] = []
