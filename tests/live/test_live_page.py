@@ -2487,3 +2487,28 @@ def test_typed_lines_count_toward_engagement(world):
         p.page.wait_for_timeout(200)
     start_chapter(p)
     p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'company')")
+
+
+
+def test_a_sound_while_a_library_chapter_plays_never_wakes_the_guide_and_listening_goes_on(world):
+    """The library below has its own player: its sound isn't the listener. The wake is skipped and the listener
+    is armed again (it fires only once), so a real voice after the chapter stops still wakes it."""
+    w = world
+    p = connect(w, start=False)
+    room(p)
+    p.js("""() => { let a = document.getElementById('chapter-audio');  // the library's own player (page/library.js)
+                    if (!a) { a = document.createElement('audio'); a.id = 'chapter-audio'; document.body.appendChild(a); }
+                    Object.defineProperty(a, 'paused', { get: () => !window.__libPlaying }); window.__libPlaying = true; }""")
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=6000)
+    p.page.wait_for_timeout(1200)
+    tone(p)
+    p.page.wait_for_timeout(2000)
+    tone(p, False)
+    assert p.phase() == "resting" and not p.marks("sound-wake")
+    p.js("() => { window.__libPlaying = false; }")
+    p.wait("window.Live.L.log.filter((m) => m[1] === 'wake-listening').length >= 2", timeout=10000)
+    p.page.wait_for_timeout(1200)
+    tone(p)
+    p.wait("L.phase === 'talk'", timeout=6000)
+    tone(p, False)

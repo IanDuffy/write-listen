@@ -864,7 +864,9 @@
     if (L.phase !== "resting" || L.closing) return stopWake();
     if (now() - L.spokeAt < 1500) return listenForWake();  // its own voice: the detector fires once, so start it afresh
     stopWake();
-    if (chapterPlayer() || libraryLive()) return;  // the library's chapter or its guide: not the listener
+    if (chapterPlayer() || libraryLive()) {  // the library's chapter or its guide: not the listener. Listen again later
+      return setTimeout(() => { if (L.phase === "resting") listenForWake(); }, 5000);  // (the detector fires only once)
+    }
     W.sounds++; W.total++;
     mark("sound-wake", W.sounds);
     chime();
