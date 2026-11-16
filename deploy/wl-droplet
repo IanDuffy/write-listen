@@ -1,7 +1,8 @@
 #!/bin/sh
 # `wl` on the droplet (setup.sh links /usr/local/bin/wl here). `wl deploy` runs as root, since it
 # restarts the service; every other command runs as the app's user, so the files it writes stay theirs
-# and it reads the keys through /srv/write-listen/.env (e.g. `wl study report`).
+# and it reads the keys and WL_BASE_URL through /srv/write-listen/.env, setup.sh's link to the service's
+# /etc/write-listen/env (sudo starts it with a clean environment; e.g. `wl study create`, `wl study report`).
 app=/srv/write-listen
 if [ "$1" = deploy ]; then
   shift

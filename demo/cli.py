@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 
-from stages.common import StageError, load_config
+from dotenv import load_dotenv
+
+from stages.common import ROOT, StageError, load_config
 
 from . import report, state, testers
 
@@ -42,6 +44,10 @@ def main(argv: list[str]) -> int:
     r = sub.add_parser("report", help="write study/report.md")
     r.add_argument("--yes", action="store_true", help="pass the cost guard")
     args = ap.parse_args(argv)
+    # The link's origin (WL_BASE_URL) is read from the environment, which `wl` on the droplet doesn't have:
+    # it runs as the app's user through sudo, with a clean one. .env (setup.sh links it to the service's
+    # /etc/write-listen/env) is where the keys come from too (stages/llm.py); a variable already set wins.
+    load_dotenv(ROOT / ".env")
     cfg = load_config()
     try:
         if args.cmd == "testers":
