@@ -113,7 +113,10 @@ cp deploy/local.write-listen.backup.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/local.write-listen.backup.plist
 ```
 
-The ssh key it uses must work without a passphrase prompt (macOS's keychain counts). Its log is
+The ssh key it uses must work without a passphrase prompt (macOS's keychain counts). The first run to
+`listen.ianduffy.com` records the droplet's host key by itself (`StrictHostKeyChecking=accept-new`: you may
+only have ssh'd to the IP so far); if the droplet is rebuilt, its key changes and the backup stops with
+"Host key verification failed" until you run `ssh-keygen -R listen.ianduffy.com`. Its log is
 `~/write-listen-backups/backup.log`.
 
 ## Updating
@@ -127,9 +130,13 @@ It pulls the checked-out branch, runs `uv sync`, makes sure `listeners/` and `sh
 droplet needs no data migration), checks that the code imports, installs any changed systemd unit,
 restarts the app, checks it again and shows its status. Chapters being made carry on; open pages lose
 the server for a few seconds. To follow another branch:
-`sudo -u writelisten git -C /srv/write-listen checkout <branch>`, then `wl deploy`.
+`sudo -u writelisten -H git -C /srv/write-listen fetch origin`, then
+`sudo -u writelisten -H git -C /srv/write-listen checkout <branch>`, then `wl deploy` (the fetch: a branch
+pushed after the clone isn't known on the droplet yet; `-H`: git reads the deploy key from the app user's home).
 
-Other `wl` commands run as the app's user with its keys, e.g. `wl study report` (writes
+Other `wl` commands run as the app's user with its keys and `WL_BASE_URL` (read from `/srv/write-listen/.env`,
+setup.sh's link to `/etc/write-listen/env`), e.g. `wl study create "Sam"` prints a link on the domain, and
+`wl study report` (writes
 `/srv/write-listen/study/report.md`; copy it off with `scp`).
 
 ## Troubleshooting
@@ -138,17 +145,18 @@ Other `wl` commands run as the app's user with its keys, e.g. `wl study report` 
 | --- | --- |
 | Anything odd in the app | `journalctl -u write-listen -f` (live), `journalctl -u write-listen --since "1 hour ago"`, or `/var/log/write-listen/app-<date>.log` for a past day |
 | A chapter stalled or failed | its `run.log` and `status.json` under `/srv/write-listen/listeners/<tester>/chapters/<run>/` |
-| Rate limits | `journalctl -u write-listen \| grep -i -e 429 -e "rate limit"` |
+| Rate limits | the app and conversations: `journalctl -u write-listen \| grep -i -e 429 -e "rate limit"`; chapter builds print to their own `run.log`, not the journal: `grep -i -e 429 -e "rate limit" /srv/write-listen/listeners/*/chapters/*/run.log` |
 | The site doesn't load, or a certificate error | `journalctl -u caddy -n 50`. Usually DNS not pointing at the droplet yet (`dig +short listen.ianduffy.com`) or port 80/443 closed (`ufw status`). Access log: `/var/log/caddy/write-listen.log` |
 | 502 from Caddy | the app is down: `systemctl status write-listen`, then the journal |
 | Every page is blank, even with a link | the cookie didn't stick: open the tester link again in that browser (a private window forgets it) |
 | The admin login keeps asking | the hash in `/etc/caddy/Caddyfile` doesn't match. Change `ADMIN_PASSWORD` in the env file and run `bash /srv/write-listen/deploy/setup.sh` again; or by hand: `caddy hash-password`, paste the hash on the login line in `/etc/caddy/Caddyfile`, `systemctl reload caddy`, and `systemctl restart write-listen` if you changed the env file |
 | No microphone prompt | the page must be `https://` on the domain; a plain `http://` address or the bare IP never gets the mic. On iPhone, Settings > Safari > Microphone must allow it |
 | Voice connects but no sound, or drops | the audio is between the browser and OpenAI, not the droplet; nothing to open on the server. Try another network (some office Wi-Fi blocks WebRTC) |
-| "tester mode is OFF" and the app stopped | `WL_DEMO=1` is missing from `/etc/write-listen/env`; add it, `wl deploy` |
+| "Tester mode is OFF" and the app stopped | `WL_DEMO=1` is missing from `/etc/write-listen/env`; add it, `wl deploy` |
 | "The Whisper model ... is not on this machine" | run setup.sh again, or the download command in the message as `sudo -u writelisten -H` from `/srv/write-listen` |
 | Out of memory, builds killed | `free -h`, `journalctl -k \| grep -i oom`. Resize the droplet (DigitalOcean > Resize, CPU and RAM only, so it can go back) |
 | Disk filling | `df -h`, `du -sh /srv/write-listen/listeners/*` |
 
 Restarting by hand: `systemctl restart write-listen` (chapters being made carry on). Caddy's config:
-`caddy validate --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`.
+`sudo -u caddy caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile`, then `systemctl reload caddy`
+(as Caddy's user, as setup.sh does: validating as root can leave a root-owned access log Caddy can't write).

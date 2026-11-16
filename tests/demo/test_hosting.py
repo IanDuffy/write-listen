@@ -134,6 +134,22 @@ def test_setup_and_deploy_use_the_same_layout():
     assert "mkdir -p listeners shared" in deploy
 
 
+def test_deploy_md_agrees_with_the_scripts():
+    """DEPLOY.md's commands match what the scripts do (review 13)."""
+    doc = (ROOT / "DEPLOY.md").read_text(encoding="utf-8")
+    setup = (DEPLOY / "setup.sh").read_text(encoding="utf-8")
+    rate = next(line for line in doc.splitlines() if line.startswith("| Rate limits"))
+    # chapter builds print to their run.log (server.Pipeline._launch), not the service's journal
+    assert "journalctl -u write-listen" in rate and "/srv/write-listen/listeners/*/chapters/*/run.log" in rate
+    assert "StrictHostKeyChecking=accept-new" in doc  # step 7: the backup's first run to the domain
+    # Caddy's config is validated as Caddy's user, as setup.sh does
+    assert "sudo -u caddy caddy validate --adapter caddyfile" in setup
+    assert "sudo -u caddy caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile" in doc
+    assert 'ln -sfn "$ENV_FILE" "$APP/.env"' in setup and "/srv/write-listen/.env" in doc
+    assert "Tester mode is OFF" in (DEPLOY / "check.sh").read_text() and '"Tester mode is OFF"' in doc
+    assert "git -C /srv/write-listen fetch origin" in doc
+
+
 def test_backup_plist_parses():
     plist = plistlib.loads((DEPLOY / "local.write-listen.backup.plist").read_bytes())
     assert plist["ProgramArguments"][0] == "/bin/bash"
@@ -193,6 +209,8 @@ def test_backup_copies_both_folders_and_links_to_the_night_before(tmp_path):
     assert f"--link-dest={dest}/listeners/2026-01-01" in listeners
     assert "root@droplet.test:/srv/write-listen/shared/" in shared and "--link-dest" not in shared
     assert "BatchMode=yes" in listeners
+    # the first run to the domain (only the IP was ssh'd to) records the host key instead of failing (review 11)
+    assert "StrictHostKeyChecking=accept-new" in listeners and "StrictHostKeyChecking=accept-new" in shared
 
 
 # --- check.sh: tester mode must be on -----------------------------------------------------------------

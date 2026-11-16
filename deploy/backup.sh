@@ -14,8 +14,10 @@ for dir in listeners shared; do
   mkdir -p "$dest/$dir"
   # The newest earlier night, if any, to link unchanged files against.
   prev=$(ls -1d "$dest/$dir"/20??-??-?? 2>/dev/null | grep -v "/$day\$" | tail -n 1 || true)
-  # BatchMode: under launchd nobody can answer a prompt, so fail rather than hang.
-  rsync -az --delete -e "ssh -o BatchMode=yes" ${prev:+--link-dest="$prev"} \
+  # BatchMode: under launchd nobody can answer a prompt, so fail rather than hang. accept-new: the first
+  # run to a name this Mac hasn't connected to (the domain, after ssh to the IP) records the host key
+  # instead of failing "Host key verification failed"; a key that later changes still stops it.
+  rsync -az --delete -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new" ${prev:+--link-dest="$prev"} \
     "$host:/srv/write-listen/$dir/" "$dest/$dir/$day/"
 done
 echo "$(date '+%F %T') backed up to $dest/{listeners,shared}/$day"
