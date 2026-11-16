@@ -64,7 +64,7 @@ Write the outline. Keep every field as short as it is asked for below: the write
 ## The angle
 
 - **title**: the chapter's title, a few words.
-- **angle**: the one claim the chapter argues, in two or three sentences. A claim is something a person could disagree with, not a topic. Choose it for whether it answers what the listener asked and why they asked; whether the scout shows real, strong sources for it (the territory sketch says what is contested or thin); whether it has a scene and a turn a listener would stay for; and whether it fits in {{target_words}} words, which hold three or four ideas, not more.
+- **angle**: the one claim the chapter argues, in two or three sentences. A claim is something a person could disagree with, not a topic. Choose it for whether it answers what the listener asked and why they asked; whether the scout shows real, strong sources for it (the territory sketch says what is contested or thin); whether it has a scene and a turn a listener would stay for; and whether it fits in {{target_words}} words, which hold one idea a section and no more.
 - **why**: two or three sentences: why this angle for this listener, and what it leaves out.
 - **through_line**: the one question or tension that carries the listener from the first section to the last, in one or two sentences. The opening asks it, each section after moves it on with something new, and the last answers it; no later section is planned to ask it over again. The chapter is an argument with a shape, not a tour.
 - **closing_idea**: what the last lines leave the listener with, in one or two sentences: an image or an open question that keeps working after the audio stops. It comes after the chapter's answer and does not put the through-line again in other words. It may call back to the opening scene. The chapter stands alone, so it never previews another.
@@ -72,7 +72,7 @@ Write the outline. Keep every field as short as it is asked for below: the write
 
 ## The sections
 
-{{min_sections}} to {{max_sections}} sections, numbered from 1, in the order the listener hears them. You decide how many: one idea each, so three strong sections beat five thin ones.
+{{min_sections}} to {{max_sections}} sections, numbered from 1, in the order the listener hears them. You decide how many: one idea each, so fewer strong sections beat more thin ones.
 
 Sizes, at {{words_per_minute}} words a minute. Code checks these and rejects an outline that breaks one:
 - The targets add up to about {{target_words}} words, and never less than {{min_words}} or more than {{max_words}}.

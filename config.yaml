@@ -66,6 +66,7 @@ stages:
   fast_draft:         {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   fast_lock:          {max_tokens: 64000, effort: high, expected_output_tokens: 9000}
   fast_note:          {model: claude-sonnet-5-5, max_tokens: 4000, effort: low, expected_output_tokens: 300}
+  fast_card:          {model: claude-sonnet-5-5, max_tokens: 8000, effort: low, expected_output_tokens: 400}  # the chapter card at start_chapter (Tester Demo)
   fast_compare:       {max_tokens: 64000, effort: high, expected_output_tokens: 8000}
   # Overnight Chapters (docs/overnight-chapters.md; code in overnight/). Nobody is waiting. The planner is
   # cheap (Sonnet, a small scout); writing reuses fast_draft and fast_lock's settings (faststart/sections.py).

@@ -24,6 +24,10 @@ paused (pause closes the session); `continue` is play's.
 After Ian's fifth note (2026-11-15): when the chapter starts the guide steps back by default (`started_step_back`) or, if
 the listener has been chatting easily, offers to keep them company (`started_company`). Stepping back closes the session,
 so a rest ends in a new one: `back_from_rest` (a tap), `listening_again` (a voice), `ready_back` (the chapter ready).
+Tester Demo (2026-11-16): `handoff` is the first (developer) message of a tester's first session, opened
+straight after the interviewer has welcomed them, instead of `opened` ({name}: what they told it); the page
+asks once more with it if the guide is silent. `handback_end` when the chapter ends (instead of the end
+hold) and `handback_done` when they tap I'm done: the guide closes, then the interviewer's debrief follows.
 Placeholders in single braces ({title}, {text}) are filled by the page.
 ---
 opened: Say hello now: only a warm hello of two to four words, in your own words, different every time. Nothing else yet: no name, no question. Then wait for them.
@@ -62,3 +66,6 @@ started_company: [Their chapter is under way; the opening should be ready in {wh
 back_from_rest: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener has tapped to talk. Let them know you're here in a word or two, and listen.
 listening_again: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener may be about to speak to you. Say nothing first: listen, and answer only if they talk to you.
 ready_back: This session carries on the same conversation: you had stepped back while their chapter was made, and it's ready now. Say nothing until the app gives you the words to say.
+handoff: This session picks up from the person who welcomed them; they just told them their name is {name}. Say hello to {name} by name, in a few warm words, and give your name. Don't ask their name again.
+handback_end: [The chapter has ended. Close it in a sentence or two, then say you're handing them back to the person who welcomed them, and stop.]
+handback_done: [The listener tapped I'm done, so the chapter stops here. Stop reading now, even mid-sentence: never go on with the passage. Close in a sentence or two, then say you're handing them back to the person who welcomed them, and stop.]

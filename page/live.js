@@ -77,7 +77,16 @@
     log: [],                // for tests and the report: [t, kind, detail]
     trace: [],              // every session event but audio and transcripts: [t, type, detail]
     asides: [], checkins: [], gaps: [],
+    // Tester Demo (docs/tester-demo.md): a tester's page (body.tester, set by the server; or handed over by the
+    // interviewer on the gate page), the classes for the reveal and the cool-down, which render() keeps.
+    tester: document.body.classList.contains("tester"), skin: new Set(),
+    handoff: null,          // {name}: sent with the next /api/live/start (the interviewer handed them over)
+    handoffOpen: null,      // this conversation's session opened with the handoff note: the name in it
+    handingBack: null,      // "end" | "done": the guide is closing, then the interviewer's debrief
+    debriefing: false,      // the interviewer's debrief is on (the screen cooled)
+    card: null,             // this conversation's chapter card (/api/live/card)
   };
+  if (L.tester) L.skin.add("tester");
   window.Live = { L, S, state: () => L.phase };  // S: tests turn the clock-driven cues on
 
   const now = () => Date.now();
@@ -204,9 +213,10 @@
       await pc.setLocalDescription(await pc.createOffer());
       await iceDone(pc, 2500);
       got = resume ? await post("/api/live/resume", { session: L.session, sdp: pc.localDescription.sdp, reason: resume })
-                   : await post("/api/live/start", { sdp: pc.localDescription.sdp });
+                   : await post("/api/live/start", { sdp: pc.localDescription.sdp, ...(L.handoff ? { handoff: L.handoff } : {}) });
       if (mine !== L.epoch) { pc.close(); return true; }
       L.session = got.session; L.liveId = got.live_id;
+      if (!resume && got.handoff && L.handoff) { L.handoffOpen = L.handoff.name; L.handoff = null; }  // kept for a retry until it opens
       if (!resume && got.continue) {
         L.cont = { ...got.continue };
         L.own = got.continue.run;
@@ -258,7 +268,10 @@
     // session opened with its own first message (`reloaded`), and a resumed one with `continue`/`returned`.
     const silent = () => mine === L.epoch && !L.sessionWord && L.phase === "talk" && meters.level(meters.out) < 0.01
       && !(L.heardAt > (L.startedAt || 0)) && !L.inp;  // nothing said, and the listener hasn't begun either
-    if (!resume && !L.cont) {
+    if (!resume && L.handoffOpen) {  // handed over by the interviewer: the session's first message greets them by name
+      const first = N.handoff.replace(/\{name\}/g, L.handoffOpen);
+      setTimeout(() => { if (silent()) instruct(`[${first}]`); }, S.greet_fallback_ms);  // alone it may not make it speak
+    } else if (!resume && !L.cont) {
       speakable(S.opening ? N.opening_words.replace("{words}", S.opening) : N.opened);
       setTimeout(() => { if (silent()) instruct(N.opened); }, S.greet_fallback_ms);  // nothing yet: once more, the mic open
     } else if (!resume && L.cont) {  // its first message is the startup input, which alone may not make it speak
@@ -292,6 +305,7 @@
     L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
     L.heardLines = 0; L.recentWords = []; L.stepBackAt = 0;
+    L.handoffOpen = null; L.card = null; L.handingBack = null;
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
   }
@@ -334,6 +348,7 @@
     reportUsage();
     stopWake(); L.wokeAt = 0;
     if (was === "ended") return endConversation();  // heard to the end: nothing to come back to
+    if (L.handingBack) return finishHandback(L.handingBack);  // closing anyway: on to the debrief
     if (["paused", "pausing", "seeking"].includes(was) && L.dropAt) {  // still paused there: play reconnects
       L.pausedAt = { id: L.dropAt.id, sentence: L.dropAt.sentence || 0 };
       L.seekTo = null;
@@ -347,7 +362,9 @@
     render();
   }
 
-  async function endConversation() {
+  // `keepStream`: the mic is handed on (the interviewer's debrief), so it is let go of here, not stopped.
+  async function endConversation(keepStream = false) {
+    if (keepStream !== true) keepStream = false;  // a click handler passes its event
     stopWake();
     L.wokeAt = 0;
     if (L.ending) return;  // the end hold and the rest timeout tick every 200 ms: one end
@@ -361,7 +378,8 @@
     }
     await reportUsage();
     hangUp();
-    if (L.stream) L.stream.getTracks().forEach((t) => t.stop());
+    if (L.stream && !keepStream) L.stream.getTracks().forEach((t) => t.stop());
+    if (keepStream && L.mic) L.mic.enabled = true;  // muted here, perhaps: the interviewer must be heard
     L.stream = L.mic = null;
     if (L.session) quietPost("/api/chat/end", { session: L.session });
     // A chapter heard to the end: its reading, cut from the session's recording, becomes the episode.
@@ -531,6 +549,10 @@
     if (L.aside && L.phase === "aside") watchAside(t);
     if (L.wait && (L.phase === "waiting" || L.phase === "checkin")) watchWait(t);
     if (L.phase === "resting" && L.restAt && t - L.restAt > S.rest_close_minutes * 60000) endConversation();
+    // The handoff's reveal: the screen fades in at the guide's first word (or, if it never comes, a while after
+    // the session started, so a tester is never left with a dot alone).
+    if (L.skin.has("handoff") && !L.skin.has("revealed")
+        && (L.sessionWord || (L.started && t - (L.startedAt || t) > (S.reveal_fallback_ms || 8000)))) reveal();
   }, 200);
 
   // When the guide has finished speaking (its words have stopped and nobody is talking), do `fn`.
@@ -1326,10 +1348,143 @@
     L.finished = true; L.replaying = false;
     mark("done");
     position("done");
+    if (L.tester && !L.handingBack && (L.phase === "reading" || L.phase === "waiting")) return handback("end");  // no end hold
     if (L.phase === "reading" || L.phase === "waiting") { mute(true); L.phase = "ended"; L.endedAt = now(); }
     renderMarkers();
     render();
   }
+
+  // --- the handback to the interviewer (Tester Demo, steps 6-8) -------------------------------------------
+  // At the chapter's end, or when the tester taps I'm done, the guide closes in a sentence or two and says it is
+  // handing them back; once it has said so the conversation ends as any other (its cost, the memory pass, the
+  // archive of a chapter heard to the end) and the interviewer's debrief starts on the same mic, the screen cooled.
+  const HANDED_BACK = /\b(hand(ing)?|pass(ing)?)\b.*\bback\b|\bback to\b|\bwelcomed\b/i;  // its words for handing back
+  async function handback(kind) {
+    if (L.handingBack || L.debriefing) return;
+    L.handingBack = kind;
+    L.handbackTries = 0;
+    mark("handback", kind);
+    const was = L.phase, t0 = now();
+    L.aside = null; L.wait = null; L.pending = null; L.offer = null; L.stepBackAt = 0; L.wokeAt = 0;
+    stopWake();
+    let ducked = false;
+    if (kind === "done") {
+      if (L.run && !L.finished) position("done");  // heard as far as they wanted: never offered again by itself
+      if (was === "reading" && L.feed.cur) { cutRead(L.feed.cur); remote.volume = 0; ducked = true; }  // stopped as pause stops it
+      L.feed.cur = L.feed.ahead = null;
+      tokens.flush();
+    }
+    L.phase = "handback";
+    render();
+    if (!L.pc || !L.dc || L.dc.readyState !== "open") {  // paused or resting: GPT-Live was closed; a session to say it in
+      await until(() => !L.closing, 3000);
+      const ok = await connect("paused");  // told to say nothing until given words (`continue`)
+      if (!ok || !L.pc || L.handingBack !== kind) return finishHandback(kind);
+      L.phase = "handback";
+    }
+    instruct(kind === "done" ? N.handback_done : N.handback_end);
+    const wait = () => afterGuide(() => handedBack(kind), S.lead_in_max_ms * 2, 8000);
+    if (!ducked) return wait();
+    const unduck = () => {  // the listener hears the reading stop at once; its close is heard
+      if (now() - L.spokeAt > S.stop_quiet_ms || now() - t0 > 2500) { remote.volume = L.remoteVolume || 1; wait(); }
+      else setTimeout(unduck, 100);
+    };
+    setTimeout(unduck, S.stop_quiet_ms);
+  }
+
+  // Its line has ended: if it hasn't yet said it is handing them back (a pause between its sentences), once more.
+  function handedBack(kind) {
+    if (L.handingBack !== kind) return;
+    if (!HANDED_BACK.test(L.lastGuideLine || "") && L.handbackTries < 1 && L.pc) {
+      L.handbackTries++;
+      return afterGuide(() => handedBack(kind), S.lead_in_max_ms, 4000);
+    }
+    finishHandback(kind);
+  }
+
+  async function finishHandback(kind) {
+    if (L.handingBack !== kind || L.ending) return;
+    mark("handed-back", kind);
+    const stream = L.stream;
+    L.pending = null;
+    await endConversation(true);
+    L.handingBack = null;
+    debrief({ stream });
+  }
+
+  // The interviewer's debrief (page/interview.js, window.Interview): the screen cools while it runs (the product
+  // fades to the plain ground, the circle back to the neutral dot), and the library comes up after it.
+  function debrief(opts = {}) {
+    if (L.debriefing) return;
+    const stream = opts.stream || null;
+    L.debriefing = true;
+    skin("debrief", true);
+    render();
+    const finish = () => {
+      if (!L.debriefing) return;
+      L.debriefing = false;
+      if (stream) stream.getTracks().forEach((t) => t.stop());  // the mic is released once the debrief is over
+      skin("debrief", false);
+      render();
+      if (window.Library && Library.reload) Library.reload();
+      const lib = $("library");
+      if (lib && lib.scrollIntoView) lib.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (opts.onDone) try { opts.onDone(); } catch (e) { /* the library's own */ }
+    };
+    if (!window.Interview || !Interview.start) { mark("debrief", "no interviewer"); return finish(); }
+    mark("debrief", "start");
+    try {
+      const p = Interview.start("debrief", { stream, onDone: finish });
+      if (p && p.catch) p.catch((e) => { mark("debrief-failed", String(e && e.message || e)); finish(); });
+    } catch (e) { mark("debrief-failed", String(e && e.message || e)); finish(); }
+  }
+
+  function skin(cls, on) { if (on) L.skin.add(cls); else L.skin.delete(cls); }
+
+  // During the chapter, for I'm done: reading, a question, paused, waiting, a check-in, or talking after the
+  // chapter stopped part-way (else a tester whose chapter failed would have no way on to the debrief).
+  const DURING = ["reading", "aside", "paused", "pausing", "seeking", "waiting", "checkin"];
+  function inChapter() {
+    return !L.handingBack && !L.debriefing && (DURING.includes(L.phase) || (L.readStarted && ["talk", "resting"].includes(L.phase)));
+  }
+
+  // Handed over by the interviewer (page/interview.js on the gate, contract "Demo chapter"): the gate's mic stream
+  // is reused (the tap's unlock), the guide's session opens with the handoff note, and the screen is revealed:
+  // the neutral dot warms to the coral circle while it connects; the rest fades in at the guide's first word.
+  async function handoff({ name, stream } = {}) {
+    L.tester = true;
+    skin("tester", true);
+    L.handoff = { name: String(name || "").trim() };
+    if (stream) { L.stream = stream; L.mic = stream.getAudioTracks()[0] || null; meters.input(stream); }
+    skin("handoff", true);
+    render();
+    requestAnimationFrame(() => requestAnimationFrame(() => { skin("warm", true); render(); }));  // after a frame: the fill's transition runs
+    const ok = await connect();
+    if (!ok) reveal();
+    return ok;
+  }
+
+  function reveal() {
+    if (!L.skin.has("handoff") || L.skin.has("revealed")) return;
+    skin("revealed", true);
+    mark("revealed");
+    render();
+    setTimeout(() => { ["handoff", "warm", "revealed"].forEach((c) => skin(c, false)); render(); }, 2000);
+  }
+
+  // The chapter card (faststart/card.py): asked for while this conversation has a chapter, until it carries the
+  // outline's title.
+  async function pollCard() {
+    try {
+      const run = L.own;
+      if (run && !(L.card && L.card.run === run && L.card.outlined) && !["idle", "done"].includes(L.phase)) {
+        const res = await fetch(`/api/live/card/${encodeURIComponent(run)}`);
+        if (res.ok && run === L.own) { L.card = await res.json(); renderCard(); }
+      }
+    } catch (e) { /* the next poll tries again */ }
+    setTimeout(pollCard, S.card_poll_ms || 3000);
+  }
+  setTimeout(pollCard, 500);
 
   // --- a tap mid-chapter: a question, in the same session -----------------------------------------------
   // `paused`: a tap while paused asks from the paused place (nothing is being read to stop).
@@ -1731,6 +1886,7 @@
       case "checkin": return L.wait && L.wait.arrived ? "Back to the chapter" : "The next part is on its way";
       case "waiting": return "The next part is on its way · Talk while you wait";
       case "ended": case "done": return `${title} · finished`;
+      case "handback": return "";
     }
     if (L.offer) return `${title} is ready`;
     if (s.state === "making") return s.label || "Working";
@@ -1745,8 +1901,10 @@
     const speaking = now() - L.spokeAt < 600;
     document.body.className = [shown, L.phase, L.pc ? "voice" : "", L.pc ? (speaking ? "speaking" : "listening") : "",
       L.thinking ? "thinking" : "", L.phase === "resting" ? "resting" : "", L.typing ? "typing" : "",
-      L.phase !== "idle" ? "talking" : "", offerShown() ? "offer" : ""].filter(Boolean).join(" ");
+      L.phase !== "idle" ? "talking" : "", offerShown() ? "offer" : "", inChapter() ? "in-chapter" : "",
+      ...L.skin].filter(Boolean).join(" ");
     $("line").textContent = lineText();
+    renderCard();
     const voiceWake = L.phase === "resting" && L.mic && !W.off && !W.tapOnly, ready = L.offer && !L.readStarted;
     $("how").textContent = voiceWake ? (ready ? "Say something, or tap to play" : "Say something, or tap, to talk") : (ready ? "Tap to play" : "Tap to talk");
     renderRing();
@@ -1754,6 +1912,21 @@
     renderMarkers();
   }
   setInterval(render, 500);
+
+  // The card under the orb once this conversation's chapter has one; compact (title and overview) once the
+  // reading has begun, when the player and the parts sit under it too.
+  function renderCard() {
+    const box = $("card");
+    if (!box) return;
+    const c = L.card;
+    const on = !!(c && c.run === L.own && !["idle", "done"].includes(L.phase));
+    box.hidden = !on;
+    if (!on) return;
+    $("card-title").textContent = c.title || "";
+    $("card-overview").textContent = c.overview || "";
+    $("card-summary").textContent = c.summary || "";
+    box.classList.toggle("compact", !!L.readStarted);
+  }
 
   // The ring: before the opening is ready, how close it is (from the run's start and its countdown, or a
   // plain estimate, never going backwards: Ian's second test, it sat empty until the outline was done);
@@ -1904,6 +2077,7 @@
   });
 
   $("orb").addEventListener("click", async () => {
+    if (L.debriefing || L.handingBack || L.skin.has("handoff")) return;  // the interviewer's turn, or the guide's goodbye
     switch (L.phase) {
       case "idle":
       case "done":  // a new conversation (connect forgets the finished chapter: it is never read again by itself)
@@ -1928,6 +2102,14 @@
     }
   });
   $("stop").addEventListener("click", endConversation);
+  // I'm done (tester mode, shown during the chapter): the guide closes and hands them back to the interviewer.
+  $("done").addEventListener("click", () => { if (L.tester && inChapter()) handback("done"); });
+  // A tester's page talks with the interviewer at the end: its script, unless the gate page brought it already.
+  if (L.tester && !window.Interview) {
+    const s = document.createElement("script");
+    s.src = "/interview.js";
+    document.body.appendChild(s);
+  }
   $("type").addEventListener("click", () => {
     L.typing = !L.typing;
     $("type").setAttribute("aria-pressed", L.typing);
@@ -1979,6 +2161,7 @@
     if (L.session) navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: L.session })], { type: "application/json" }));
   });
 
-  Object.assign(window.Live, { onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
+  Object.assign(window.Live, { handoff, handback, debrief, renderCard,
+                               onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
                                pauseReading, play, seek, timeline, placeAt, playedSecs: () => { const tl = timeline(); return tl ? playedSecs(tl) : null; } });
 })();

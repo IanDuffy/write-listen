@@ -181,6 +181,29 @@ def minutes(words: int, cfg: dict) -> float:
     return words / settings(cfg)["words_per_minute"]
 
 
+def sized_overrides(minutes: int | float) -> dict:
+    """The `fast:` overrides for a chapter of `minutes` (a listener's chapter.minutes; the server writes them
+    into the run's config.yaml, which run_config merges key by key). The rules scale with the length and
+    give config.yaml's own values at 20 minutes. A short chapter (12 minutes or less: the Tester Demo's 10)
+    has two or three sections, with floors that let two fit (the 20-minute floors, an opening of 6 minutes
+    and sections of 3, make 10 minutes invalid), and a smaller research budget: fewer searches, rows that
+    give up sooner, so the opening's 4 minutes are still time enough for section 2's research."""
+    m = float(minutes)
+    short = m <= 12
+    return {
+        "target_minutes": minutes,
+        "total_minutes": [round(m * 0.9), round(m * 1.2)],
+        "sections": [2, 3] if short else [3, 5],
+        "opening_min_minutes": round(2 + m * 0.2),
+        "section_min_minutes": round(1 + m * 0.1),
+        "max_run_usd": round(m * 0.4, 2),
+        "scout": {"searches": 4, "fetches": 2} if short else {"searches": 6, "fetches": 3},
+        "research": {"per_row": {"searches": 3, "fetches": 1} if short else {"searches": 5, "fetches": 2},
+                     "max_searches": round(m * 1.5),
+                     "row_timeout_seconds": round(m * 30)},
+    }
+
+
 def agent_cfg(cfg: dict) -> dict:
     """A copy of the config in which every research agent gets the fast budgets (5 searches and
     2 fetches a row) and the scout gets its own (6 and 3). stages/research.py and stages/scout.py
