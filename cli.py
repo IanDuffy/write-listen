@@ -62,6 +62,7 @@ Utilities:
     smoketest                    live check of every API assumption (~$0.10): run before real work
     voices [--search TEXT]       list ElevenLabs models and voices on the account
     voicetest [--voices A,B,C]   narrate voice_test/sample.md in each candidate voice
+    deploy                       on the droplet: pull, install, restart (deploy/deploy.sh, DEPLOY.md)
 
 Options: --force overwrites an existing output; --yes pre-approves the cost guard.
 """
@@ -206,6 +207,10 @@ def new_run(args, cfg: dict) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "deploy":  # the droplet's deploy is a shell script (it restarts this very app)
+        import os
+        script = str(ROOT / "deploy" / "deploy.sh")
+        os.execvp("bash", ["bash", script, *argv[1:]])
     if argv and argv[0] in ("listener", "overnight"):  # listener profiles and the nightly build
         from overnight.cli import main as overnight_main
         return overnight_main(argv)

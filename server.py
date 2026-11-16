@@ -1039,9 +1039,27 @@ def _save_voice(cfg: dict, session_id: str, conversation_id: str, n: int = 1) ->
 
 app = create_app(remember_on_start=False)  # importing the module (tests, cli chat) touches no memory
 
+
+def serve_address(argv: list[str] | None = None, environ: dict | None = None) -> tuple[str, int]:
+    """Where `python server.py` listens: --host/--port, else $WL_HOST/$WL_PORT, else 127.0.0.1:8765.
+    On the droplet (deploy/write-listen.service) it stays on loopback behind Caddy."""
+    import argparse
+
+    environ = os.environ if environ is None else environ
+    ap = argparse.ArgumentParser(description="the write-listen server")
+    ap.add_argument("--host", default=environ.get("WL_HOST") or HOST)
+    ap.add_argument("--port", type=int, default=environ.get("WL_PORT") or PORT)
+    args = ap.parse_args(argv)
+    return args.host, int(args.port)
+
+
 if __name__ == "__main__":
     import uvicorn
 
-    print(f"  open http://{HOST}:{PORT}")
-    # An open page holds an event stream; don't wait for it to close on Ctrl-C.
-    uvicorn.run(create_app(), host=HOST, port=PORT, log_level="warning", timeout_graceful_shutdown=2)
+    host, port = serve_address()
+    print(f"  open http://{host}:{port}")
+    # An open page holds an event stream; don't wait for it to close on Ctrl-C. Behind Caddy (on
+    # loopback) the client's address and https come from X-Forwarded-For/-Proto, trusted from 127.0.0.1
+    # only: the tester cookie's Secure flag and the admin page's loopback check read them.
+    uvicorn.run(create_app(), host=host, port=port, log_level="warning", timeout_graceful_shutdown=2,
+                proxy_headers=True, forwarded_allow_ips="127.0.0.1")

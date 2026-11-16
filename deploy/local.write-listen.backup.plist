@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Nightly backup of the droplet's listeners/ to this Mac at 03:30 (deploy/backup.sh; DEPLOY.md).
+     Install: copy backup.sh to ~/bin/write-listen-backup.sh (launchd can't read scripts on the Desktop
+     without Full Disk Access), copy this file to ~/Library/LaunchAgents/, edit the paths if your home
+     isn't /Users/ian, then: launchctl load ~/Library/LaunchAgents/local.write-listen.backup.plist
+     A Mac asleep at 03:30 runs it when it wakes. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.write-listen.backup</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/Users/ian/bin/write-listen-backup.sh</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>WL_DROPLET</key>
+		<string>root@listen.ianduffy.com</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/ian/write-listen-backups/backup.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/ian/write-listen-backups/backup.log</string>
+</dict>
+</plist>

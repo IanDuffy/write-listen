@@ -1,0 +1,7 @@
+# Writes yesterday's app log out of the journal (deploy/daily-log.sh); started by write-listen-log.timer.
+[Unit]
+Description=write-listen daily app log
+
+[Service]
+Type=oneshot
+ExecStart=/srv/write-listen/deploy/daily-log.sh
