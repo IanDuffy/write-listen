@@ -1,3 +1,31 @@
+# Tester Demo: checks that need a person
+
+The spec (`docs/tester-demo.md`) says checks 5 (by voice), 11 and 12 need a person. Set up the droplet first
+(`DEPLOY.md`), or run locally for 5:
+
+```bash
+WL_DEMO=1 .venv/bin/python server.py
+.venv/bin/python cli.py study create "Ian test"   # prints the link; open it in Chrome
+```
+
+(Locally the admin page is http://127.0.0.1:8765/admin.)
+
+## 5. The guide uses the name from the interviewer and never asks for it
+Open a tester link, tap, give your name to the interviewer, and listen to the guide's first words after the
+handover: it should greet you by name and give its own, and never ask your name.
+
+## 6 (length). A real 10-minute chapter lands at 9-11 minutes
+Pick a topic with the guide and listen to the end (or check the admin page's minutes afterwards). About $3-4 of
+Claude and $0.50 of GPT-Live.
+
+## 11. On the droplet over HTTPS: mic and audio on iPhone Safari, Android Chrome and a laptop
+For each: open a tester link, tap, hear the interviewer, talk, hear the guide after the handover, ask a question
+mid-chapter, finish (or tap I'm done), do the debrief. Note anything that stays silent or asks for the mic twice.
+
+## 12. Two testers at once
+Two people (or two phones on two different tester links) at the same time: each hears only their own guide and
+chapter, the admin page shows both, and neither's library shows the other's chapter.
+
 # Overnight Chapters: checks that need a person
 
 The spec (`docs/overnight-chapters.md`) says checks 10, 11 (by voice), 12 and 13 need a person. They

@@ -488,6 +488,40 @@ opens a short live intro by the guide, then the recording. Report, live results 
   `prompts/overnight_voice_*.md`: a second, smaller GPT-Live client beside the live page's; they never run at
   once (`window.Orb` / `window.Library` busy/end). Merging the two clients and personas is open.
 
+## Tester Demo (branch `feature/tester-demo`, 2026-11-16)
+
+Spec: `docs/tester-demo.md` (Ian's doc, copied); design and the contracts between its parts:
+`docs/tester-demo-design.md`. Progress and checks: `PROGRESS.md` (Tester Demo section), `NEEDS_HUMAN.md`.
+Deploy: `DEPLOY.md`, `deploy/`.
+
+- **Tester mode** is `demo.enabled` (or env `WL_DEMO=1`, which the droplet sets). Off, the app is as it was
+  (Ian's own, one active listener). On: a request belongs to the tester whose token is in the `wl_tester` cookie
+  (set by `GET /t/<token>`, which redirects to `/`); `stages/common.REQUEST_LISTENER` (a ContextVar set by
+  server.py's `TesterScope` middleware) makes `listener_dir(cfg)` that tester's `listeners/t-<slug>/`. With no
+  valid tester only `/` (a blank dot), `/t/*`, `/admin*`, `/healthz` and `/interview.js` answer; the rest 404.
+- **Per tester:** server.py `state_for(lid)` gives each tester their own `Pipeline` and conversation; the routes
+  hold proxies (`_Here`, `_ChatHere`, `_Conversation`). Threads started from a request pin their listener
+  (`common.pinned(cfg)`). Chapter builds share `demo.max_builds` (3); more wait in `shared/build_queue.json`
+  with a server-written `queued` status ("Waiting its turn").
+- **Testers** (`demo/testers.py`): registry `shared/testers.json`, record `listeners/<lid>/tester.json`
+  (consent_at, name, intro_done, debrief_card). Admin `/admin` (`demo/routes.py`, page/admin.html): loopback, or
+  basic auth from `ADMIN_USER`/`ADMIN_PASSWORD` (Caddy also guards it). `demo/state.py` computes stage, minutes
+  heard, questions and cost per tester. `wl study testers|create|report`.
+- **The interviewer** (`demo/interviewer.py`, `page/interview.js`, `prompts/interviewer*.md`): its own GPT-Live
+  sessions (voice `demo.interviewer.voice`, cedar) for the intro and the debrief; everything in
+  `listeners/<lid>/study/` and never `sessions/` (or `memory.meeting()` would tell the guide it had met them).
+  The gate (`page/gate.html`) and interview.js contain no product words (acceptance check 3; a test checks); the
+  page acts on a tool result's `act`, never on tool names. The gate keeps one document: at the handover it
+  fetches `/app` (live.html's style and body) and the scripts named in config, then `Live.handoff({name,
+  stream})`.
+- **The guide is unchanged:** it gets the name through profile.md (`testers.set_name`) and the handoff opening
+  note (`notes.md` `handoff`). Tester runs are 10 minutes (`faststart.base.sized_overrides`, written into the
+  run's config.yaml by `start_seed`); a chapter card (`faststart/card.py`, `prompts/fast_card.md`,
+  `/api/live/card/<run>`) shows within seconds of the start. "I'm done" and the chapter's end hand back
+  (`handback_done`, `handback_end`), then `Live.debrief` starts the interviewer's debrief.
+- Interviewer checks (acceptance 4 and 8): `python -m demo.sim_interviewer intro|debrief --runs N [--grade]`
+  (costs in `demo/build_costs.jsonl`, capped like the live checks).
+
 ## Local setup
 
 ```bash

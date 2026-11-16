@@ -126,6 +126,36 @@ def _fill(text: str, **fields) -> str:
     return text
 
 
+# The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_intro.md, step 2); a
+# correction gets a second confirmation, so the last one counts. Failing that, the tester's own "I'm Sam".
+CONFIRM_RE = re.compile(r"\b([A-Z][A-Za-z'\u2019-]+(?: [A-Z][A-Za-z'\u2019-]+)?)[.,!]?\s+(?:did i get that right|is that right|"
+                        r"have i got that right|did i say that right)", re.I)
+SELF_RE = re.compile(r"\b(?i:i'?m|i am|my name is|my name's|this is|it'?s|call me)\s+([A-Z][A-Za-z'\u2019-]+)")
+NOT_NAMES = {"Yes", "Yeah", "Sorry", "Okay", "Ok", "Hi", "Hello", "Thanks", "Thank", "Right", "Great", "So", "And",
+             "Well", "Um", "Uh", "Sure", "Just", "Not", "Here", "Fine", "Good", "Ready", "Curious", "Happy"}
+
+
+def confirmed_name(lines: list[dict]) -> str | None:
+    """The name from an intro's transcript lines ({who, text}): the interviewer's last confirmation, else the
+    tester's own introduction. None when neither is there (the guide then asks, as it always could)."""
+    found = None
+    for x in lines:
+        if x.get("who") != "interviewer":
+            continue
+        for m in CONFIRM_RE.finditer(str(x.get("text") or "")):
+            word = m.group(1).split()[0]
+            if word.capitalize() not in NOT_NAMES and word[0].isupper():
+                found = m.group(1)
+    if found:
+        return found
+    for x in lines:
+        if x.get("who") == "listener":
+            m = SELF_RE.search(str(x.get("text") or ""))
+            if m and m.group(1) not in NOT_NAMES:
+                return m.group(1)
+    return None
+
+
 def tools(mode: str) -> list[dict]:
     """The mode's tools as Responses function tools for the delegation backend."""
     raw = json.loads(TOOLS_FILE.read_text(encoding="utf-8"))
@@ -519,6 +549,17 @@ def mount(app, cfg: dict) -> None:
         return {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
                 "settings": page_settings(cfg, req.mode)}
 
+    def name_from_transcript(s: dict) -> str | None:
+        """The name, when set_listener_name never came (live check 2026-11-16: the voice delegated in none of
+        four intros): the one the interviewer last confirmed, from the intro's transcript."""
+        lines = []
+        for x in s["path"].read_text(encoding="utf-8").splitlines() if s["path"].exists() else []:
+            try:
+                lines.append(json.loads(x))
+            except ValueError:
+                continue
+        return confirmed_name(lines)
+
     @app.post("/api/interview/tool")
     def tool(req: Tool) -> dict:
         s = get(req.sid)
@@ -549,6 +590,16 @@ def mount(app, cfg: dict) -> None:
                 except Exception as e:  # noqa: BLE001 (the handover happens anyway: the person is waiting)
                     out["not_saved"] = f"{type(e).__name__}: {e}"
                 s["handed_over"] = True
+            if out.get("handed_over") and not s["name"] and not tester_record(s["listener"]).get("name"):
+                found = name_from_transcript(s)
+                if found:
+                    try:
+                        from demo import testers
+                        testers.set_name(lid, found)
+                        s["name"] = found
+                        out["name_from"] = "transcript"
+                    except Exception as e:  # noqa: BLE001 (the guide asks the name itself)
+                        out["name_not_saved"] = f"{type(e).__name__}: {e}"
             if out.get("handed_over"):
                 name = s["name"] or (tester_record(s["listener"]).get("name") or None)
                 I = icfg(cfg)

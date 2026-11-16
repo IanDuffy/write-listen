@@ -170,6 +170,10 @@ def code_checks(p: dict, timeline: list[dict], calls: list[dict], by_page: str |
     names = [c["name"] for c in calls]
     if p["mode"] == "intro":
         saved = [c["args"].get("name") for c in calls if c["name"] == "set_listener_name"]
+        if not saved:  # the server takes it from the transcript at the handover (demo/interviewer.confirmed_name)
+            lines = [{"who": "interviewer" if x["who"] == "guide" else x["who"], "text": x.get("text")} for x in timeline]
+            found = IV.confirmed_name(lines)
+            saved = [found] if found else []
         hits = [{"text": t, "word": m.group(0)} for t in said for m in [PRODUCT_WORDS.search(t)] if m]
         out = {"name_saved": bool(saved) and P._norm(saved[-1]) == P._norm(p["name"]), "saved_as": saved[-1] if saved else None,
                "handed_over": "handoff_to_guide" in names, "handover_by_page": by_page == "handover",

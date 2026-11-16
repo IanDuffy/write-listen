@@ -370,3 +370,15 @@ def test_after_end_summarises_a_debrief_then_fetches_the_audio(cfg, tmp_path, mo
     IV._after_end(cfg, tmp_path, {"id": "s1", "mode": "debrief", "live_id": "live_3", "values": {}})
     IV._after_end(cfg, tmp_path, {"id": "s2", "mode": "intro", "live_id": "live_4", "values": {}})
     assert order == [("summary", "s1"), ("audio", "live_3"), ("audio", "live_4")]
+
+
+def test_the_name_comes_from_the_transcript_when_the_tool_never_came():
+    """Live check 2026-11-16: in four intros the voice never delegated, so set_listener_name never ran. The
+    server takes the name the interviewer last confirmed (a correction confirms again), else the tester's own."""
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    assert confirmed_name([said("interviewer", "You'll see in a moment. Priya. Did I get that right?")]) == "Priya"
+    assert confirmed_name([said("interviewer", "Hana. Did I get that right?"), said("listener", "It's Hannah."),
+                           said("interviewer", "Hannah. Did I get that right?")]) == "Hannah"
+    assert confirmed_name([said("listener", "Hi, I'm Siobhan, sorry")]) == "Siobhan"
+    assert confirmed_name([said("interviewer", "Sorry, did I get that right?"), said("listener", "I'm not sure")]) is None
