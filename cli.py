@@ -209,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in ("listener", "overnight"):  # listener profiles and the nightly build
         from overnight.cli import main as overnight_main
         return overnight_main(argv)
+    if argv and argv[0] == "demo":  # the library timeline's demo listener (docs/library-timeline.md)
+        from demo.seed import main as demo_main
+        return demo_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage")
     ap.add_argument("run", nargs="?")

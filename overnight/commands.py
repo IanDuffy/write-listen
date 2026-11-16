@@ -72,6 +72,9 @@ def tick(cfg: dict, lid: str | None, clock: datetime | None = None) -> dict:
     settings = profiles.settings(cfg, listener=listener)
     card = runner.reconcile(listener)
     print(f"[{t:%Y-%m-%d %H:%M}] tick for {listener.name}")
+    if settings.get("demo"):  # wl demo seed's listener: seeded content, never planned or built for
+        print("  a demo listener: nothing to plan or build")
+        return {"did": None, "reason": "a demo listener"}
     if schedule.build_due(card, settings, t):
         return {"did": "build", **runner.run(cfg, listener.name, clock=t, keep_awake=True)}
     if schedule.plan_due(card, settings, t):

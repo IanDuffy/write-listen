@@ -1,0 +1,1059 @@
+{
+ "listener": "demo-library",
+ "about": "The library timeline's demo listener (docs/library-timeline.md). Seven filler cards were written by the overnight planner (2026-11-15/16, one pass a night in a scratch listener) and reviewed by Claude for the thread; the Nov 11 and Nov 14 chapters are real and copied in by wl demo seed; moments, playback and the Up next card are written by hand from sketches B and D.",
+ "settings": {
+  "demo": {
+   "seed": "demo/library_demo.json"
+  },
+  "chapter": {
+   "mode": "surprise",
+   "minutes": 20
+  }
+ },
+ "profile": "# What the listener has said about themselves\n\n- Walks most mornings past a pond near home; a grey heron is usually standing at the far edge.\n- Wondered aloud why it can stand so still for so long, and whether it is waiting or watching.\n- Reads poetry before sleep; keeps Mary Oliver by the bed.\n- Likes slow things: gardens, birdwatching, long walks. Not a scientist, but curious how things work.\n- Wants chapters that start from something they can see, then go somewhere they didn't expect.",
+ "guide": "# Your guide\n\n- Name: Wren.\n- Met on 2026-10-24, talking about the heron by the pond.",
+ "history": "# Chapters made so far\n\n## Is It the Same Heron Every Morning? (2026-11-03-same-heron-every-morning, 2026-11-03)\n\n- Angle: Following the grey heron at the pond's edge to learn whether it stays put or moves on.\n\n## Why Solitary Hunters Nest Together in Heronries (2026-11-04-solitary-hunters-nest-together-heronries, 2026-11-04)\n\n- Angle: The heron stands alone at the pond all day, yet nests among dozens of others each spring. Why?\n\n## Why Watching a Still Pond Feels So Good (2026-11-05-watching-still-pond-feels-so, 2026-11-05)\n\n- Angle: What happens in your mind when you watch slow water and a patient bird, and why it feels restful.\n\n## What Tired Attention Really Is, and What Restores It (2026-11-09-tired-attention-really-restores, 2026-11-09)\n\n- Angle: Whether attention truly runs down after a long day, or whether something else is going on, and what might bring it back.\n\n## How Poems and Paintings Teach Us to Look (2026-11-10-poems-paintings-teach-us-look, 2026-11-10)\n\n- Angle: Mary Oliver's poems and Monet's pond show what sustained looking does that a passing glance cannot.\n\n## What Beauty Asks of Us (2026-11-11-beauty-scarry, 2026-11-11)\n\n- Angle: Plato's ladder of love, Augustine and a face in Gilead: does beauty lift us past what we love?\n\n## Loving One Person and Still Reaching Higher (2026-11-12-loving-one-person-still-reaching, 2026-11-12)\n\n- Angle: Whether loving one particular person is a rung on Plato's ladder or a place to stay, and how Murdoch answers.\n\n## The Kestrel Outside Iris Murdoch's Window (2026-11-13-kestrel-outside-iris-murdochs-window, 2026-11-13)\n\n- Angle: A hovering bird breaks an anxious mind's grip, and the chapter asks what that moment really shows about attention.\n\n## Herons: Hunting by Standing Still (2026-11-14-herons-hunt-standing-still, 2026-11-14)\n\n- Angle: How a bird that barely moves became one of the marsh's most successful hunters.\n",
+ "library": [
+  {
+   "id": "c-20261024-191500",
+   "t": "2026-10-24T19:15:00",
+   "kind": "conversation",
+   "title": "the heron by the pond",
+   "creator": null,
+   "note": "The first conversation: the grey heron at the far edge of the pond, and whether it is waiting or watching.",
+   "date": "2026-10-24",
+   "topics": [
+    "Birds"
+   ],
+   "source": {
+    "session": "20261024-191500"
+   }
+  },
+  {
+   "id": "w-61bafa2b0a",
+   "t": "2026-11-03T06:00:00",
+   "kind": "topic",
+   "title": "Is It the Same Heron Every Morning?",
+   "creator": null,
+   "note": "Following the grey heron at the pond's edge to learn whether it stays put or moves on.",
+   "date": "2026-11-03",
+   "topics": [
+    "Birds"
+   ],
+   "source": {
+    "chapter": "2026-11-03-same-heron-every-morning"
+   }
+  },
+  {
+   "id": "w-694e9a80b7",
+   "t": "2026-11-04T06:00:00",
+   "kind": "topic",
+   "title": "Why Solitary Hunters Nest Together in Heronries",
+   "creator": null,
+   "note": "The heron stands alone at the pond all day, yet nests among dozens of others each spring. Why?",
+   "date": "2026-11-04",
+   "topics": [
+    "Birds"
+   ],
+   "source": {
+    "chapter": "2026-11-04-solitary-hunters-nest-together-heronries"
+   }
+  },
+  {
+   "id": "w-b4df25b6bd",
+   "t": "2026-11-04T08:00:00",
+   "kind": "work",
+   "title": "The Peregrine",
+   "creator": "J. A. Baker",
+   "note": "",
+   "date": "2026-11-04",
+   "topics": [
+    "Birds"
+   ],
+   "source": {
+    "chapter": "2026-11-04-solitary-hunters-nest-together-heronries",
+    "session": "20261104-ask1",
+    "position_s": 860.0
+   }
+  },
+  {
+   "id": "w-6500cd4b38",
+   "t": "2026-11-05T06:00:00",
+   "kind": "topic",
+   "title": "Why Watching a Still Pond Feels So Good",
+   "creator": null,
+   "note": "What happens in your mind when you watch slow water and a patient bird, and why it feels restful.",
+   "date": "2026-11-05",
+   "topics": [
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-05-watching-still-pond-feels-so"
+   }
+  },
+  {
+   "id": "w-95a3e85d34",
+   "t": "2026-11-09T06:00:00",
+   "kind": "topic",
+   "title": "What Tired Attention Really Is, and What Restores It",
+   "creator": null,
+   "note": "Whether attention truly runs down after a long day, or whether something else is going on, and what might bring it back.",
+   "date": "2026-11-09",
+   "topics": [
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-09-tired-attention-really-restores"
+   }
+  },
+  {
+   "id": "w-60cf3f2c8b",
+   "t": "2026-11-09T08:00:00",
+   "kind": "work",
+   "title": "Pilgrim at Tinker Creek",
+   "creator": "Annie Dillard",
+   "note": "",
+   "date": "2026-11-09",
+   "topics": [
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-09-tired-attention-really-restores",
+    "session": "20261109-ask1",
+    "position_s": 905.0
+   }
+  },
+  {
+   "id": "w-a333e7e2dd",
+   "t": "2026-11-10T06:00:00",
+   "kind": "topic",
+   "title": "How Poems and Paintings Teach Us to Look",
+   "creator": null,
+   "note": "Mary Oliver's poems and Monet's pond show what sustained looking does that a passing glance cannot.",
+   "date": "2026-11-10",
+   "topics": [
+    "Attention",
+    "Art"
+   ],
+   "source": {
+    "chapter": "2026-11-10-poems-paintings-teach-us-look"
+   }
+  },
+  {
+   "id": "w-91a9de4a6e",
+   "t": "2026-11-10T08:00:00",
+   "kind": "work",
+   "title": "Devotions",
+   "creator": "Mary Oliver",
+   "note": "",
+   "date": "2026-11-10",
+   "topics": [
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-10-poems-paintings-teach-us-look",
+    "session": "20261110-ask1",
+    "position_s": 820.0
+   }
+  },
+  {
+   "id": "w-6055be0ba8",
+   "t": "2026-11-11T06:00:00",
+   "kind": "topic",
+   "title": "What Beauty Asks of Us",
+   "creator": null,
+   "note": "Plato's ladder of love, Augustine and a face in Gilead: does beauty lift us past what we love?",
+   "date": "2026-11-11",
+   "topics": [
+    "Beauty",
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-11-beauty-scarry"
+   }
+  },
+  {
+   "id": "w-b150ab2558",
+   "t": "2026-11-11T08:00:00",
+   "kind": "work",
+   "title": "On Beauty and Being Just",
+   "creator": "Elaine Scarry",
+   "note": "",
+   "date": "2026-11-11",
+   "topics": [
+    "Beauty"
+   ],
+   "source": {
+    "chapter": "2026-11-11-beauty-scarry",
+    "session": "20261111-ask2",
+    "position_s": 2490.0
+   }
+  },
+  {
+   "id": "w-1ce8d63be6",
+   "t": "2026-11-12T06:00:00",
+   "kind": "topic",
+   "title": "Loving One Person and Still Reaching Higher",
+   "creator": null,
+   "note": "Whether loving one particular person is a rung on Plato's ladder or a place to stay, and how Murdoch answers.",
+   "date": "2026-11-12",
+   "topics": [
+    "Beauty",
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-12-loving-one-person-still-reaching"
+   }
+  },
+  {
+   "id": "w-4360c0c9be",
+   "t": "2026-11-13T06:00:00",
+   "kind": "topic",
+   "title": "The Kestrel Outside Iris Murdoch's Window",
+   "creator": null,
+   "note": "A hovering bird breaks an anxious mind's grip, and the chapter asks what that moment really shows about attention.",
+   "date": "2026-11-13",
+   "topics": [
+    "Birds",
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-13-kestrel-outside-iris-murdochs-window"
+   }
+  },
+  {
+   "id": "w-beba9871eb",
+   "t": "2026-11-14T06:00:00",
+   "kind": "topic",
+   "title": "Herons: Hunting by Standing Still",
+   "creator": null,
+   "note": "How a bird that barely moves became one of the marsh's most successful hunters.",
+   "date": "2026-11-14",
+   "topics": [
+    "Birds",
+    "Attention"
+   ],
+   "source": {
+    "chapter": "2026-11-14-herons-hunt-standing-still"
+   }
+  },
+  {
+   "id": "w-0497cfbe52",
+   "t": "2026-11-14T08:00:00",
+   "kind": "work",
+   "title": "Upstream",
+   "creator": "Mary Oliver",
+   "note": "",
+   "date": "2026-11-14",
+   "topics": [
+    "Birds"
+   ],
+   "source": {
+    "chapter": "2026-11-14-herons-hunt-standing-still",
+    "session": "20261114-ask2",
+    "position_s": 1000.0
+   },
+   "relation": "the one by my bed"
+  }
+ ],
+ "seeds": [
+  {
+   "id": "s-60b5bd497a",
+   "t": "2026-10-24T19:30:00",
+   "kind": "question",
+   "text": "Is it the same heron at the pond every morning?",
+   "words": "is it the same one every day, do they stay put",
+   "source": {
+    "session": "20261024-191500"
+   }
+  },
+  {
+   "id": "s-66df8a1fc1",
+   "t": "2026-10-24T19:30:00",
+   "kind": "question",
+   "text": "Why do I like watching the pond so much?",
+   "words": "I don't know why I like watching it so much",
+   "source": {
+    "session": "20261024-191500"
+   }
+  },
+  {
+   "used": "s-60b5bd497a",
+   "by": "plan-20261102-160000",
+   "t": "2026-11-02T18:00:00"
+  },
+  {
+   "id": "s-0f20999440",
+   "t": "2026-11-03T08:00:00",
+   "kind": "question",
+   "text": "Why do they nest together if they hunt alone?",
+   "words": "Why do they nest together if they hunt alone?",
+   "source": {
+    "chapter": "2026-11-03-same-heron-every-morning",
+    "session": "20261103-ask1",
+    "moment": "m_0002"
+   }
+  },
+  {
+   "used": "s-0f20999440",
+   "by": "plan-20261103-160000",
+   "t": "2026-11-03T18:00:00"
+  },
+  {
+   "used": "s-66df8a1fc1",
+   "by": "plan-20261104-160000",
+   "t": "2026-11-04T18:00:00"
+  },
+  {
+   "id": "s-d35e4a7f80",
+   "t": "2026-11-05T08:00:00",
+   "kind": "idea",
+   "text": "Save the part about attention getting tired",
+   "words": "Save the part about attention getting tired",
+   "source": {
+    "chapter": "2026-11-05-watching-still-pond-feels-so",
+    "session": "20261105-ask1",
+    "moment": "m_0002"
+   }
+  },
+  {
+   "used": "s-d35e4a7f80",
+   "by": "plan-20261106-160000",
+   "t": "2026-11-06T18:00:00"
+  },
+  {
+   "id": "s-5b7c9b322c",
+   "t": "2026-11-09T08:00:00",
+   "kind": "question",
+   "text": "Why does something beautiful make me want to be better?",
+   "words": "Why does something beautiful make me want to be better?",
+   "source": {
+    "chapter": "2026-11-09-tired-attention-really-restores",
+    "session": "20261109-ask2",
+    "moment": "m_0003"
+   }
+  },
+  {
+   "used": "s-5b7c9b322c",
+   "by": "plan-20261110-180000",
+   "t": "2026-11-10T18:00:00"
+  },
+  {
+   "id": "s-a1bb156ddc",
+   "t": "2026-11-11T08:00:00",
+   "kind": "question",
+   "text": "Can you love one person and still climb?",
+   "words": "Can you love one person and still climb?",
+   "source": {
+    "chapter": "2026-11-11-beauty-scarry",
+    "session": "20261111-ask1",
+    "moment": "m_0002"
+   }
+  },
+  {
+   "used": "s-a1bb156ddc",
+   "by": "plan-20261111-160000",
+   "t": "2026-11-11T18:00:00"
+  },
+  {
+   "id": "s-dad713cd0a",
+   "t": "2026-11-12T08:00:00",
+   "kind": "idea",
+   "text": "Save the kestrel Murdoch saw out of her window",
+   "words": "Save the kestrel Murdoch saw out of her window",
+   "source": {
+    "chapter": "2026-11-12-loving-one-person-still-reaching",
+    "session": "20261112-ask1",
+    "moment": "m_0002"
+   }
+  },
+  {
+   "used": "s-dad713cd0a",
+   "by": "plan-20261112-160000",
+   "t": "2026-11-12T18:00:00"
+  },
+  {
+   "id": "s-e63f2ac172",
+   "t": "2026-11-14T08:00:00",
+   "kind": "question",
+   "text": "Do gardens make us notice like this?",
+   "words": "Do gardens make us notice like this?",
+   "source": {
+    "chapter": "2026-11-14-herons-hunt-standing-still",
+    "session": "20261114-ask1",
+    "moment": "m_0002"
+   }
+  },
+  {
+   "used": "s-e63f2ac172",
+   "by": "plan-20261116-180000",
+   "t": "2026-11-16T18:00:00"
+  }
+ ],
+ "chapters": [
+  {
+   "folder": "2026-11-03-same-heron-every-morning",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261102-160000",
+    "for_morning": "2026-11-03",
+    "title": "Is It the Same Heron Every Morning?",
+    "overview": "Following the grey heron at the pond's edge to learn whether it stays put or moves on.",
+    "summary": "You asked whether the heron at the far edge of the pond is the same bird every day, and whether herons stay in one place. This chapter starts with that single bird and asks how anyone could really know, looking at what ringing and tracking studies, feeding-territory behaviour, and life in the nesting colony can tell us. Then it follows a heron out beyond the pond, to the places and seasons you never see on your walk. It picks up from your first conversation about the heron at the pond, and this one is about who the bird is and where it goes.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "seed",
+     "ref": "s-60b5bd497a",
+     "words": "is it the same one every day, do they stay put"
+    },
+    "research_questions": [
+     "How do researchers identify individual grey herons, through rings, marks or GPS tags, and what has this shown about how long individuals stay in one area?",
+     "What do studies of feeding territories show about whether grey herons defend a feeding site, and how does this change with season or food supply?",
+     "What do ring-recovery and GPS-tracking studies show about where grey herons go in winter and on migration, and how far young and adult birds travel?",
+     "How faithful are grey herons to a breeding colony (heronry) from year to year, and how does that fit with feeding alone at other times?",
+     "What are the limits of ringing and recovery data, such as the bias towards recording dead birds, and how do tracking studies fill the gaps?"
+    ],
+    "angle": "Begin at the pond's far edge with one bird and the plain problem of telling one heron from another, then widen out through ringing, tracking, territory and heronry evidence. Be honest about what the evidence can and cannot show, and let the chapter end with the heron's life away from the pond.",
+    "topics": [
+     "Birds"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-03-same-heron-every-morning",
+    "planned_at": "2026-11-02T16:00:00",
+    "minutes": 19,
+    "demo": true
+   },
+   "finished": "2026-11-03T06:00:00",
+   "playback": {
+    "furthest_s": 1140,
+    "duration_s": 1140,
+    "finished": true,
+    "last_played": "2026-11-03T07:52:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 252.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "How long do herons live?",
+     "reply": "Many die in their first year; one that gets through it can live well over a decade.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261103-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "question",
+     "position_s": 700.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Why do they nest together if they hunt alone?",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261103-160000",
+     "session": "20261103-ask1",
+     "seed": "s-0f20999440"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-04-solitary-hunters-nest-together-heronries",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261103-160000",
+    "for_morning": "2026-11-04",
+    "title": "Why Solitary Hunters Nest Together in Heronries",
+    "overview": "The heron stands alone at the pond all day, yet nests among dozens of others each spring. Why?",
+    "summary": "You asked why herons nest together if they hunt alone, and this chapter takes that question on. It starts with the single bird at the far edge of your pond and follows it to the treetop colony, setting out the main explanations scientists have offered: that colonies share information about food, that crowds offer protection from predators, and that the best nest sites are worth competing for. These ideas are debated, so the chapter lets them argue with one another rather than naming a winner. It follows from the heronry we glimpsed last time and from your wondering what the bird is really doing out there alone.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "seed",
+     "ref": "s-0f20999440",
+     "words": "Why do they nest together if they hunt alone?"
+    },
+    "research_questions": [
+     "What is the information-centre hypothesis (Ward and Zahavi, 1973), and what do later reappraisals and tests say about how well it holds up for herons?",
+     "What evidence is there that nesting in a colony protects herons' eggs and chicks from predators, and what costs of crowding, such as disease, competition and stolen nest material, are recorded?",
+     "What do studies of grey heron and other heron colony site selection show about what makes a good nest site, and how do birds compete for the best positions within a colony?",
+     "How far do herons travel from the colony to feed, and how does proximity to foraging areas shape where colonies form and how big they are?",
+     "How do heronries persist over years, and what is known about how long particular colony sites have been used and why birds return to them?"
+    ],
+    "angle": "Begin at the pond with the lone heron, then rise to the treetops and treat the colony as a puzzle with several competing answers, including the contested information-centre hypothesis. Show that solitary hunting and communal nesting are less contradictory than they seem, and send the listener back to the pond with a new view of the far-edge bird.",
+    "topics": [
+     "Birds"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-04-solitary-hunters-nest-together-heronries",
+    "planned_at": "2026-11-03T16:00:00",
+    "minutes": 21,
+    "demo": true
+   },
+   "finished": "2026-11-04T06:00:00",
+   "playback": {
+    "furthest_s": 1260,
+    "duration_s": 1260,
+    "finished": true,
+    "last_played": "2026-11-04T07:40:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 330.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Do the same pairs come back every year?",
+     "reply": "Usually not: most grey herons pair up afresh each spring, often at the same colony.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261104-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "mention",
+     "position_s": 860.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "The Peregrine, J. A. Baker",
+     "reply": null,
+     "outcome": "in_library",
+     "outcome_ref": "w-b4df25b6bd",
+     "session": "20261104-ask1",
+     "title": "The Peregrine",
+     "creator": "J. A. Baker",
+     "work_kind": "work"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-05-watching-still-pond-feels-so",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261104-160000",
+    "for_morning": "2026-11-05",
+    "title": "Why Watching a Still Pond Feels So Good",
+    "overview": "What happens in your mind when you watch slow water and a patient bird, and why it feels restful.",
+    "summary": "You said you don't know why you like watching the pond so much, and this chapter takes that on. It starts from you standing at the water's edge and looks at what researchers call soft fascination, an effortless kind of attention that gentle things like moving water seem to draw out. It sets two explanations side by side, one about restoring tired attention and one about calming stress, and asks how well each holds up. It ends with a reflection, not a finding: that you and the heron at the far edge may be doing something oddly alike.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "seed",
+     "ref": "s-66df8a1fc1",
+     "words": "I don't know why I like watching it so much"
+    },
+    "research_questions": [
+     "What did Stephen and Rachel Kaplan originally propose in attention restoration theory, and what is soft fascination as they describe it in their primary papers?",
+     "How strong and how contested is the evidence for attention restoration theory, for example in systematic reviews?",
+     "How does Roger Ulrich's stress reduction theory differ from attention restoration theory, and what evidence supports each?",
+     "What does research on water or blue spaces find about mood and stress, and how reliable are those findings?",
+     "What do studies say about watching animals such as birds, and about how a wandering mind relates to calm, outward-directed attention?"
+    ],
+    "angle": "Begin with the listener at the pond and treat their not knowing why as the real question. Build through attention restoration theory and soft fascination, present the rival stress-reduction account honestly as an open debate, and close by offering the watcher-and-heron parallel clearly as the author's own reflection, not as research.",
+    "topics": [
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-05-watching-still-pond-feels-so",
+    "planned_at": "2026-11-04T16:00:00",
+    "minutes": 20,
+    "demo": true
+   },
+   "finished": "2026-11-05T06:00:00",
+   "playback": {
+    "furthest_s": 761.0,
+    "duration_s": 1200,
+    "finished": false,
+    "last_played": "2026-11-05T08:05:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 185.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Is soft fascination the same as daydreaming?",
+     "reply": "Not quite: your attention is still on something, it just takes no effort to hold it there.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261105-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "note",
+     "position_s": 750.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Save the part about attention getting tired",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261106-160000",
+     "session": "20261105-ask1",
+     "seed": "s-d35e4a7f80"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-09-tired-attention-really-restores",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261106-160000",
+    "for_morning": "2026-11-09",
+    "title": "What Tired Attention Really Is, and What Restores It",
+    "overview": "Whether attention truly runs down after a long day, or whether something else is going on, and what might bring it back.",
+    "summary": "You saved the part about attention getting tired, and this chapter goes straight to it: when your focus fades after a long day, is something actually used up, or is it something else? We look at the old idea of a draining resource, the doubts raised about ego depletion, and a rival view in which attention shifts away as continuing stops seeming worth it. Then we come back to restoration theory, whose evidence is mixed, and ask carefully what that means for a slow walk past your pond. It follows from last time, when we set tired attention against stress without asking what the tiredness is.",
+    "mode": "surprise",
+    "decided": "continue",
+    "source": {
+     "kind": "chapter",
+     "ref": "2026-11-05-watching-still-pond-feels-so",
+     "words": "Save the part about attention getting tired"
+    },
+    "research_questions": [
+     "What is the fuel or resource-depletion account of why sustained attention declines, and what evidence has supported it?",
+     "How does the opportunity-cost or underload account explain the same decline, and what do reward experiments such as the monetary reward vigilance study show?",
+     "What did large replication efforts and meta-analyses find about ego depletion, and how do critics distinguish it from the experience of mental fatigue?",
+     "What does attention restoration theory claim, and how consistent is the evidence from systematic reviews and meta-analyses, including differences between real and simulated nature and exposure length?",
+     "Is there any research on short, gentle walks or natural settings restoring attention, and how strong or limited is it?"
+    ],
+    "angle": "Begin at the end of a focused day, with the plain feeling of attention going dull, then set three accounts against each other: depletion, reallocation through boredom and opportunity cost, and restoration. Argue that the feeling is real while its cause is contested, and frame the pond walk as a plausible but unproven remedy, not a proven one.",
+    "topics": [
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-09-tired-attention-really-restores",
+    "planned_at": "2026-11-06T16:00:00",
+    "minutes": 22,
+    "demo": true
+   },
+   "finished": "2026-11-09T06:00:00",
+   "playback": {
+    "furthest_s": 1320,
+    "duration_s": 1320,
+    "finished": true,
+    "last_played": "2026-11-09T07:45:00",
+    "plays": 2
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 470.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "So is ego depletion just wrong?",
+     "reply": "Large replication attempts mostly failed to find it, so the strong version is in real doubt.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261109-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "mention",
+     "position_s": 905.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Pilgrim at Tinker Creek, Annie Dillard",
+     "reply": null,
+     "outcome": "in_library",
+     "outcome_ref": "w-60cf3f2c8b",
+     "session": "20261109-ask1",
+     "title": "Pilgrim at Tinker Creek",
+     "creator": "Annie Dillard",
+     "work_kind": "work"
+    },
+    {
+     "id": "m_0003",
+     "kind": "question",
+     "position_s": 1080.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Why does something beautiful make me want to be better?",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261110-180000",
+     "session": "20261109-ask2",
+     "seed": "s-5b7c9b322c"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-10-poems-paintings-teach-us-look",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261109-160000-2",
+    "for_morning": "2026-11-10",
+    "title": "How Poems and Paintings Teach Us to Look",
+    "overview": "Mary Oliver's poems and Monet's pond show what sustained looking does that a passing glance cannot.",
+    "summary": "You asked for poems or paintings next, and a little less heron, so we turn to artists who made a practice of looking. We set Mary Oliver, who wrote about attention as a kind of devotion, beside Monet and the water lilies he painted again and again at his own pond. The chapter asks what a poem or a painting does with attention that a plain glance doesn't, and why that effort might feel like work and rest at once. It follows from the last chapters on soft fascination and tired attention, and from your own habit of reading Oliver before sleep.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "profile",
+     "ref": "profile.md",
+     "words": "Something about poems or paintings next, maybe. A little less heron for a bit."
+    },
+    "research_questions": [
+     "How does Mary Oliver describe her own practice of attention in her essays (such as those in Upstream) and in her poems, and what do her words say about standing still and noticing?",
+     "What do sources such as MoMA and the National Gallery say about why Monet painted his water lily pond repeatedly, and what he was trying to capture?",
+     "What is documented about Monet's cataracts and their effect on his late water lily paintings, and how far do scholars say they explain his style?",
+     "What does research on slow looking at art, such as any named studies of how long visitors look at a work, suggest happens when people look longer?",
+     "How have writers or critics described close attention as both effortful and restful, and which named sources can support that framing?"
+    ],
+    "angle": "Begin with a still figure at the edge of a field or pond, then move between Oliver's written attention and Monet's painted attention, treating each as a deliberate practice. Offer 'work and rest at once' as the narrator's own reading, not a research finding, and keep claims about Oliver's habits and Monet's eyesight tied to named sources.",
+    "topics": [
+     "Attention",
+     "Art"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-10-poems-paintings-teach-us-look",
+    "planned_at": "2026-11-09T16:00:00",
+    "minutes": 18,
+    "demo": true
+   },
+   "finished": "2026-11-10T06:00:00",
+   "playback": {
+    "furthest_s": 868.0,
+    "duration_s": 1080,
+    "finished": false,
+    "last_played": "2026-11-10T07:58:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 375.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Did Monet really paint the same pond for thirty years?",
+     "reply": "Nearly: he painted his water lilies at Giverny from the late 1890s until he died in 1926.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261110-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "mention",
+     "position_s": 820.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Devotions, Mary Oliver",
+     "reply": null,
+     "outcome": "in_library",
+     "outcome_ref": "w-91a9de4a6e",
+     "session": "20261110-ask1",
+     "title": "Devotions",
+     "creator": "Mary Oliver",
+     "work_kind": "work"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-11-beauty-scarry",
+   "copy_from": "2026-11-11-beauty-scarry",
+   "card": {
+    "id": "plan-20261110-180000",
+    "for_morning": "2026-11-11",
+    "title": "What Beauty Asks of Us",
+    "overview": "Plato's ladder of love, Augustine and a face in Gilead: does beauty lift us past what we love?",
+    "summary": "You asked why something beautiful makes you want to be better. This chapter starts from a radio conversation with Elaine Scarry and climbs Plato's ladder of love, from one face to beauty itself. Augustine pushes back, and Marilynne Robinson's Gilead answers with a single face. It ends on attention, the word Iris Murdoch borrowed from Simone Weil.",
+    "decided": "branch",
+    "topics": [
+     "Beauty",
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-11-beauty-scarry",
+    "planned_at": "2026-11-11T18:00:00",
+    "mode": "surprise",
+    "research_questions": []
+   },
+   "finished": "2026-11-11T06:00:00",
+   "playback": {
+    "furthest_s": 2570.5,
+    "duration_s": 2570.52,
+    "finished": true,
+    "last_played": "2026-11-11T08:31:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 220.0,
+     "paragraph_id": "seg01-p12",
+     "sentence_id": "seg01-s044",
+     "text": "Is the ladder about leaving people behind?",
+     "reply": "Not quite: the lover keeps loving, but one beautiful body becomes a step toward beauty everywhere.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261111-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "question",
+     "position_s": 1440.0,
+     "paragraph_id": "seg05-p07",
+     "sentence_id": "seg05-s045",
+     "text": "Can you love one person and still climb?",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261111-160000",
+     "session": "20261111-ask1",
+     "seed": "s-a1bb156ddc"
+    },
+    {
+     "id": "m_0003",
+     "kind": "mention",
+     "position_s": 2490.0,
+     "paragraph_id": "seg08-p10",
+     "sentence_id": "seg08-s048",
+     "text": "On Beauty and Being Just, Elaine Scarry",
+     "reply": null,
+     "outcome": "in_library",
+     "outcome_ref": "w-b150ab2558",
+     "session": "20261111-ask2",
+     "title": "On Beauty and Being Just",
+     "creator": "Elaine Scarry",
+     "work_kind": "work"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-12-loving-one-person-still-reaching",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261111-160000",
+    "for_morning": "2026-11-12",
+    "title": "Loving One Person and Still Reaching Higher",
+    "overview": "Whether loving one particular person is a rung on Plato's ladder or a place to stay, and how Murdoch answers.",
+    "summary": "After the beauty chapter ended on one face and on attention, you asked whether you can love one person and still climb toward something larger. This chapter sets Plato's ascent beside Iris Murdoch's idea of love as a just and loving gaze at a real individual, and looks at the dispute over whether the ladder can account for loving persons at all. It closes with Mary Oliver's attention and devotion as a shorter coda, offered as a way of hearing the question rather than a settled answer. You'll come away with the main positions laid out, and with the question left open for you to hold.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "seed",
+     "ref": "s-a1bb156ddc",
+     "words": "Can you love one person and still climb?"
+    },
+    "research_questions": [
+     "What does Plato's ladder of love in the Symposium say about moving from loving one beautiful body to loving beauty itself, and what is the Diotima passage's exact sequence?",
+     "What is Gregory Vlastos's objection that the ladder treats persons as placeholders of predicates, and how do defenders of Plato respond using the Lysis and Phaedrus?",
+     "How does Iris Murdoch define love as attention to a particular individual in The Sovereignty of Good, and what does her mother-in-law example (M and D) show?",
+     "How does Murdoch relate attention to a real person to moral improvement, and does she treat it as a kind of ascent toward the Good?",
+     "Which Mary Oliver poems about devotion to one creature or place can be confirmed from reliable texts, and how does she use the word attention?"
+    ],
+    "angle": "Begin with the one face left at the end of the beauty chapter, then treat Vlastos's charge against Plato, Murdoch's reply in attention, and Scarry's link between beauty and fairness as a live dispute over whether attending to one person is itself the ascent. Bring in Oliver late and briefly, as the writer's own framing, never as a source who answers the ladder question.",
+    "topics": [
+     "Beauty",
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-12-loving-one-person-still-reaching",
+    "planned_at": "2026-11-11T16:00:00",
+    "minutes": 21,
+    "demo": true
+   },
+   "finished": "2026-11-12T06:00:00",
+   "playback": {
+    "furthest_s": 941.0,
+    "duration_s": 1260,
+    "finished": false,
+    "last_played": "2026-11-12T07:50:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 560.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "What does Murdoch mean by a just gaze?",
+     "reply": "Seeing someone as they really are, not as your own needs or fears would have them.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261112-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "note",
+     "position_s": 905.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Save the kestrel Murdoch saw out of her window",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261112-160000",
+     "session": "20261112-ask1",
+     "seed": "s-dad713cd0a"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-13-kestrel-outside-iris-murdochs-window",
+   "copy_from": null,
+   "card": {
+    "id": "plan-20261112-160000",
+    "for_morning": "2026-11-13",
+    "title": "The Kestrel Outside Iris Murdoch's Window",
+    "overview": "A hovering bird breaks an anxious mind's grip, and the chapter asks what that moment really shows about attention.",
+    "summary": "Last time the kestrel came up only in passing, without the passage that made it famous. This chapter begins with that passage: Murdoch pictures herself at her window, anxious and brooding, when she sees a hovering kestrel, and for a moment her self drops away. It asks what that moment shows about attention and beauty, and what it cannot show about becoming a better person. It also sets her view beside critics who say personal attention overlooks wider causes, and who find her thin on the emotional side of attending.",
+    "mode": "surprise",
+    "decided": "branch",
+    "source": {
+     "kind": "seed",
+     "ref": "s-dad713cd0a",
+     "words": "Save the kestrel Murdoch saw out of her window"
+    },
+    "research_questions": [
+     "What exactly does Murdoch write in the kestrel passage of The Sovereignty of Good, and what is the surrounding argument in the book?",
+     "How do scholars read the kestrel moment as unselfing, and what do they say it reveals about beauty and clear perception?",
+     "What does Murdoch say about how slowly moral change happens, and how does she connect a brief moment of attention to long-term moral life?",
+     "What are the main critiques of Murdoch's account of attention, such as neglect of structural causes and of the emotional side of attention, and how have defenders replied?",
+     "How does a kestrel actually hover, and does the bird Murdoch likely saw fit the strict sense of hovering?"
+    ],
+    "angle": "Start with the hovering bird as an image the listener can picture, then treat the kestrel as a starting point rather than a proof: a brief moment of unselfing set against Murdoch's own insistence that moral change is slow. Use the structural and emotional critiques as the counterweight, and be honest that Murdoch never claimed a glimpse of nature makes us good.",
+    "topics": [
+     "Birds",
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-13-kestrel-outside-iris-murdochs-window",
+    "planned_at": "2026-11-12T16:00:00",
+    "minutes": 20,
+    "demo": true
+   },
+   "finished": "2026-11-13T06:00:00",
+   "playback": {
+    "furthest_s": 338.0,
+    "duration_s": 1200,
+    "finished": false,
+    "last_played": "2026-11-13T07:35:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 290.0,
+     "paragraph_id": null,
+     "sentence_id": null,
+     "text": "Is a kestrel the bird that hovers over motorways?",
+     "reply": "Yes: it hangs on the wind over verges and fields, watching for voles.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261113-ask0"
+    }
+   ]
+  },
+  {
+   "folder": "2026-11-14-herons-hunt-standing-still",
+   "copy_from": "2026-11-14-herons-hunt-standing-still",
+   "card": {
+    "id": "plan-20261113-180000",
+    "for_morning": "2026-11-14",
+    "title": "Herons: Hunting by Standing Still",
+    "overview": "How a bird that barely moves became one of the marsh's most successful hunters.",
+    "summary": "How a bird that barely moves became one of the most successful hunters in the marsh, and what its patience says about paying attention.",
+    "decided": "continue",
+    "topics": [
+     "Birds",
+     "Attention"
+    ],
+    "status": "ready",
+    "chapter": "2026-11-14-herons-hunt-standing-still",
+    "planned_at": "2026-11-14T18:00:00",
+    "mode": "surprise",
+    "research_questions": []
+   },
+   "finished": "2026-11-14T06:00:00",
+   "playback": {
+    "furthest_s": 1035.9,
+    "duration_s": 1035.93,
+    "finished": true,
+    "last_played": "2026-11-14T09:12:00",
+    "plays": 1
+   },
+   "moments": [
+    {
+     "id": "m_0001",
+     "kind": "question",
+     "position_s": 402.0,
+     "paragraph_id": "seg02-p05",
+     "sentence_id": "seg02-s025",
+     "text": "Why do they stand on one leg?",
+     "reply": "Most likely to keep warm, by tucking one leg against the body.",
+     "outcome": "answered",
+     "outcome_ref": null,
+     "session": "20261114-ask0"
+    },
+    {
+     "id": "m_0002",
+     "kind": "question",
+     "position_s": 850.0,
+     "paragraph_id": "seg04-p01",
+     "sentence_id": "seg04-s005",
+     "text": "Do gardens make us notice like this?",
+     "reply": null,
+     "outcome": "became_chapter",
+     "outcome_ref": "plan-20261116-180000",
+     "session": "20261114-ask1",
+     "seed": "s-e63f2ac172"
+    },
+    {
+     "id": "m_0003",
+     "kind": "mention",
+     "position_s": 1000.0,
+     "paragraph_id": "seg04-p07",
+     "sentence_id": "seg04-s036",
+     "text": "Upstream, Mary Oliver",
+     "reply": null,
+     "outcome": "in_library",
+     "outcome_ref": "w-0497cfbe52",
+     "session": "20261114-ask2",
+     "title": "Upstream",
+     "creator": "Mary Oliver",
+     "work_kind": "work"
+    }
+   ]
+  }
+ ],
+ "up_next": {
+  "id": "plan-20261116-180000",
+  "for_morning": "2026-11-17",
+  "title": "Borrowed Scenery: Why Japanese Gardens Hide the View",
+  "overview": "Why Japanese gardens frame a distant view and hide part of it, and what that does to your attention.",
+  "summary": "During the heron chapter you asked whether gardens make us notice like this. This chapter starts in Kyoto, where some temple gardens borrow a mountain beyond their walls and screen off everything in between. It looks at shakkei, borrowed scenery, and at the old idea that a view half hidden asks more of you than one laid open. It ends back at your pond, with the question of what you would frame and what you would hide.",
+  "mode": "surprise",
+  "decided": "branch",
+  "source": {
+   "kind": "seed",
+   "ref": "s-e63f2ac172",
+   "words": "Do gardens make us notice like this?"
+  },
+  "research_questions": [],
+  "angle": "",
+  "request": null,
+  "notes": null,
+  "notes_added": [],
+  "topics": [
+   "Gardens",
+   "Attention"
+  ],
+  "status": "planned",
+  "planned_at": "2026-11-16T18:00:00",
+  "locked_at": null,
+  "chapter": null,
+  "error": null,
+  "plan_dir": null,
+  "demo": true
+ }
+}
