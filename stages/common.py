@@ -7,11 +7,13 @@ missing, and never overwrites an existing output without --force.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import threading
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -251,8 +253,35 @@ def seed_inputs(r: "Run", cfg: dict) -> dict:
 
 # --- listeners -----------------------------------------------------------------
 
+# The listener a server request is for (docs/tester-demo-design.md, Identity): the tester its cookie names,
+# set by server.py's middleware around the request. A ContextVar, so several testers' requests at once each
+# resolve their own folder; FastAPI's threadpool and the event stream inherit it. Threads started from a
+# request do not (threading.Thread starts with an empty context): they take pinned(cfg) instead.
+REQUEST_LISTENER: ContextVar[str | None] = ContextVar("request_listener", default=None)
+
+
+@contextlib.contextmanager
+def listener_scope(lid: str | None):
+    """Run the block as listener `lid` (None: as without a scope, the active listener)."""
+    token = REQUEST_LISTENER.set(lid)
+    try:
+        yield
+    finally:
+        REQUEST_LISTENER.reset(token)
+
+
+def pinned(cfg: dict) -> dict:
+    """cfg with the current listener's folder fixed in it (an absolute path), for code that hands cfg to a
+    thread: the thread then reads and writes that listener's files whatever request or listener comes next."""
+    return {**cfg, "listener_dir": os.path.abspath(listener_dir(cfg))}
+
+
 def active_listener_id() -> str:
-    """The listener in use: $WRITE_LISTEN_LISTENER, else listeners/active.json, else "ian"."""
+    """The listener in use: the request's (REQUEST_LISTENER), else $WRITE_LISTEN_LISTENER, else
+    listeners/active.json, else "ian"."""
+    scoped = REQUEST_LISTENER.get()
+    if scoped:
+        return scoped
     env = os.environ.get(LISTENER_ENV, "").strip()
     if env:
         return env

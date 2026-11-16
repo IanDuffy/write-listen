@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 from . import llm
-from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_dir, listener_profile, load_prompt
+from .common import PROMPTS_DIR, ROOT, Run, StageError, listener_dir, listener_profile, load_prompt, pinned
 
 TOOLS = json.loads((PROMPTS_DIR / "guide_tools.json").read_text(encoding="utf-8"))
 # What the Messages API takes: a tool may carry more for the voice agent (expects_response).
@@ -43,6 +43,8 @@ RETURNING_NO_NAME = ("(You have talked with this listener before, but no name of
                      "first meeting: don't introduce yourself or say what you do. If they ask your name, choose one "
                      "from the names below and keep it.)")
 NO_PROFILE_YET = "(nothing recorded about them yet)"  # common.listener_profile's says "first meeting"
+QUEUED_NOTE = ("Waiting its turn: other chapters are being made first, and this one starts as soon as one of "
+               "them is done. No time is known for that.")
 EARLIER_CHARS = 6000  # the end of a long conversation is what the guide needs when it comes back
 
 
@@ -76,7 +78,10 @@ def plain_status(status: dict) -> dict:
     state = status.get("state", "idle")
     out = {"state": {"idle": "no chapter yet", "making": "being made", "ready": "ready",
                      "problem": "stopped", "stopped": "stopped by the listener"}.get(state, state)}
-    if state == "making":
+    if state == "making" and status.get("queued"):  # the server's build limit (tester demo): not started yet
+        out["stage"] = "waiting its turn"
+        out["queued"] = QUEUED_NOTE
+    elif state == "making":
         out["stage"] = status.get("label") or "starting"
         if status.get("minutes_left") is not None:
             out["minutes_left"] = status["minutes_left"]
@@ -136,6 +141,9 @@ class Session:
 
     def __init__(self, cfg: dict, start, status, runs_dir: Path, rng: random.Random | None = None, fast=None,
                  own_only: bool = False):
+        # The listener's folder is fixed now: the tools run in whichever thread serves the next request, and
+        # memory passes in threads of their own, so nothing may resolve the listener again later.
+        cfg = pinned(cfg)
         self.cfg, self.start_fn, self.status_fn, self.runs_dir = cfg, start, status, runs_dir
         self.fast = fast
         # own_only (the live page): get_status speaks of this conversation's chapter, or of one being made
