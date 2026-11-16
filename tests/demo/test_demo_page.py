@@ -265,6 +265,74 @@ def test_the_chapters_end_hands_back_instead_of_the_end_hold(demo):
     assert "debrief" in p.body()
 
 
+def test_the_chapters_end_reports_the_whole_chapter_heard(demo):
+    """Review: I'm done and the end both report state "done"; the end reports the whole chapter as chapter_t,
+    I'm done where it stopped (demo/debrief.py reads chapter_t)."""
+    w = demo
+    p = start_tester_reading(w, 1, 2)
+    for pid in w.paragraphs():
+        p.wait(f"L.feed.cur && L.feed.cur.id === '{pid}' && L.feed.cur.sentAt")
+        read_through(p, w, pid)
+    words = sum(len(x["text"].split()) for x in w.paragraphs().values())
+    got = w.reported(state="done")
+    assert abs(got["chapter_t"] - words / 2.5) < 0.01
+
+
+def test_im_done_part_way_reports_where_it_stopped(demo):
+    w = demo
+    p = start_tester_reading(w, 1, 2)
+    p.say(" ".join(w.paragraphs()["s1-p01"]["text"].split()[:4]))
+    p.wait("L.feed.cur && L.feed.cur.matched >= 3")
+    p.page.click("#done")
+    got = w.reported(state="done")
+    assert got["chapter_t"] < 3  # four words heard, not the chapter
+
+
+def test_a_done_debrief_is_never_handed_back_to_again(demo, cfg):
+    """Review: a second chapter's end (or I'm done) started a second full debrief whose summary overwrote the
+    first. Once study/debrief.json says done, the chapter just ends and I'm done isn't shown."""
+    w = demo
+    lis = Path(cfg["listener_dir"])
+    (lis / "study").mkdir(parents=True, exist_ok=True)
+    (lis / "study" / "debrief.json").write_text(json.dumps({"done": True, "session": "s1"}))
+    p = start_tester_reading(w, 1, 2)
+    assert p.L("L.debriefDone")
+    p.wait("document.body.classList.contains('reading')")
+    assert not p.shown("#done") and "in-chapter" not in p.body()
+    for pid in w.paragraphs():
+        p.wait(f"L.feed.cur && L.feed.cur.id === '{pid}' && L.feed.cur.sentAt")
+        read_through(p, w, pid)
+    p.wait("L.phase === 'ended'", timeout=4000)
+    p.page.wait_for_timeout(500)
+    assert not p.js("window.__interview.length") and not p.L("L.handingBack")
+    assert w.notes["handback_end"] not in p.instructions()
+
+
+def test_a_testers_refused_mic_asks_for_it_never_typing(demo):
+    """Review: a tester's mic refused fell back to the typed chat, which testers can't use."""
+    w = demo
+    p = w.open_demo()
+    p.js("() => { window.__denied = navigator.mediaDevices.getUserMedia; "
+         "navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('denied', 'NotAllowedError'); }; }")
+    p.page.click("#orb")
+    p.wait("L.micRefused && L.phase === 'idle'")
+    assert p.page.text_content("#line") == "I need your microphone to talk with you"
+    assert p.shown("#mic-again") and not p.shown("#form") and not p.L("L.typing")
+    assert not p.post_bodies("api/chat/start") and "No microphone" not in p.page.text_content("#transcript")
+    p.js("() => { navigator.mediaDevices.getUserMedia = window.__denied; }")
+    p.page.click("#mic-again")
+    p.wait("L.started && L.phase === 'talk'")
+    assert not p.L("L.micRefused") and not p.shown("#mic-again")
+
+
+def test_without_tester_mode_a_refused_mic_still_types(demo):
+    p = demo.open_demo(tester=False)
+    p.js("() => { navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('denied', 'NotAllowedError'); }; }")
+    p.page.click("#orb")
+    p.wait("L.typing")
+    assert not p.L("L.micRefused") and not p.shown("#mic-again")
+
+
 def test_a_guide_that_stays_silent_still_hands_back(demo):
     w = demo
     p = start_tester_reading(w)

@@ -201,9 +201,10 @@ def page_closes(timeline: list, page: dict) -> bool:
     asked = answered = False
     for e in timeline:
         if e.get("who") == "guide":
-            if asked and answered and thanks.search(e.get("text", "")):
+            text = IV.norm_quotes(e.get("text"))  # as the page straightens curly apostrophes
+            if asked and answered and thanks.search(text):
                 return e is [x for x in timeline if x.get("who") == "guide"][-1]
-            if ask.search(e.get("text", "")):
+            if ask.search(text):
                 asked, answered = True, False
         elif e.get("who") == "listener" and asked:
             answered = True

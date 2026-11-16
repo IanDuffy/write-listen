@@ -358,15 +358,18 @@ def test_summary_skips_a_silent_debrief_and_never_overwrites_a_finished_one(cfg,
     assert IV.summarize(cfg, study, "quiet", {}) is None and not seen
     write_debrief(study, "full", FULL, done=True)
     assert IV.summarize(cfg, study, "full", {"person": "Sam"})
+    first = (study / "debrief_summary.md").read_text()
     write_debrief(study, "later", FULL[:2], done=False)
     (study / "debrief.json").write_text(json.dumps({"done": True, "session": "full"}))
-    assert IV.summarize(cfg, study, "later", {"person": "Sam"}) is None and len(seen) == 1
+    # a later debrief (a second chapter's) writes its own summary; the first completed one stays
+    assert IV.summarize(cfg, study, "later", {"person": "Sam"}) == study / "debrief_summary-later.md"
+    assert (study / "debrief_summary.md").read_text() == first and len(seen) == 2
 
 
 def test_after_end_summarises_a_debrief_then_fetches_the_audio(cfg, tmp_path, monkeypatch):
     order = []
-    monkeypatch.setattr(IV, "summarize", lambda cfg, study, sid, values: order.append(("summary", sid)))
-    monkeypatch.setattr(IV, "fetch_audio", lambda cfg, study, live_id: order.append(("audio", live_id)))
+    monkeypatch.setattr(IV, "summarize", lambda cfg, study, sid, values, **k: order.append(("summary", sid)))
+    monkeypatch.setattr(IV, "fetch_audio", lambda cfg, study, live_id, **k: order.append(("audio", live_id)))
     IV._after_end(cfg, tmp_path, {"id": "s1", "mode": "debrief", "live_id": "live_3", "values": {}})
     IV._after_end(cfg, tmp_path, {"id": "s2", "mode": "intro", "live_id": "live_4", "values": {}})
     assert order == [("summary", "s1"), ("audio", "live_3"), ("audio", "live_4")]
@@ -382,3 +385,119 @@ def test_the_name_comes_from_the_transcript_when_the_tool_never_came():
                            said("interviewer", "Hannah. Did I get that right?")]) == "Hannah"
     assert confirmed_name([said("listener", "Hi, I'm Siobhan, sorry")]) == "Siobhan"
     assert confirmed_name([said("interviewer", "Sorry, did I get that right?"), said("listener", "I'm not sure")]) is None
+
+
+def test_a_name_needs_a_real_capital_and_is_never_a_stop_word():
+    """Review: CONFIRM_RE was case-insensitive throughout, so "Sam. Got it. Did I get that right?" saved "Got it"."""
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    assert confirmed_name([said("interviewer", "Sam. Got it. Did I get that right?")]) == "Sam"
+    assert confirmed_name([said("interviewer", "So it's Sam. Did I get that right?")]) == "Sam"
+    assert confirmed_name([said("interviewer", "Okay, Sam Lee. Is that right?")]) == "Sam Lee"
+    assert confirmed_name([said("interviewer", "Got it. Did I get that right?")]) is None
+    assert confirmed_name([said("interviewer", "Great, thanks. Is that right?")]) is None
+    for line in ("I'm good.", "it's fine", "I'm Good, thanks", "It's Fine.", "Yeah, I'm Okay"):
+        assert confirmed_name([said("listener", line)]) is None, line
+
+
+def test_a_short_answer_to_the_name_question_is_the_name():
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    ask = said("interviewer", "Before we start, what's your name?")
+    assert confirmed_name([ask, said("listener", "Sam.")]) == "Sam"
+    assert confirmed_name([ask, said("listener", "It’s Sam Lee")]) == "Sam Lee"
+    assert confirmed_name([ask, said("listener", "Oh, Priya")]) == "Priya"
+    assert confirmed_name([ask, said("listener", "Good.")]) is None
+    assert confirmed_name([ask, said("listener", "Fine, thanks.")]) is None
+    # only the answer right after the question; a capitalised word later on is not a name
+    assert confirmed_name([ask, said("listener", "Why do you ask?"), said("listener", "London.")]) is None
+    assert confirmed_name([said("interviewer", "How's your day?"), said("listener", "Busy.")]) is None
+    # a confirmation still wins over the answer
+    assert confirmed_name([ask, said("listener", "Hana."), said("interviewer", "Hannah. Did I get that right?")]) == "Hannah"
+
+
+def test_curly_apostrophes_count_server_side():
+    """Review: GPT-Live writes didn’t, so the closing question and I’m never matched."""
+    got = IV.questions_asked([{"who": "interviewer", "text": "Is there anything I didn’t ask that I should have?"}])
+    assert got["closing"]
+    assert IV.confirmed_name([{"who": "listener", "text": "Hi, I’m Siobhan"}]) == "Siobhan"
+    assert re.search(IV.PAGE_DEFAULTS["closing_question"], "Anything I didn’t ask?", re.I)
+
+
+def test_a_complete_debrief_with_curly_apostrophes_counts_as_done(world):
+    said = [(w, t.replace("didn't", "didn’t")) for w, t in FULL]
+    sid = debrief_session(world, said)
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "closed"}).json()["done"]
+
+
+def test_a_second_debrief_never_overwrites_the_first_completed_one(world):
+    sid1 = debrief_session(world, FULL)
+    world.client.post("/api/interview/tool", json={"sid": sid1, "name": "end_debrief"})
+    world.client.post("/api/interview/end", json={"sid": sid1, "how": "done"})
+    study = world.dir / "study"
+    first = json.loads((study / "debrief.json").read_text())
+    sid2 = debrief_session(world, FULL)  # a second chapter's, if one happens anyway
+    world.client.post("/api/interview/tool", json={"sid": sid2, "name": "end_debrief"})
+    assert world.client.post("/api/interview/end", json={"sid": sid2, "how": "done"}).json()["done"]
+    assert json.loads((study / "debrief.json").read_text()) == first and first["session"] == sid1
+    own = json.loads((study / f"debrief-{sid2}.json").read_text())
+    assert own["done"] and own["session"] == sid2
+    sid3 = debrief_session(world, FULL[:2])  # one left halfway: its own state too
+    assert world.client.post("/api/interview/end", json={"sid": sid3, "how": "pagehide"}).json()["done"] is False
+    assert json.loads((study / "debrief.json").read_text()) == first
+    assert json.loads((study / f"debrief-{sid3}.json").read_text())["done"] is False
+    assert IV.debrief_done(world.dir)
+
+
+def recording_client(calls, on_get=None):
+    class Http:
+        def get(self, url, headers=None, timeout=None, follow_redirects=None):
+            calls.append(url)
+            if on_get:
+                on_get()
+            return types.SimpleNamespace(status_code=200, content=tiny_wav())
+    return Http()
+
+
+def test_after_end_writes_nothing_into_a_deleted_or_reset_testers_folder(cfg, tmp_path, monkeypatch):
+    """Review: the recording came minutes later and recreated listeners/t-x/study/ after a delete, or put the
+    old voice into the reset folder."""
+    import shutil
+    monkeypatch.setattr(live_session, "api_key", lambda: "sk-test")
+    lis = tmp_path / "t-sam"
+    (lis / "study").mkdir(parents=True)
+    (lis / "tester.json").write_text(json.dumps({"created": "2026-11-16T09:00:00"}))
+    who = IV.identity(lis)
+    check = lambda: IV.still_theirs(lis, who)  # noqa: E731
+
+    calls = []
+    deleted = lambda: shutil.rmtree(lis)  # noqa: E731 (deleted in /admin while the download ran)
+    assert IV.fetch_audio(cfg, lis / "study", "live_1", sleep=lambda s: None, client=recording_client(calls, deleted),
+                          check=check) is None
+    assert calls and not lis.exists()
+
+    (lis / "study").mkdir(parents=True)
+    (lis / "tester.json").write_text(json.dumps({"created": "2026-11-16T09:00:00", "reset_at": "2026-11-16T10:00:00"}))
+    calls.clear()  # reset before it started: not one try
+    assert IV.fetch_audio(cfg, lis / "study", "live_2", sleep=lambda s: None, client=recording_client(calls),
+                          check=check) is None
+    assert not calls and not list((lis / "study").iterdir())
+
+    who = IV.identity(lis)  # the same tester still: it lands
+    got = IV.fetch_audio(cfg, lis / "study", "live_3", sleep=lambda s: None, client=recording_client(calls),
+                         check=lambda: IV.still_theirs(lis, who))
+    assert got == lis / "study" / "live_3.mp3" and got.exists()
+
+
+def test_the_summary_is_not_written_for_a_reset_tester(cfg, tmp_path, monkeypatch):
+    seen = summary_client(monkeypatch)
+    lis = tmp_path / "t-sam"
+    write_debrief(lis / "study", "s1", FULL, done=True)
+    (lis / "tester.json").write_text(json.dumps({"created": "c"}))
+    s = {"id": "s1", "mode": "debrief", "live_id": None, "values": {"person": "Sam"}, "listener": lis,
+         "who": ("c", "reset later")}
+    IV._after_end(cfg, lis / "study", s)
+    assert not seen and not (lis / "study" / "debrief_summary.md").exists()
+    s["who"] = IV.identity(lis)
+    IV._after_end(cfg, lis / "study", s)
+    assert len(seen) == 1 and (lis / "study" / "debrief_summary.md").exists()

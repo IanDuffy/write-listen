@@ -119,6 +119,13 @@ def chapter_context(listener_dir: Path, cfg: dict | None = None) -> dict:
         minutes = sum(int(s["target_words"]) for s in sections) / wps / 60
     else:
         minutes = float(((cfg or {}).get("demo") or {}).get("chapter_minutes") or 10)
-    heard = minutes if player.get("state") == "done" else float(player.get("chapter_t") or 0) / 60
+    # chapter_t is how far they heard, also when they tapped I'm done (state "done" too, part-way: the page's
+    # chapter end reports the whole chapter); only a finished reading without one counts as heard to the end.
+    try:
+        heard = float(player["chapter_t"]) / 60 if player.get("chapter_t") is not None else None
+    except (TypeError, ValueError):
+        heard = None
+    if heard is None:
+        heard = minutes if player.get("state") == "done" else 0.0
     return {"run": root.name, "title": title, "summary": summary,
             "minutes_heard": round(min(heard, minutes), 1), "minutes": round(minutes, 1)}

@@ -20,8 +20,11 @@ the tester spoke in as a past conversation with the guide, which would then skip
     log.jsonl                                costs (GPT-Live per session, kind "interviewer"; the summary's Claude call)
     <live_id>.mp3 (or .wav if ffmpeg fails)  the session's recording from OpenAI (store: true), fetched after
                                              live.archive_wait_seconds in a background thread
-    debrief.json                             {done, finished_at, questions_asked, session}
-    debrief_summary.md                       one Claude call (prompts/debrief_summary.md)
+    debrief.json                             {done, finished_at, questions_asked, session}: the first completed
+                                             debrief's, never overwritten by a later one (debrief-<sid>.json)
+    debrief_summary.md                       one Claude call (prompts/debrief_summary.md); the first completed
+                                             debrief's, a later one writes debrief_summary-<sid>.md
+    After the end, nothing is written once the folder is deleted or reset (tester.json's stamps changed).
 
 Routes (mount(app, cfg); part A's middleware scopes each request to the tester's listener folder):
 
@@ -41,6 +44,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -84,7 +89,7 @@ PAGE_DEFAULTS = {
     "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
     "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
     "handover": r"\bhand(ing)? you over\b",
-    "closing_question": r"\banything I didn'?t ask\b",
+    "closing_question": r"\banything I didn['’]?t ask\b",  # the page also straightens curly quotes first
     "thanks": r"\bthank(s| you)\b",
 }
 
@@ -97,7 +102,7 @@ QUESTIONS = {
     4: r"\bto a friend\b",
     5: r"tomorrow morning|make the difference",
 }
-CLOSING = r"anything I didn'?t ask"
+CLOSING = r"anything I didn'?t ask"  # matched, like QUESTIONS, on norm_quotes(text)
 
 BACKGROUND: list[threading.Thread] = []  # after-end work (audio, summary): tests join these
 _FILE_LOCK = threading.Lock()
@@ -127,32 +132,72 @@ def _fill(text: str, **fields) -> str:
 
 
 # The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_intro.md, step 2); a
-# correction gets a second confirmation, so the last one counts. Failing that, the tester's own "I'm Sam".
-CONFIRM_RE = re.compile(r"\b([A-Z][A-Za-z'\u2019-]+(?: [A-Z][A-Za-z'\u2019-]+)?)[.,!]?\s+(?:did i get that right|is that right|"
-                        r"have i got that right|did i say that right)", re.I)
-SELF_RE = re.compile(r"\b(?i:i'?m|i am|my name is|my name's|this is|it'?s|call me)\s+([A-Z][A-Za-z'\u2019-]+)")
-NOT_NAMES = {"Yes", "Yeah", "Sorry", "Okay", "Ok", "Hi", "Hello", "Thanks", "Thank", "Right", "Great", "So", "And",
-             "Well", "Um", "Uh", "Sure", "Just", "Not", "Here", "Fine", "Good", "Ready", "Curious", "Happy"}
+# correction gets a second confirmation, so the last one counts. Failing that, the tester's short answer to
+# the name question ("Sam.", "It's Sam Lee"), then their own "I'm Sam" anywhere. Only the phrases are
+# case-insensitive: a name needs a real capital, and a word in NOT_NAMES is never one ("Sam. Got it. Did I
+# get that right?" once saved "Got it"). Matched on norm_quotes(text).
+NAME = r"[A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+)?"
+CONFIRM_RE = re.compile(r"\b(" + NAME + r")[.,!]?\s+"
+                        r"(?:(?i:got it|okay|ok|right|great|lovely|perfect|nice|thanks|thank you)[.,!]?\s+)?"
+                        r"(?i:did i get that right|is that right|have i got that right|did i say that right)")
+SELF_RE = re.compile(r"\b(?i:i'?m|i am|my name is|my name's|this is|it'?s|call me)\s+(" + NAME + ")")
+NAME_ASKED_RE = re.compile(r"(?i:\byour name\b|\bcall you\b|\bwho am i (talking|speaking) (to|with)\b)")
+ANSWER_RE = re.compile(r"^\s*(?:(?i:it'?s|i'?m|i am|my name is|my name's|call me|just|oh|um|uh|yeah|yes|sure|"
+                       r"hi|hello|hey)[,.]?\s+)*(" + NAME + r")\s*[.!,]?\s*$")
+NOT_NAMES = {"Yes", "Yeah", "Yep", "No", "Nope", "Sorry", "Okay", "Ok", "Alright", "All", "Hi", "Hello", "Hey",
+             "Thanks", "Thank", "Right", "Great", "So", "And", "Well", "Um", "Uh", "Oh", "Ah", "Hmm", "Sure",
+             "Just", "Not", "Here", "Fine", "Good", "Ready", "Curious", "Happy", "Got", "It", "It's", "Its",
+             "That", "That's", "This", "Lovely", "Perfect", "Nice", "Cool", "Wonderful", "Brilliant", "Awesome",
+             "Excellent", "Glad", "Exactly", "Correct", "Totally", "Did", "Is", "Have", "I", "I'm", "My", "The",
+             "A", "An", "What", "Wait", "Pretty", "Really", "Very", "Busy", "Tired", "Doing"}
+
+
+def norm_quotes(text) -> str:
+    """Curly apostrophes as straight ones: GPT-Live's transcripts may write didn\u2019t and I\u2019m."""
+    return str(text or "").replace("\u2019", "'").replace("\u2018", "'")
+
+
+def _a_name(found: str | None) -> str | None:
+    """A matched name up to its first stop word; None when its first word isn't a name."""
+    words = (found or "").split()
+    if not words or words[0] in NOT_NAMES:
+        return None
+    out = []
+    for w in words:
+        if w in NOT_NAMES:
+            break
+        out.append(w)
+    return " ".join(out)
 
 
 def confirmed_name(lines: list[dict]) -> str | None:
     """The name from an intro's transcript lines ({who, text}): the interviewer's last confirmation, else the
-    tester's own introduction. None when neither is there (the guide then asks, as it always could)."""
+    tester's short answer right after it asked their name, else their own introduction. None when none is
+    there (the guide then asks, as it always could)."""
+    said = [(x.get("who"), norm_quotes(x.get("text"))) for x in lines]
     found = None
-    for x in lines:
-        if x.get("who") != "interviewer":
-            continue
-        for m in CONFIRM_RE.finditer(str(x.get("text") or "")):
-            word = m.group(1).split()[0]
-            if word.capitalize() not in NOT_NAMES and word[0].isupper():
-                found = m.group(1)
+    for who, text in said:
+        if who == "interviewer":
+            for m in CONFIRM_RE.finditer(text):
+                found = _a_name(m.group(1)) or found
     if found:
         return found
-    for x in lines:
-        if x.get("who") == "listener":
-            m = SELF_RE.search(str(x.get("text") or ""))
-            if m and m.group(1) not in NOT_NAMES:
-                return m.group(1)
+    asked = False
+    for who, text in said:
+        if who == "interviewer":
+            asked = bool(NAME_ASKED_RE.search(text))
+        elif who == "listener" and asked:
+            m = ANSWER_RE.match(text)
+            name = _a_name(m.group(1)) if m else None
+            if name:
+                return name
+            asked = False  # only the answer right after the question
+    for who, text in said:
+        if who == "listener":
+            for m in SELF_RE.finditer(text):
+                name = _a_name(m.group(1))
+                if name:
+                    return name
     return None
 
 
@@ -268,7 +313,7 @@ def questions_asked(lines: list[dict]) -> dict:
     {"asked": [1, 2, ...], "in_order": bool, "closing": bool}."""
     first: dict[int, int] = {}
     closing = False
-    said = [str(x.get("text") or "") for x in lines if x.get("who") == "interviewer"]
+    said = [norm_quotes(x.get("text")) for x in lines if x.get("who") == "interviewer"]
     for i, text in enumerate(said):
         for q, pat in QUESTIONS.items():
             if q not in first and re.search(pat, text, re.I):
@@ -308,55 +353,117 @@ def write_json_atomic(p: Path, obj) -> None:
     tmp.replace(p)
 
 
+def read_json(p: Path) -> dict:
+    try:
+        got = json.loads(Path(p).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+# --- the debrief's state: the first completed one is kept ---------------------------------------------
+
+def state_path(study: Path, sid: str) -> Path:
+    """Where session `sid` keeps its debrief state: debrief.json, unless another session already completed
+    it; a later debrief (a second chapter's, if one happens anyway) then writes debrief-<sid>.json."""
+    first = read_json(study / "debrief.json")
+    if first.get("done") and first.get("session") != sid:
+        return study / f"debrief-{sid}.json"
+    return study / "debrief.json"
+
+
+def debrief_done(listener_dir: Path) -> bool:
+    """Whether this tester's debrief is done (study/debrief.json): the page then never hands back again."""
+    return bool(read_json(Path(listener_dir) / "study" / "debrief.json").get("done"))
+
+
+# --- whose folder: after-end work never writes into a deleted or reset tester's folder -------------------
+
+def identity(listener_dir: Path) -> tuple | None:
+    """The tester a folder holds now: tester.json's created and reset stamps (a reset makes a fresh folder with
+    the same created time and a new reset_at), or None for a folder without one."""
+    p = Path(listener_dir) / "tester.json"
+    if not p.exists():
+        return None
+    rec = read_json(p)
+    return (rec.get("created"), rec.get("reset_at"))
+
+
+def still_theirs(listener_dir: Path, who: tuple | None) -> bool:
+    """The folder still exists and holds the same tester as when the session started."""
+    return Path(listener_dir).is_dir() and identity(listener_dir) == who
+
+
 # --- after a session --------------------------------------------------------------------------------
 
-def fetch_audio(cfg: dict, study: Path, live_id: str, *, sleep=time.sleep, client=None) -> Path | None:
-    """The session's recording from OpenAI (store: true) into study/<live_id>.wav, then .mp3 by ffmpeg (the
-    wav is removed once the mp3 is made; kept if ffmpeg fails). OpenAI makes it some time after the session
-    ends: wait live.archive_wait_seconds, then try every archive_retry_seconds, demo.interviewer.audio_tries
-    times."""
+def _into(study: Path, src: Path, check) -> Path | None:
+    """Move a finished file into study/, only while `check()` holds; study/ is made inside the listener folder,
+    never the folder itself (a deleted tester's stays deleted)."""
+    if check and not check():
+        return None
+    if not study.parent.is_dir():
+        return None
+    study.mkdir(exist_ok=True)
+    dest = study / src.name
+    shutil.move(str(src), str(dest))
+    return dest
+
+
+def fetch_audio(cfg: dict, study: Path, live_id: str, *, sleep=time.sleep, client=None, check=None) -> Path | None:
+    """The session's recording from OpenAI (store: true) into study/<live_id>.mp3 by ffmpeg (study/<live_id>.wav
+    if ffmpeg fails). OpenAI makes it some time after the session ends: wait live.archive_wait_seconds, then try
+    every archive_retry_seconds, demo.interviewer.audio_tries times. It is downloaded and converted in a
+    scratch folder and moved in at the end; `check()` (the folder is still this tester's) is asked before every
+    try and before the move, and a False stops it quietly (the tester was deleted or reset meanwhile)."""
     from stages import tts
     from voice.gpt_live import session as live_session
     L, I = cfg["live"], icfg(cfg)
-    wav, mp3 = study / f"{live_id}.wav", study / f"{live_id}.mp3"
-    if mp3.exists():
-        return mp3
+    if (study / f"{live_id}.mp3").exists():
+        return study / f"{live_id}.mp3"
     sleep(float(L.get("archive_wait_seconds", 120)))
-    got = None
-    for k in range(int(I["audio_tries"])):
-        if k:
-            sleep(float(L.get("archive_retry_seconds", 10)))
+    with tempfile.TemporaryDirectory(prefix="wl-interviewer-") as tmp:
+        wav, mp3 = Path(tmp) / f"{live_id}.wav", Path(tmp) / f"{live_id}.mp3"
+        got = None
+        for k in range(int(I["audio_tries"])):
+            if k:
+                sleep(float(L.get("archive_retry_seconds", 10)))
+            if check and not check():
+                return None
+            try:
+                got = live_session.recording(cfg, live_id, wav, client=client)
+            except Exception as e:  # noqa: BLE001 (network, no key: try again, then give up quietly)
+                print(f"  interviewer: recording {live_id}: {type(e).__name__}: {e}")
+                got = None
+            if got:
+                break
+        if not got:
+            print(f"  interviewer: no recording for {live_id} after {I['audio_tries']} tries")
+            return None
         try:
-            got = live_session.recording(cfg, live_id, wav, client=client)
-        except Exception as e:  # noqa: BLE001 (network, no key: try again, then give up quietly)
-            print(f"  interviewer: recording {live_id}: {type(e).__name__}: {e}")
-            got = None
-        if got:
-            break
-    if not got:
-        print(f"  interviewer: no recording for {live_id} after {I['audio_tries']} tries")
-        return None
-    try:
-        tts.ffmpeg(["-i", str(wav), "-c:a", "libmp3lame", "-q:a", "4", str(mp3)])
-    except StageError as e:
-        print(f"  interviewer: {live_id}.wav kept ({e})")
-        return wav
-    wav.unlink(missing_ok=True)
-    return mp3
+            tts.ffmpeg(["-i", str(wav), "-c:a", "libmp3lame", "-q:a", "4", str(mp3)])
+        except StageError as e:
+            print(f"  interviewer: {live_id}.wav kept ({e})")
+            return _into(study, wav, check)
+        return _into(study, mp3, check)
 
 
-def summarize(cfg: dict, study: Path, sid: str, values: dict) -> Path | None:
+def summarize(cfg: dict, study: Path, sid: str, values: dict, *, check=None) -> Path | None:
     """debrief_summary.md from one debrief (one Claude call; its cost goes to study/log.jsonl). Only when
-    they said something; it replaces an earlier summary only when this debrief is the finished one (or there
-    is none yet), so a debrief left halfway never overwrites a complete one."""
+    they said something. It is the first completed debrief's: this debrief writes it when it is that one, or
+    when there is no summary yet and no debrief is done; any other (one left halfway after an earlier summary,
+    or a later debrief after one completed) writes debrief_summary-<sid>.md, so nothing overwrites it.
+    `check()` (the folder is still this tester's) is asked before the call and before the write."""
     from stages import llm
+    if check and not check():
+        return None
     lines = read_lines(study / f"debrief-{sid}.jsonl")
     if not any(x.get("who") == "listener" and x.get("text") for x in lines):
         return None
     out = study / "debrief_summary.md"
-    state = json.loads((study / "debrief.json").read_text(encoding="utf-8")) if (study / "debrief.json").exists() else {}
-    if out.exists() and not (state.get("done") and state.get("session") == sid):
-        return None
+    state = read_json(study / "debrief.json")
+    first = state.get("done") and state.get("session") == sid
+    if not (first or (not out.exists() and not state.get("done"))):
+        out = study / f"debrief_summary-{sid}.md"
     intros = sorted(study.glob("intro-*.jsonl"))
     prompt = load_prompt("debrief_summary", person=values.get("person") or "", title=values.get("title") or "",
                          summary=values.get("summary") or "", heard=values.get("heard") or "",
@@ -368,7 +475,7 @@ def summarize(cfg: dict, study: Path, sid: str, values: dict) -> Path | None:
                    role=I["summary_role"], effort=I["summary_effort"], max_tokens=16000, preapproved=True,
                    label="debrief summary", log_extra={"kind": "interviewer", "session": sid})
     text = res.text.strip()
-    if not text:
+    if not text or (check and not check()) or not study.is_dir():
         return None
     tmp = out.with_name(out.name + ".tmp")
     tmp.write_text(text + "\n", encoding="utf-8")
@@ -377,15 +484,19 @@ def summarize(cfg: dict, study: Path, sid: str, values: dict) -> Path | None:
 
 
 def _after_end(cfg: dict, study: Path, s: dict) -> None:
-    """In the background: the summary first (it doesn't need the audio), then the recording."""
+    """In the background: the summary first (it doesn't need the audio), then the recording. Both stop quietly
+    once the tester's folder is gone or holds someone else (deleted or reset in /admin meanwhile)."""
+    ld = s.get("listener") or study.parent
+    who = s["who"] if "who" in s else identity(ld)
+    check = lambda: still_theirs(ld, who)  # noqa: E731
     if s["mode"] == "debrief":
         try:
-            summarize(cfg, study, s["id"], s["values"])
+            summarize(cfg, study, s["id"], s["values"], check=check)
         except Exception as e:  # noqa: BLE001 (a summary that fails leaves the transcript, which is the record)
             print(f"  interviewer: summary for {s['id']} failed: {type(e).__name__}: {e}")
     if s.get("live_id") and icfg(cfg).get("store", True):
         try:
-            fetch_audio(cfg, study, s["live_id"])
+            fetch_audio(cfg, study, s["live_id"], check=check)
         except Exception as e:  # noqa: BLE001
             print(f"  interviewer: audio for {s['id']} failed: {type(e).__name__}: {e}")
 
@@ -473,7 +584,7 @@ def mount(app, cfg: dict) -> None:
 
     def mark_done(s: dict, how: str) -> None:
         q = questions_asked(read_lines(s["path"]))
-        write_json_atomic(s["study"] / "debrief.json", {
+        write_json_atomic(state_path(s["study"], s["id"]), {
             "done": True, "finished_at": datetime.now().isoformat(timespec="seconds"), "questions_asked": q["asked"],
             "in_order": q["in_order"], "closing": q["closing"], "session": s["id"], "how": how})
 
@@ -488,19 +599,19 @@ def mount(app, cfg: dict) -> None:
         if s["mode"] == "debrief":
             q = questions_asked(read_lines(s["path"]))
             out["questions_asked"] = q["asked"]
-            state_p = s["study"] / "debrief.json"
-            state = json.loads(state_p.read_text(encoding="utf-8")) if state_p.exists() else {}
+            state_p = state_path(s["study"], s["id"])
+            state = read_json(state_p)
             if not state.get("done"):
                 # Delegation misses tools: a debrief that asked all five and the closing question, and thanked
                 # them, is finished whether or not end_debrief came.
-                said = [x.get("text") or "" for x in read_lines(s["path"]) if x.get("who") == "interviewer"]
+                said = [norm_quotes(x.get("text")) for x in read_lines(s["path"]) if x.get("who") == "interviewer"]
                 thanked = any(re.search(PAGE_DEFAULTS["thanks"], t, re.I) for t in said[-2:])
                 if s.get("ended_by_tool") or (q["asked"] == [1, 2, 3, 4, 5] and q["closing"] and thanked):
                     mark_done(s, "complete" if not s.get("ended_by_tool") else "end_debrief")
                 else:
                     write_json_atomic(state_p, {"done": False, "finished_at": None, "questions_asked": q["asked"],
                                                 "session": s["id"], "how": how})
-            out["done"] = json.loads(state_p.read_text(encoding="utf-8")).get("done", False)
+            out["done"] = bool(read_json(state_p).get("done"))
         t = threading.Thread(target=_after_end, args=(cfg, s["study"], s), name=f"interviewer-{s['id']}", daemon=True)
         BACKGROUND.append(t)
         t.start()
@@ -539,7 +650,7 @@ def mount(app, cfg: dict) -> None:
             sid = new_sid(study)
             s = {"id": sid, "mode": req.mode, "live_id": got["id"], "t0": time.monotonic(), "last": time.monotonic(),
                  "listener": ld.resolve(), "study": study, "path": study / f"{req.mode}-{sid}.jsonl",
-                 "values": values, "name": None, "tools": []}
+                 "values": values, "name": None, "tools": [], "who": identity(ld)}
             open_[sid] = s
         write(s, {"who": "session", "mode": req.mode, "live_id": got["id"], "voice": sc["audio"]["output"]["voice"],
                   "model": sc["model"], "backend": sc["delegation"]["responses"]["model"],
