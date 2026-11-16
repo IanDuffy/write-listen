@@ -392,3 +392,26 @@ def test_ending_a_chat_never_blocks_the_event_loop(demo):
             assert not ended  # still waiting for the turn
         th.join(5)
         assert ended == [{"ended": False}]
+
+
+def test_a_page_open_during_a_reset_runs_no_pass_on_the_conversation_let_go(demo):
+    """Review: drop() runs outside testers._LOCK, so the tester's open page (its /api/events tick) recreates
+    their state before the folder moves, and that state's catch-up pass paid to remember the conversation
+    drop() had let go, its cost line landing in the fresh folder."""
+    mod = sys.modules["demo.testers"]  # the stand-in testers module, as in hooked_app
+    mod.ON_CHANGE = []
+    app = server.create_app(cfg=demo.cfg, remember_on_start=True)
+    drop = mod.ON_CHANGE[0]
+    a = TestClient(app, headers={"cookie": "wl_tester=tokA"})
+    sa = a.post("/api/chat/start").json()["session"]
+    a.post("/api/chat", json={"message": "I pour concrete", "session": sa})
+    for t in app.state.state_for("t-alice").chat["passes"]:
+        t.join(5)
+    before = getattr(demo.resp, "memory_calls", 0)
+    drop("t-alice", "reset")  # the conversation is let go without a memory pass
+    st = app.state.state_for("t-alice")  # the page's next tick, before the folder moves
+    for t in st.chat["passes"]:
+        t.join(5)
+    assert getattr(demo.resp, "memory_calls", 0) == before
+    assert "skipped" in (demo.L / "t-alice" / "sessions" / f"{sa}.done").read_text()
+

@@ -749,7 +749,15 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         """The admin resets, deletes or revokes a tester: their chapter being made stops and their
         conversation is let go (no memory pass: the folder is being cleared), and memory passes in flight
         finish, so nothing keeps writing into the folder that replaces it. With no state here (a server
-        restarted while the tester's build went on), a throwaway pipeline finds and stops the build."""
+        restarted while the tester's build went on), a throwaway pipeline finds and stops the build.
+        On a reset or delete every conversation still waiting for its pass is marked skipped first: the
+        tester's open page recreates their state within a second (state_for), and its catch-up pass
+        would otherwise pay to remember what is being cleared."""
+        if action in ("reset", "delete"):
+            with common.listener_scope(lid):
+                for p in memory.pending_sessions(common.pinned(cfg)):
+                    p.with_suffix(".done").write_text(f"skipped: the tester was {action} by the admin\n",
+                                                      encoding="utf-8")
         with registry:
             st = states.pop(lid, None)
         if st is None:
