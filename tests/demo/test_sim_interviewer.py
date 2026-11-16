@@ -233,3 +233,12 @@ def test_the_page_close_needs_the_closing_question_answered_first():
     assert not SI.page_closes([g("Is there anything I didn't ask?"), g("Thank you.")], page)
     assert SI.page_closes([g("Is there anything I didn't ask?"), me("No."), g("Thank you, Sam.")], page)
     assert not SI.page_closes([g("Is there anything I didn't ask?"), me("No."), g("Thank you, Sam."), g("Oh, one more:")], page)
+
+
+def test_the_page_close_reads_curly_apostrophes():
+    """Review: GPT-Live writes didn’t; the closing question never matched, so the debrief never closed."""
+    g = lambda s: {"who": "guide", "text": s}
+    me = lambda s: {"who": "listener", "text": s}
+    assert SI.page_closes([g("Is there anything I didn’t ask?"), me("No."), g("Thank you, Sam.")], IV.PAGE_DEFAULTS)
+    old = {**IV.PAGE_DEFAULTS, "closing_question": r"\banything I didn'?t ask\b"}  # a config with the old pattern
+    assert SI.page_closes([g("Is there anything I didn’t ask?"), me("No."), g("Thank you, Sam.")], old)

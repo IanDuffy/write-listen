@@ -234,8 +234,9 @@
 
   const rx = (k) => { try { return I.S[k] ? new RegExp(I.S[k], "i") : null; } catch (e) { return null; } };
 
-  function lineSaid(text, t) {  // a line of the voice's, finished
+  function lineSaid(raw, t) {  // a line of the voice's, finished
     I.said++;
+    const text = String(raw || "").replace(/[‘’]/g, "'");  // transcripts may write didn’t: the patterns use '
     const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks");
     if (I.mode === "intro" && hand && hand.test(text) && !I.act) { I.graceAt = t; I.graceAct = "handover"; }
     if (I.mode === "debrief" && ask && ask.test(text)) I.closingAsked = t;

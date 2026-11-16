@@ -285,6 +285,24 @@ def test_debrief_ends_after_the_thanks_and_reports_done(site, page):
     assert json.loads((site.study / "debrief.json").read_text())["done"]
 
 
+def test_curly_apostrophes_still_close_the_debrief_on_the_thanks(site, page):
+    """Review: GPT-Live writes didn’t; the closing question never matched, the thanks never closed it and
+    debrief.json stayed not done (the card came back for ever)."""
+    page.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await Interview.start("debrief", { stream: s, onDone: (x) => { window.__done = x; } }); }""")
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { Interview.I.S.closing_question = String.raw`\\banything I didn'?t ask\\b`; }")  # a config's old pattern
+    page.say("Is there anything I didn’t ask that I should have?")
+    time.sleep(0.4)
+    page.emit({"type": "session.input_transcript.delta", "delta": "No, that’s all."})
+    time.sleep(0.4)
+    page.say("Thank you, Sam. That really helps.")  # and no end_debrief: the page closes after act_grace_ms
+    page.wait("window.__done", timeout=6000)
+    tool = page.posted("api/interview/tool")
+    assert tool and tool[-1]["name"] == "end_debrief" and tool[-1]["by"] == "page"
+    assert json.loads((site.study / "debrief.json").read_text())["done"]
+
+
 def test_no_product_words_in_the_gate_or_its_client(site, page):
     for path in ("/", "/interview.js"):
         text = urllib.request.urlopen(site.base + path).read().decode()

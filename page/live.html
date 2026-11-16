@@ -149,6 +149,10 @@
           border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
   body.tester #reset, body.tester #halt, body.tester #type, body.tester #form { display: none !important; }
   body.tester.in-chapter #done { display: inline-block; }  /* live.js inChapter() */
+  /* A tester's mic refused: the line asks for it (the gate's words) and Try again asks once more; no typing. */
+  #mic-again { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
+               border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+  body.tester.mic-refused.idle #mic-again { display: inline-block; }
   /* The reveal: handed over by the interviewer, the neutral dot on the plain ground warms to the coral circle
      while the guide connects (about 2 s), and the rest of the screen fades in at the guide's first word. The
      cool-down during the debrief goes back the other way. */
@@ -200,6 +204,7 @@
   <button id="retry">Try again</button>
   <button id="halt">Stop making this chapter</button>
   <button id="done">I'm done</button>
+  <button id="mic-again" type="button">Try again</button>
   <button id="last"></button>
   <ul id="sections" aria-label="Parts of the chapter" style="display:none"></ul>
   <audio id="audio" preload="none"></audio>

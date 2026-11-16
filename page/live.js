@@ -84,6 +84,8 @@
     handoffOpen: null,      // this conversation's session opened with the handoff note: the name in it
     handingBack: null,      // "end" | "done": the guide is closing, then the interviewer's debrief
     debriefing: false,      // the interviewer's debrief is on (the screen cooled)
+    debriefDone: false,     // /api/live/start's `debrief_done`: no handback again (a later chapter just ends)
+    micRefused: false,      // a tester's mic was refused: the line asks for it, a tap or Try again asks again
     card: null,             // this conversation's chapter card (/api/live/card)
   };
   if (L.tester) L.skin.add("tester");
@@ -177,11 +179,19 @@
         meters.input(L.stream);
       }
     } catch (e) {
+      if (L.tester) {  // testers can't type (it's hidden): ask for the mic, as the gate does, and a tap asks again
+        L.micRefused = true;
+        L.phase = resume && resume.startsWith("paused") ? "paused" : resume ? "resting" : "idle";
+        if (L.phase === "paused") notLive(resume);
+        render();
+        return false;
+      }
       note("No microphone, so let's type instead.");
       if (resume && resume.startsWith("paused")) { notLive(resume); render(); }
       else if (resume) { L.phase = "resting"; render(); }
       return false;
     }
+    L.micRefused = false;
     if (mine !== L.epoch) { if (!L.pc && L.phase !== "connecting") notLive(null); return true; }
     const pc = new RTCPeerConnection();
     L.pc = pc;
@@ -217,6 +227,7 @@
       if (mine !== L.epoch) { pc.close(); return true; }
       L.session = got.session; L.liveId = got.live_id;
       if (!resume && got.handoff && L.handoff) { L.handoffOpen = L.handoff.name; L.handoff = null; }  // kept for a retry until it opens
+      if (!resume) L.debriefDone = !!got.debrief_done;
       if (!resume && got.continue) {
         L.cont = { ...got.continue };
         L.own = got.continue.run;
@@ -1114,6 +1125,8 @@
     }
     quietPost("/api/fast/position", { run: L.run, state, section: n, piece: at ? at.i : 0, t, chapter_t: total, ...extra });
   }
+  // The whole chapter's seconds at position()'s pace: what a reading heard to its end reports as heard.
+  const chapterSecs = () => L.feed.items.reduce((sum, x) => sum + x.p.text.split(/\s+/).length / 2.5, 0);
 
   // Ready while the guide was away (resting, GPT-Live closed): a session opens just to say so (the mic stays
   // off), then closes again; play, the circle or a voice brings it back.
@@ -1347,8 +1360,8 @@
   function chapterDone() {
     L.finished = true; L.replaying = false;
     mark("done");
-    position("done");
-    if (L.tester && !L.handingBack && (L.phase === "reading" || L.phase === "waiting")) return handback("end");  // no end hold
+    position("done", { chapter_t: chapterSecs() });  // heard to the end (I'm done reports where it stopped)
+    if (L.tester && !L.debriefDone && !L.handingBack && (L.phase === "reading" || L.phase === "waiting")) return handback("end");  // no end hold
     if (L.phase === "reading" || L.phase === "waiting") { mute(true); L.phase = "ended"; L.endedAt = now(); }
     renderMarkers();
     render();
@@ -1360,7 +1373,7 @@
   // archive of a chapter heard to the end) and the interviewer's debrief starts on the same mic, the screen cooled.
   const HANDED_BACK = /\b(hand(ing)?|pass(ing)?)\b.*\bback\b|\bback to\b|\bwelcomed\b/i;  // its words for handing back
   async function handback(kind) {
-    if (L.handingBack || L.debriefing) return;
+    if (L.handingBack || L.debriefing || L.debriefDone) return;  // one debrief per tester: later chapters just end
     L.handingBack = kind;
     L.handbackTries = 0;
     mark("handback", kind);
@@ -1445,7 +1458,7 @@
   // chapter stopped part-way (else a tester whose chapter failed would have no way on to the debrief).
   const DURING = ["reading", "aside", "paused", "pausing", "seeking", "waiting", "checkin"];
   function inChapter() {
-    return !L.handingBack && !L.debriefing && (DURING.includes(L.phase) || (L.readStarted && ["talk", "resting"].includes(L.phase)));
+    return !L.handingBack && !L.debriefing && !L.debriefDone && (DURING.includes(L.phase) || (L.readStarted && ["talk", "resting"].includes(L.phase)));
   }
 
   // Handed over by the interviewer (page/interview.js on the gate, contract "Demo chapter"): the gate's mic stream
@@ -1889,6 +1902,7 @@
       case "handback": return "";
     }
     if (L.offer) return `${title} is ready`;
+    if (L.micRefused && L.phase === "idle") return "I need your microphone to talk with you";  // the gate's words
     if (s.state === "making") return s.label || "Working";
     if (s.state === "problem") return s.message || "Something went wrong.";
     if (L.phase === "talk") return "";
@@ -1902,6 +1916,7 @@
     document.body.className = [shown, L.phase, L.pc ? "voice" : "", L.pc ? (speaking ? "speaking" : "listening") : "",
       L.thinking ? "thinking" : "", L.phase === "resting" ? "resting" : "", L.typing ? "typing" : "",
       L.phase !== "idle" ? "talking" : "", offerShown() ? "offer" : "", inChapter() ? "in-chapter" : "",
+      L.micRefused ? "mic-refused" : "",
       ...L.skin].filter(Boolean).join(" ");
     $("line").textContent = lineText();
     renderCard();
@@ -2081,7 +2096,7 @@
     switch (L.phase) {
       case "idle":
       case "done":  // a new conversation (connect forgets the finished chapter: it is never read again by itself)
-        if (!(await connect())) { L.typing = true; render(); typedChat(null); }
+        if (!(await connect()) && !L.tester) { L.typing = true; render(); typedChat(null); }  // testers can't type
         return;
       case "talk": return offerShown() ? startFromOffer("tap") : rest();  // the mic off (tap to talk again)
       case "resting":
@@ -2104,6 +2119,11 @@
   $("stop").addEventListener("click", endConversation);
   // I'm done (tester mode, shown during the chapter): the guide closes and hands them back to the interviewer.
   $("done").addEventListener("click", () => { if (L.tester && inChapter()) handback("done"); });
+  // A tester's mic refused: Try again asks for it once more, from this tap (phones need a gesture).
+  $("mic-again").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (L.micRefused && L.phase === "idle") connect();
+  });
   // A tester's page talks with the interviewer at the end: its script, unless the gate page brought it already.
   if (L.tester && !window.Interview) {
     const s = document.createElement("script");

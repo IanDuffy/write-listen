@@ -86,9 +86,19 @@ def test_chapter_context_heard_part_way(tmp_path):
     assert got["minutes"] == round(words / 2.5 / 60, 1) and got["minutes_heard"] == 0.1
 
 
+def test_im_done_part_way_is_heard_part_way(cfg, tmp_path):
+    """Review: I'm done writes state "done" too, and was told as the whole chapter heard (10 minutes for 2)."""
+    lis = tmp_path / "t-sam"
+    live_run(lis / "chapters", "r", locked=(1,), player={"state": "done", "chapter_t": 120.0})
+    got = debrief.chapter_context(lis, cfg)
+    assert got["minutes"] == 10.0 and got["minutes_heard"] == 2.0
+    from demo import interviewer
+    assert interviewer.values_from("Sam", got, [])["heard"] == "They heard about 2 of its 10 minutes."
+
+
 def test_chapter_context_heard_to_the_end_and_unfinished_chapters(cfg, tmp_path):
     lis = tmp_path / "t-sam"
-    root = live_run(lis / "chapters", "r", locked=(1,), player={"state": "done", "chapter_t": 3.0})
+    root = live_run(lis / "chapters", "r", locked=(1,), player={"state": "done"})
     got = debrief.chapter_context(lis, cfg)
     assert got["minutes"] == round(1500 / 2.5 / 60, 1) == got["minutes_heard"]  # the outline's target words
     assert got["summary"] == "Why her list of levers still matters."  # no card: the outline's angle

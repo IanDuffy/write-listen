@@ -2,8 +2,9 @@
 
     POST /api/live/start      {"sdp", "handoff"?}: a new conversation in one GPT-Live session; the page's WebRTC
                               offer goes to OpenAI with the guide's instructions and tools, the answer comes back.
-                              `handoff` {"name"}: a tester handed over by the interviewer (Tester Demo)
-    POST /api/live/resume     {"session", "sdp"}: the same conversation in a new GPT-Live session (the old
+                              `handoff` {"name"}: a tester handed over by the interviewer (Tester Demo);
+                              the answer's `debrief_done`: their debrief is done, so no handback again
+    POST /api/live/resume    {"session", "sdp"}: the same conversation in a new GPT-Live session (the old
                               one dropped, rested too long, or neared its time limit), told the conversation so far
     POST /api/live/tool       {"session", "name", "args"}: a tool the backend called, run in the conversation
     POST /api/live/line       {"session", "who", "text", ...}: a line for the transcript
@@ -37,7 +38,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from faststart import base as fast_base
-from stages import guide
+from stages import common, guide
 from stages.common import ROOT, Run, StageError
 
 from . import chapter as live_chapter
@@ -180,6 +181,13 @@ def handoff_note(handoff: dict | None) -> str | None:
     return live_session.notes()["handoff"].replace("{name}", name)
 
 
+def debrief_done(cfg: dict) -> bool:
+    """Tester Demo: this tester's debrief is done (study/debrief.json, demo/interviewer.py), so the page never
+    hands back to the interviewer again: a later chapter just ends, and I'm done isn't shown."""
+    got = fast_base.read_json(common.listener_dir(cfg) / "study" / "debrief.json", {})
+    return bool(isinstance(got, dict) and got.get("done"))
+
+
 def let_go(pipe) -> None:
     """Reset memory: the newest live chapter is not this listener's to pick back up (continuing() skips a
     player.json in state "idle")."""
@@ -269,7 +277,7 @@ def mount(app, cfg: dict, pipe, chat) -> None:
                 session.record("page", text=notes["opening_words"].replace("{words}", words) if words else notes["opened"],
                                mode="live")
         return {"session": session.id, "live_id": got["id"], "sdp": got["sdp"], "continue": cont,
-                "handoff": bool(handoff)}
+                "handoff": bool(handoff), "debrief_done": debrief_done(cfg)}
 
     @app.post("/api/live/resume")
     def resume(req: Resume) -> dict:
