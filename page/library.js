@@ -119,13 +119,18 @@
   .lt-orb { flex: none; width: 44px; height: 44px; border-radius: 50%; background: var(--accent); opacity: .85; }
   html.has-orb .lt-orb { display: none; }
   .lt-stripwrap { position: relative; }
-  .lt-strip { display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-left: 22px;
-              padding: 2px 0 6px 22px; scrollbar-width: none; overscroll-behavior-x: contain; }
+  /* --lt-side (the gutter before the card in view) and --lt-tail (room after the last card) are set by layoutStrip():
+     22px on a phone; on a laptop the card in view sits in the middle. The strip's height follows the cards in view
+     (fitHeight), so a tall Up next card doesn't push the scrubber down while another is showing. */
+  .lt-strip { display: flex; align-items: flex-start; gap: 14px; overflow-x: auto; overflow-y: hidden;
+              scroll-snap-type: x mandatory; scroll-padding-left: var(--lt-side, 22px);
+              padding: 2px 0 6px var(--lt-side, 22px); scrollbar-width: none; overscroll-behavior-x: contain;
+              transition: height .3s ease; }
   .lt-strip::-webkit-scrollbar { display: none; }
   .lt-card { position: relative; flex: 0 0 calc(100% - 78px);  /* the strip less 100px (its 22px gutter is padding) */ min-height: 330px; box-sizing: border-box; border-radius: 22px;
              padding: 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
              scroll-snap-align: start; scroll-snap-stop: always; }
-  .lt-spacer { flex: 0 0 64px; }  /* room for Up next to snap to the start: 100px - the 22px gutter - the 14px gap */
+  .lt-spacer { flex: 0 0 var(--lt-tail, 64px); }  /* room for Up next to come into view like the others */
   .lt-ch { color: #fff; background: var(--lt-teal); }
   .lt-ch.coral { background: var(--lt-coral); }
   .lt-ch.amber { background: var(--lt-amber); color: #1E1A17; }  /* white on amber fails contrast: ink instead */
@@ -147,6 +152,14 @@
   .lt-upkick { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--lt-accent-text); margin: 0; }
   .lt-up .lt-ctitle { margin: 2px 0 4px; }
   .lt-upover { margin: 0; font-size: 15px; line-height: 1.4; }
+  .lt-up:not(.open) .lt-ctitle, .lt-up:not(.open) .lt-upover { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
+  .lt-up:not(.open) .lt-ctitle { -webkit-line-clamp: 3; }
+  .lt-up:not(.open) .lt-upover { -webkit-line-clamp: 2; }
+  #up-more { display: flex; flex-direction: column; gap: 8px; }
+  #up-more[hidden] { display: none; }
+  .lt-more { align-self: flex-start; font: inherit; font-size: 13px; font-weight: 600; color: var(--lt-accent-text); background: none;
+             border: 0; padding: 0; min-height: 32px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .lt-more:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
   .lt-upsum { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
   .lt-upline { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
   #library.building .lt-upline { color: var(--lt-accent-text); }
@@ -155,11 +168,11 @@
   .lt-pill { font: inherit; font-size: 14px; font-weight: 600; min-height: 44px; padding: 0 20px; border-radius: 22px; cursor: pointer;
              color: var(--lt-accent-text); background: none; border: 1.5px solid var(--accent); }
   .lt-pill:disabled { opacity: .5; cursor: default; }
-  .lt-arrow { display: none; position: absolute; top: 143px; z-index: 2; width: 44px; height: 44px; border-radius: 50%;
+  .lt-headr { display: flex; align-items: center; gap: 8px; }
+  .lt-arrow { display: none; flex: none; width: 44px; height: 44px; border-radius: 50%;
               border: 1px solid var(--line); background: var(--lt-surface); color: var(--fg); cursor: pointer; padding: 0;
               align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
   .lt-arrow:disabled { opacity: .35; cursor: default; }
-  #strip-prev { left: 6px; } #strip-next { right: 6px; }
   @media (hover: hover) and (pointer: fine), (min-width: 600px) { .lt-arrow { display: flex; } }
   .lt-scrubwrap { display: flex; flex-direction: column; gap: 4px; }
   .lt-scrub { position: relative; height: 44px; cursor: pointer; touch-action: none; border-radius: 8px; }
@@ -194,6 +207,13 @@
   #lib-hint, #live { margin-top: -8px !important; }
   /* the chapter page (sketch D) */
   #lib-page { display: flex; flex-direction: column; gap: 18px; padding: 0 22px; }
+  /* A laptop: the app's wide column; several cards in view, the one in view in the middle; the chapter page wider. */
+  @media (min-width: 900px) {
+    #library:not(.lib-wide) { max-width: 1100px; }
+    .lt-card { flex: 0 0 320px; }
+    #from-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    #lib-page { max-width: 720px; width: 100%; box-sizing: border-box; margin: 0 auto; }
+  }
   #library a.lt-back { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; font-weight: 500;
                        text-decoration: none; color: var(--fg); align-self: flex-start; margin-top: -16px; }
   .lt-phead { display: flex; flex-direction: column; gap: 6px; }
@@ -241,7 +261,11 @@
   <div id="lib-home">
     <div class="lt-head">
       <div><h2 class="lt-title">Library</h2><p class="lt-sub">Swipe through what you’ve explored</p></div>
-      <a class="lt-orb" href="/" aria-label="Talk to your guide"></a>
+      <div class="lt-headr">
+        <button class="lt-arrow" id="strip-prev" aria-label="Previous chapter">${ICON_L}</button>
+        <button class="lt-arrow" id="strip-next" aria-label="Next chapter">${ICON_R}</button>
+        <a class="lt-orb" href="/" aria-label="Talk to your guide"></a>
+      </div>
     </div>
     <div class="lt-stripwrap">
       <div id="strip" class="lt-strip" role="region" aria-roledescription="carousel" aria-label="Your chapters, oldest first, then Up next">
@@ -249,15 +273,16 @@
           <p class="lt-upkick" id="up-kicker">Up next · Tonight</p>
           <h3 class="lt-ctitle" id="up-title"></h3>
           <p class="lt-upover" id="up-overview"></p>
-          <p class="lt-upsum" id="up-summary"></p>
-          <ul class="lib-notes" id="up-notes" aria-label="Your notes for it" hidden></ul>
+          <div id="up-more" hidden>
+            <p class="lt-upsum" id="up-summary"></p>
+            <ul class="lib-notes" id="up-notes" aria-label="Your notes for it" hidden></ul>
+          </div>
+          <button class="lt-more" id="up-more-toggle" aria-expanded="false" aria-controls="up-more" hidden>Read more</button>
           <p class="lt-upline" id="up-line" aria-live="polite"></p>
           <div class="lt-uprow"><button class="lt-pill" id="change" hidden>Change</button><button class="lt-link" id="note-open">Add a note</button></div>
         </section>
         <div class="lt-spacer" aria-hidden="true"></div>
       </div>
-      <button class="lt-arrow" id="strip-prev" aria-label="Previous chapter">${ICON_L}</button>
-      <button class="lt-arrow" id="strip-next" aria-label="Next chapter">${ICON_R}</button>
     </div>
     <p id="lib-hint" hidden>Your guide introduces it live, so Play turns on the microphone.</p>
     <p id="live" aria-live="polite"></p>
@@ -1035,6 +1060,7 @@
       if (!tl.chapters.length) i = 0;
     }
     T.i = -1;
+    layoutStrip();
     if (refocus) {  // a poll rebuilt the cards under the keyboard: back to the same control
       const it = T.items.find((x) => x.run === refocus.run);
       const f = it && (it.el.querySelector(refocus.sel) || it.el.querySelector("a.lt-ctitle"));
@@ -1044,6 +1070,43 @@
   }
 
   function offsetOf(i) { return T.items[i].el.offsetLeft - T.items[0].el.offsetLeft; }
+
+  const wide = matchMedia("(min-width: 900px)");
+  function layoutStrip() {  // the gutter before the card in view, and room after the last one to come into view
+    const strip = $("strip"), first = T.items[0] && T.items[0].el;
+    if (!first || !strip.clientWidth) return;
+    const W = strip.clientWidth, w = first.offsetWidth;
+    const side = wide.matches ? Math.max(22, Math.round((W - w) / 2)) : 22;
+    strip.style.setProperty("--lt-side", `${side}px`);
+    strip.style.setProperty("--lt-tail", `${Math.max(0, W - side - w - 14)}px`);
+  }
+  function fitHeight() {  // as tall as the cards mostly in view (the card in view, its neighbours on a laptop)
+    const strip = $("strip");
+    if (!T.items.length || !strip.clientWidth) return;
+    const W = strip.clientWidth, left = offsetOf(Math.max(0, T.i));
+    const side = parseFloat(strip.style.getPropertyValue("--lt-side")) || 22;
+    let h = 0;
+    T.items.forEach((it, k) => {
+      const x = offsetOf(k) - left + side, w = it.el.offsetWidth;
+      const seen = Math.max(0, Math.min(x + w, W) - Math.max(x, 0)) / w;
+      if (k === T.i || seen >= 0.5) h = Math.max(h, it.el.offsetHeight);
+    });
+    if (h) strip.style.height = `${h + 8}px`;
+  }
+  function openUp(on) {  // Up next's Read more: the summary and the notes
+    const up = $("up"), t = $("up-more-toggle");
+    up.classList.toggle("open", on);
+    show($("up-more"), on);
+    t.setAttribute("aria-expanded", String(on));
+    t.textContent = on ? "Show less" : "Read more";
+    fitHeight();
+  }
+  $("up-more-toggle").addEventListener("click", () => {
+    const on = !$("up").classList.contains("open");
+    if (on && T.items[T.i] && T.items[T.i].run) goTo(T.items.length - 1);  // opened from a peek: bring it into view
+    openUp(on);
+  });
+  wide.addEventListener("change", () => { layoutStrip(); if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) }); fitHeight(); });
 
   function goTo(i, smooth = true) {
     if (!T.items.length) return;
@@ -1061,6 +1124,8 @@
     $("strip-prev").disabled = i <= 0;
     $("strip-next").disabled = i >= T.items.length - 1;
     T.items.forEach((x, k) => x.el.classList.toggle("lt-current", k === i));
+    if (T.items[i].run && $("up").classList.contains("open")) openUp(false);  // Up next out of view: closed again
+    fitHeight();
     placeHandle();
     renderFrom();
     paint();  // the intro hint follows the card in view
@@ -1235,7 +1300,13 @@
     else if (e.key === "Home") { e.preventDefault(); goTo(0); }
     else if (e.key === "End") { e.preventDefault(); goTo(T.items.length - 1); }
   });
-  addEventListener("resize", () => { if (T.tl) { buildScrubber(T.tl); if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) }); } });
+  addEventListener("resize", () => {
+    if (!T.tl) return;
+    layoutStrip();
+    buildScrubber(T.tl);
+    if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) });
+    fitHeight();
+  });
 
   // A moment as a line: "You asked: “…”", "You mentioned *Upstream*, Mary Oliver", "You saved: “…”".
   function momentText(m, into) {
@@ -1444,10 +1515,14 @@
     const notes = (card && card.notes_added) || [];
     $("up-notes").replaceChildren(...notes.map((n) => el("li", null, n.text || "")));
     show($("up-notes"), notes.length > 0);
+    const more = !!(card && (card.summary || notes.length));
+    show($("up-more-toggle"), more);
+    if (!more && $("up").classList.contains("open")) openUp(false);
     if (L.mode !== "change") $("up-line").textContent = up.line || "";
     show($("change"), !!up.change);
     show($("note-open"), up.state !== "off");
     renderTimeline(s);
+    requestAnimationFrame(fitHeight);  // a card's text may have changed its height
     if (!host.classList.contains("lib-settings-open")) fillSettings(s.settings);
     paint();
   }
@@ -1648,8 +1723,10 @@
     if (run && location.hash !== shownHash) scrollTo(0, 0);
     else if (!run && inChapter) requestAnimationFrame(() => {  // back home: the strip and the scrubber were hidden
       scrollTo(0, homeScroll);
+      layoutStrip();  // measured while hidden, the strip had no width
       if (T.tl) buildScrubber(T.tl);  // its labels are spaced by its width
       if (T.items.length) $("strip").scrollTo({ left: offsetOf(T.i) });
+      fitHeight();
     });
     shownHash = location.hash;
     inChapter = !!run;

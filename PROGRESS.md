@@ -85,8 +85,14 @@ Written down here rather than worked around; what was done instead, if anything,
 - **Only the latest chapter plays**, on both screens and in its transcript (the overnight round 2 let any chapter
   play; the spec says latest only). The library's Play button is `#lib-play`: the orb page has its own `#play`, a
   clash the old library had too.
-- **The Up next card** is taller than the chapter cards when its summary is long (the cards align to the top rather
-  than all stretch). In view, "From this chapter" becomes "Where it came from": the moment the card came from.
+- **The Up next card** shows its title (three lines at most) and overview (two), and a small "Read more" that opens
+  the summary and the listener's notes; it closes again when another card comes into view. The strip is as tall as
+  the cards mostly in view (on a phone, the card in view), so a long Up next never pushes the scrubber down while
+  another card shows (Ian, 2026-11-16). In view, "From this chapter" becomes "Where it came from".
+- **A laptop (900 px and up)** gets the app's wide column (1,100 px, the transcript view's): cards 320 px, the one
+  in view in the middle with its neighbours either side, the arrows beside the Library heading (never over a card),
+  From this chapter in three columns, the chapter page at 720 px. The spec's 480 px column was replaced on Ian's
+  look (2026-11-16). A phone is unchanged.
 - **The chapter page's Play** starts the morning flow, as the card's does; a marker's "Play from" plays the recording.
 
 - **Demo dates and lengths.** The two real chapters keep their real audio, so their lengths are real: *What Beauty

@@ -412,3 +412,69 @@ def test_two_chapters_on_one_day_each_get_their_own_tick(site, browser):
     pg.mouse.click(box["x"] + box["width"] * xs[i] / 100, box["y"] + box["height"] / 2)
     settled(pg, i)
     assert page.errors == []
+
+
+# --- after Ian's look (2026-11-16): a laptop layout; Up next's Read more; the strip as tall as the cards in view ---
+
+LONG = ("During the heron chapter you asked whether gardens make us notice like this. This chapter starts in Kyoto, "
+        "where some temple gardens borrow a mountain beyond their walls and screen off everything in between. It "
+        "looks at shakkei, borrowed scenery, and at the old idea that a view half hidden asks more of you than one "
+        "laid open. It ends back at your pond, with the question of what you would frame and what you would hide.")
+
+
+def strip_height(pg):
+    return pg.evaluate("document.getElementById('strip').getBoundingClientRect().height")
+
+
+def test_up_next_reads_more_and_the_strip_follows_the_card_in_view(site, browser):
+    profiles.write_json(site.listener / "up_next.json", {**site.card, "summary": LONG, "notes_added": [
+        {"t": "2026-11-16T19:00:00", "text": "More on the mountain.", "via": "typed"}]})
+    page = open_page(site, browser)
+    pg = page.p
+    last = len(CARDS)
+    settled(pg, last)
+    assert not pg.is_visible("#up-summary") and pg.is_visible("#up-more-toggle")
+    assert pg.inner_text("#up-more-toggle") == "Read more" and pg.get_attribute("#up-more-toggle", "aria-expanded") == "false"
+    chapter_h = pg.evaluate("document.querySelector('.lt-ch.lt-current').offsetHeight")
+    assert strip_height(pg) <= chapter_h + 10  # the latest in view: the strip is its height, not Up next's
+    pg.focus("#scrubber")
+    pg.keyboard.press("End")
+    settled(pg, last + 1)
+    pg.click("#up-more-toggle")
+    assert pg.is_visible("#up-summary") and pg.is_visible("#up-notes") and pg.inner_text("#up-more-toggle") == "Show less"
+    pg.wait_for_timeout(400)
+    up_h = pg.evaluate("document.getElementById('up').offsetHeight")
+    assert up_h > chapter_h and abs(strip_height(pg) - (up_h + 8)) < 2  # opened: the strip grows with it
+    pg.keyboard.press("ArrowLeft")  # away from Up next: closed again, the strip back to the latest's height
+    settled(pg, last)
+    pg.wait_for_timeout(400)
+    assert not pg.is_visible("#up-summary") and strip_height(pg) <= chapter_h + 10
+    assert page.errors == []
+
+
+def test_read_more_on_a_peeking_up_next_brings_it_into_view(site, browser):
+    profiles.write_json(site.listener / "up_next.json", {**site.card, "summary": LONG})
+    page = open_page(site, browser)
+    pg = page.p
+    settled(pg, len(CARDS))
+    pg.evaluate("document.getElementById('up-more-toggle').click()")
+    settled(pg, len(CARDS) + 1)
+    assert pg.is_visible("#up-summary") and page.errors == []
+
+
+def test_a_laptop_shows_several_cards_with_the_one_in_view_in_the_middle(site, browser):
+    page = open_page(site, browser, width=1280, height=800)
+    pg = page.p
+    settled(pg, len(CARDS))
+    lib = pg.evaluate("document.getElementById('library').getBoundingClientRect().width")
+    assert lib > 900  # the wide column, not the phone's
+    box = pg.evaluate("(() => { const r = document.querySelector('.lt-ch.lt-current').getBoundingClientRect(); return [r.left, r.right, innerWidth]; })()")
+    assert abs((box[0] + box[1]) / 2 - box[2] / 2) < 30  # in the middle
+    seen = pg.evaluate("[...document.querySelectorAll('#strip .lt-card')].filter((c) => { const r = c.getBoundingClientRect(); return r.right > 0 && r.left < innerWidth; }).length")
+    assert seen >= 3
+    arrows = pg.evaluate("(() => { const a = document.getElementById('strip-next').getBoundingClientRect(), s = document.getElementById('strip').getBoundingClientRect(); return a.bottom <= s.top; })()")
+    assert arrows  # the arrows sit above the cards, never over them
+    pg.click("#strip-prev")
+    settled(pg, len(CARDS) - 1)
+    assert pg.evaluate("getComputedStyle(document.getElementById('from-list')).gridTemplateColumns.split(' ').length") == 3
+    assert page.errors == []
