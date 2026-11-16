@@ -16,6 +16,9 @@ from fakes import FakeAnthropic, Responder, fake_synthesize  # noqa: E402
 def cfg():
     c = load_config()
     c["narration"]["voice_id"] = "voice_fake"
+    # The ElevenLabs page and agents are what these tests pin; tests of the live voice
+    # (tests/live/) set live.provider to gpt_live themselves.
+    c["live"]["provider"] = "elevenlabs"
     return c
 
 

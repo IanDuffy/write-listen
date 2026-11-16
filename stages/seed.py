@@ -9,6 +9,7 @@ same file. Its words also feed the chapter's opening callback.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from pathlib import Path
@@ -44,9 +45,20 @@ def find_run(text: str, runs_dir: Path | None = None, ok=None) -> str | None:
     the run folders ok(folder) accepts (cli.py: the runs of the mode that was asked for)."""
     root = runs_dir or RUNS_DIR
     found = [p for p in root.glob("*/00_source/seed.md")
-             if p.read_text(encoding="utf-8") == text and not (p.parent.parent / "10_audio" / "chapter.mp3").exists()
+             if p.read_text(encoding="utf-8") == text and not finished(p.parent.parent)
              and (ok is None or ok(p.parent.parent))]
     return max(found, key=lambda p: p.stat().st_mtime).parent.parent.name if found else None
+
+
+def finished(root: Path) -> bool:
+    """A run folder whose chapter is made: its chapter.mp3, or for a fast run read live (which keeps
+    no audio of its own) an archive that says so (faststart/archive.py)."""
+    if (root / "10_audio" / "chapter.mp3").exists():
+        return True
+    try:
+        return json.loads((root / "fast" / "archive.json").read_text(encoding="utf-8")).get("live") is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def write(r: Run, topic: str = "", why: str = "", notes: str = "", seed_file: str | None = None,

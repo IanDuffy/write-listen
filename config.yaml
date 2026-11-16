@@ -192,6 +192,96 @@ voice:
   tool_timeout_secs: 30         # start_chapter starts a run on the local server
   client_js: https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.32.1/dist/lib.iife.js  # pinned, 2026-10-29
 
+# One live voice (voice/gpt_live/, Spec "One Live Voice", Ian 2026-11-13): the guide's conversation and
+# the chapter's reading in one OpenAI GPT-Live session, in one voice. The page (page/live.html) opens
+# it over WebRTC through /api/live/start; the guide's tools run here through GPT-Live's delegation to a
+# Responses backend (Terra). provider: elevenlabs puts the old page and agents back (left in place).
+live:
+  provider: gpt_live            # gpt_live | elevenlabs: the voice the page uses
+  model: gpt-live-1             # the voice model (it writes the guide's spoken replies)
+  voice: gleam                  # Ian's pick ("Gleam": North American, feminine, natural); fixed per session
+  backend_model: gpt-6.1-terra  # Terra, the delegation backend that calls the tools (Ian: Terra over Luna).
+                                # gpt-5.6-terra is the other Terra on the account (OpenAI's quickstart uses it)
+  backend_effort: low           # none|minimal|low|medium|high|xhigh
+  store: true                   # OpenAI keeps the session's audio 30 days, for the chapter's archive
+  url: https://api.openai.com/v1/live/sessions
+  price_per_minute: 0.05        # gpt-live-1, per connected second (silence and muted time included)
+  backend_prices:               # $ per 1M tokens: input, output, cached input (OpenAI pricing, 2026-11-13)
+    gpt-6.1-terra: [1.00, 5.00, 0.05]
+    gpt-5.6-terra: [2.00, 12.00, 0.20]
+    gpt-6-luna: [0.10, 0.50, 0.01]
+  restart_bands_secs: [30, 120] # after a question: the interrupted sentence, one earlier, or the paragraph
+  build_cap_usd: 20.00          # the build's own spending cap (voice/gpt_live/build_costs.jsonl)
+  archive_wait_seconds: 120     # a chapter heard to the end: wait this long for OpenAI's recording, then archive
+  archive_retry_seconds: 10
+  # The guide's first words, said word for word when a new conversation starts (the Playground's
+  # "Opening" box: not an API parameter, so the page sends it as speakable context the moment the
+  # session starts; GPT-Live may still paraphrase). Empty: the guide greets in its own words
+  # (notes.md `opened`). Example: opening: "Hey there."
+  opening: ""
+  continue_minutes: 15          # a page reopened this soon after the reading stopped picks the chapter back up
+  unread_ready_minutes: 120     # a chapter written but never begun (they went away while it was made) is offered this long
+  page:                         # page/live.js
+    line_quiet_ms: 900          # a line of the transcript ends after this much quiet
+    lead_in_max_ms: 9000        # the guide's line before the reading: at most this long
+    stop_quiet_ms: 450          # after a tap, the reading has stopped once the transcript is this quiet
+    silence_after_answer_secs: 6  # mid-chapter: silence after the guide's answer, then the page says so
+    aside_give_up_secs: 6       # and if the guide still hasn't gone back this long after that, the reading goes on
+    # A guide line like this mid-chapter goes back to the reading, whether or not resume_chapter follows
+    lead_back: "\\b(where was i|where were we|(anyway|okay|ok|right|so),? back to|back to (it|the chapter|the story|the reading)\\b|picking (it|this|that) (back )?up|let'?s (keep going|get back|pick (it|this) (back )?up))"
+    checkin_silence_secs: 8     # a check-in nobody answers: the guide says a word and waits
+    position_seconds: 3         # report where the reading is (fast/player.json) this often
+    rest_close_minutes: 20      # resting (muted, not reading) this long closes the session
+    ready_beat_ms: 1000         # between sections, and before the reading resumes after a wait
+    queue_words_left: 0         # the next paragraph is sent when this many words of the current one are left.
+                                # 0: once it has finished. Sent earlier, GPT-Live sometimes dropped the queued
+                                # one, or cut the current one's last sentence to start it (live, 2026-11-13);
+                                # sent at the end, it starts 0.7-0.9 s later: a natural paragraph pause
+    resend_ms: 3500             # a paragraph that should have started this long ago is sent again, once
+    handback_quiet_ms: 2500     # a check-in hands back to the reading at the first pause this long
+    reopen_ratio: 0.8           # GPT-Live's context this full (it compacts at 0.9): a new session at the next section
+    reopen_before_expiry_minutes: 10  # or this close to the session's time limit (about 2 hours from its start)
+    greet_fallback_ms: 5000     # no word from the guide this long after the session started: ask it to greet again
+    answer_wait_ms: 12000       # a chapter ready while the guide's question is unanswered: wait this long for the answer
+    start_nudge_ms: 10000       # the guide said it would start the chapter but start_chapter hasn't come: remind it
+    # After Ian's second test (2026-11-15):
+    hello_silence_secs: 7       # no word from the listener this long after the guide's hello: it checks in, once
+    pitch_nudge_secs: [150, 210]  # into a conversation with no chapter yet: the guide is asked to move toward one
+    ready_remind_secs: 120      # a ready chapter offered and not taken up: the guide asks once more, at a pause
+    opening_estimate_secs: 240  # the ring's guess at the opening's wait when no earlier runs have timed it
+    words_per_second: 2.5       # the slider's estimate of the reading's pace (voice/gpt_live/chapter.py WORDS_PER_SECOND)
+    wake_listen_secs: 12        # resting, a sound opened the mic: no words this long and it rests again
+    # Wake on sound, after Ian's fourth test (his voice to the guide, his son's roar and the kids measured about
+    # the same in his recording, so loudness can't tell them apart): no wake for the first wake_grace_secs of a
+    # rest, a longer sound needed (over voice.wake's settings), and none at all when they asked outright for the
+    # mic off (mic_off_ask): then only a tap brings it back.
+    wake_grace_secs: 15
+    wake: {need_ms: 600, window_ms: 1000, min_rms: 0.02}
+    mic_off_ask: "\\b((turn|switch|shut) (off )?(your|the) (mic|microphone)( off)?|(turn|switch|shut) (it|that) off|mute (yourself|your mic|the mic)|stop listening)\\b"
+    aside_quiet_secs: 30        # a tap nobody speaks after: the chapter stays paused and the mic goes off
+    end_hold_secs: 60           # after the last paragraph: the session stays this long, for the slider or a word
+    # The listener asking for quiet, or saying they'll be away a minute (Ian's third test: "I'll pick up the
+    # conversation later", "when it's ready we'll get back to ya", "you call me"), and the guide's parting words:
+    # the page rests (the mic off) even when the guide doesn't call step_back (in his second test it didn't)
+    quiet_ask: "\\b(some quiet|(have|want|need|for) (some )?quiet time|a (little|bit of) quiet|peace and quiet|be quiet|stop talking|no more talking|i'?ll just (wait|listen|sit)( for it)?|let'?s (just )?(have|take) (some|a) (quiet|break|pause)|give me some space|shh+|(turn|switch|shut) (off )?(your|the) (mic|microphone)( off)?|mute (yourself|your mic)|stop listening|(i'?ll|we'?ll) be right back|be right back|back in a (minute|min|sec|second|bit)|brb|(just )?call me when (it'?s|you'?re) (ready|done)|you call me(?=\\W*$)|(we'?ll|i'?ll) get back to (you|ya)|(talk|chat) (to you )?later(?=\\W*$)|pick (this |it |that |the conversation )?(back )?up( this| it| that| the conversation)? later|step away for a (minute|sec|second|bit))\\b"
+    step_back_said: "\\b(give you (some )?(space|quiet|peace)|i'?ll (be|stay|keep|go) quiet|enjoy the quiet|tap (me )?(when|if) you)\\b"
+    # A ready chapter starts on start_reading, or on the listener's yes (a short one, the first thing they say)
+    # to the guide's latest question when it offers the chapter (offer_question and offer_action both in it),
+    # or on the guide's lead-in after an answer that isn't a no, or a tap, or the play button
+    offer_question: "\\b(chapter|it'?s ready|it'?s done|it'?s finished|is ready|all set|ready for you)\\b"
+    ready_yes: "^\\W*((oh|um+|uh+|well|hmm+|ah|so|okay so)\\W+)?(yes|yeah|yep|yup|ya|sure|ok(ay)?|alright|all right|go (for it|ahead|on)|let'?s (do it|go|hear it|start|begin)|please|definitely|absolutely|sounds good|i'?m ready|ready|start( it)?|play( it)?|do it|of course|why not|uh[- ]huh|mm[- ]hmm|totally|for sure)\\b"
+    ready_not_yet: "\\b(no|nope|not (yet|now|right now|just yet)|don'?t|hang on|hold on|one (sec|second|minute|moment)|just a (sec|second|minute|moment|bit)|give me|wait|in a (minute|sec|second|bit|moment|while)|in \\w+ minutes|later|first|after|once i|when i|keep (chatting|talking|going)|finish|actually)\\b"
+    offer_action: "\\b(hear|listen|start|begin|play|dive in|go|have it|now)\\b"  # with offer_question: an offer is a question that names it and asks to hear it
+    ready_ask: "\\b(let'?s hear it|let'?s (listen|start|begin)|(play|read|start) (it|the chapter|my chapter)|i'?m ready(\\W*$| for it| to listen)|go ahead and (play|read|start))\\b"
+    # A guide line that is only this, in an aside, is a stall, not an answer (Ian's third test: "Let me just give
+    # that a thought", then nothing: it had handed the question to the backend). Anchored: a real short answer
+    # with "hmm" or "good question" in it is an answer.
+    stall: "^\\W*((yeah|okay|ok|so|oh|hmm+|huh|right|well)\\W+)*((that'?s )?(a )?(good|great|fair) (one|question)\\W+)?(let me (just )?(think( about (it|that))?|give (that|it|this) a (thought|think|sec|second)|try|check|see)|give me a (sec|second|moment)|on it|hmm+|huh|interesting)(\\W+(that'?s|that is|for a (sec|second|moment)))?\\W*$"
+    talk_rest_secs: 90          # nobody has said anything this long in conversation: the mic goes off (tap to talk)
+    lead_in: "\\b(here we go|here it is|let'?s dive in|let'?s begin|without further ado)\\b"
+    # The guide's words for starting the chapter (the nudge above watches for them)
+    start_promise: "\\b(starting (on )?(your|the) chapter|starting (it|that) (now|right now)\\b|i'?ll (go )?(start|get started on|get to work on|get going on) (it|that|this|your chapter|the chapter)\\b|i'?ll start on (it|that)|(i'?m |i am )?off to (research|write|make) (it|that|this|your chapter|the chapter)|getting (started|to work|going) on (it|that|this|your chapter|the chapter)\\b|let me (start|get started on|get to work on) (it|that|this|a|your|the)\\b)"
+
 # Plain files about the listener (Phase 1 memory): profile.md, guide.md, sessions/, seeds/, history.md.
 listener_dir: listener
 

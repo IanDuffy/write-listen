@@ -94,8 +94,9 @@ def listener_at(run_root: Path, section: int) -> dict:
 
 
 def _pieces(run_root: Path, n: int) -> list:
-    from . import narrate
-    return narrate.pieces(_run(run_root), n)
+    from . import live
+    r = _run(run_root)
+    return live.module(r).pieces(r, n)  # a live run's paragraphs, else the narrated pieces
 
 
 def ready(run_root: Path, section: int, have: int = 0) -> bool:

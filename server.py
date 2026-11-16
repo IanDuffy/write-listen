@@ -22,6 +22,8 @@ exposed to the network. One listener, one run at a time.
                                     listener spoke or tapped, or the chapter is ready): a new connection
     POST /api/voice/tool            {"session", "name", "args"}: a client tool the agent called, run here
     POST /api/voice/line            {"session", "who", "text"}: a line for the transcript (or the call's id)
+    /api/live/*, GET /live.js       one GPT-Live session for the conversation and the reading (voice/gpt_live/
+                                    routes.py), the page when config live.provider is gpt_live (page/live.html)
     GET  /api/chapters/{run}/audio  the finished chapter's MP3
     GET  /wake.js                   the page's local listener (page/wake.js), which brings the guide back
     /api/ask/*                      asking mid-chapter, by voice (ask/routes.py, docs/ask-voice.md)
@@ -49,6 +51,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -65,6 +68,7 @@ from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages import new as new_stage
 from stages.common import ROOT, RUNS_DIR, Run, StageError, load_config, load_prompt
+from voice.gpt_live import routes as live_routes
 
 # What reset moves out of listener/ (the guide's memory). voice.json, the agent's ids, stays: it holds
 # nothing about the listener.
@@ -110,7 +114,8 @@ class Pipeline:
                                          start_new_session=True)
         self.run = run
 
-    def start_seed(self, topic: str, why: str = "", notes: str = "", said: str = "", mode: str = "overnight") -> str:
+    def start_seed(self, topic: str, why: str = "", notes: str = "", said: str = "", mode: str = "overnight",
+                   live: bool = False) -> str:
         """Start (or continue) the unattended run for this seed; returns the run's name. Used by the
         text box (POST /api/chapters) and by the guide's start_chapter tool (which asks for mode "fast":
         docs/fast-start.md). A seed's unfinished run is continued only in the mode that made it."""
@@ -121,15 +126,18 @@ class Pipeline:
             if self.busy():
                 raise HTTPException(409, "A chapter is already being made.")
             text = seed_stage.seed_text(topic, why, notes, said)
-            name = (seed_stage.find_run(text, self.runs_dir, ok=lambda root: fast_base.continues(root, mode))
-                    or seed_stage.run_name(topic, self.runs_dir))
+            def ok(root):  # a fast run is continued only in the voice it was started in (`live`: read live)
+                return fast_base.continues(root, mode) and (
+                    not (Path(root) / fast_base.FILES["mode"]).exists()
+                    or fast_base.voice_matches(root, live and live_voice_on()))
+            name = seed_stage.find_run(text, self.runs_dir, ok=ok) or seed_stage.run_name(topic, self.runs_dir)
             r = Run.open(name, create=True, runs_dir=self.runs_dir)
             if not r.path("seed").exists():
                 try:
                     seed_stage.write(r, topic, why, notes, said=said)
                 except StageError as e:
                     raise HTTPException(400, str(e)) from None
-            self.start(["new", name, "--unattended", *fast_routes.mode_args(r, mode)], name)
+            self.start(["new", name, "--unattended", *fast_routes.mode_args(r, mode, live=live)], name)
         return name
 
     def stop(self, run: str, cfg: dict) -> dict:
@@ -157,7 +165,9 @@ class Pipeline:
             if was_running or status.get("state") == "making":
                 new_stage.write_status(r, cfg, "stopped", stage=status.get("stage"), label=status.get("label"),
                                        message="You stopped this chapter.", pid=None,
-                                       history=status.get("history", []))
+                                       history=status.get("history", []),
+                                       # a fast run's fields: the live page still knows the run for what it is
+                                       **{k: status[k] for k in ("mode", "voice", "sections", "first_audio") if k in status})
                 r.decide("stopped", "Stopped from the page." + (f" Cancelled batches: {', '.join(cancelled)}."
                                                                  if cancelled else ""))
             if own:
@@ -291,7 +301,9 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     app.state.pipeline = pipe
 
     @app.get("/", response_class=HTMLResponse)
-    def page() -> str:
+    def page(chapter: str | None = None) -> str:
+        if live(cfg) and not chapter:  # one GPT-Live session (page/live.html); a finished chapter keeps the old page
+            return live_routes.LIVE_PAGE.read_text(encoding="utf-8")
         # The ElevenLabs browser client, pinned in config.yaml (voice.client_js), and the page's share
         # of the voice settings (when the guide steps back, and what brings it back).
         settings = json.dumps({k: cfg["voice"][k] for k in PAGE_VOICE_KEYS})
@@ -324,15 +336,17 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     if remember_on_start:
         remember()
 
-    def new_session() -> guide.Session:
+    def new_session(live: bool = False) -> guide.Session:
         if chat["session"] is not None:  # the previous conversation has ended: remember it first
             memory.after_session(cfg, chat["session"].transcript)
         for t in chat["passes"]:  # a returning guide must know who it is: wait for passes in flight
             t.join()
         chat["passes"] = []
         # The guide's chapters are made the fast way (docs/fast-start.md); the hooks are what that changes for it.
-        chat["session"] = guide.Session(cfg, functools.partial(pipe.start_seed, mode="fast"), pipe.status, pipe.runs_dir,
-                                        fast=fast_hooks.Hooks(cfg, pipe.runs_dir, pipe.status))
+        # `live`: the page's GPT-Live conversation, whose chapters are read live in the same session.
+        chat["session"] = guide.Session(cfg, functools.partial(pipe.start_seed, mode="fast", live=live), pipe.status,
+                                        pipe.runs_dir,
+                                        fast=fast_hooks.Hooks(cfg, pipe.runs_dir, pipe.status), own_only=live)
         return chat["session"]
 
     def talk(text: str | None, fresh: bool, session_id: str | None = None) -> dict:
@@ -476,6 +490,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
                 status = pipe.status()
                 if status.get("run"):
                     stopped = pipe.stop(status["run"], cfg)["run"]
+            live_routes.let_go(pipe)  # a chapter whose reading was under way is not picked back up by the next tap
             with memory.LOCK:
                 d = guide.listener_dir(cfg)
                 found = [n for n in MEMORY_FILES if (d / n).exists()]
@@ -546,10 +561,21 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
         return FileResponse(mp3, media_type="audio/mpeg")
 
     ask_routes.mount(app, cfg, pipe.runs_dir)
+    live_routes.mount(app, cfg, pipe, SimpleNamespace(lock=chat["lock"], new_session=new_session, current=current))
     fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")
     app.mount("/runs", StaticFiles(directory=pipe.runs_dir, check_dir=False), name="runs")
     return app
+
+
+def live_voice_on() -> bool:
+    """config.yaml as it is on disk says the page's voice is GPT-Live (what mode_args marks a run by)."""
+    return fast_base.live_voice(load_config())
+
+
+def live(cfg: dict) -> bool:
+    """The page talks through one GPT-Live session (voice/gpt_live/), not the ElevenLabs agents."""
+    return (cfg.get("live") or {}).get("provider") == "gpt_live"
 
 
 def _save_voice(cfg: dict, session_id: str, conversation_id: str, n: int = 1) -> None:

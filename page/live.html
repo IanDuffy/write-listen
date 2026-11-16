@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chapters</title>
+<!--
+  The page for one live voice (voice/gpt_live/, Spec "One Live Voice", Ian 2026-11-13), served at /
+  when config live.provider is gpt_live. The same look as page/index.html (the ElevenLabs page, left in
+  place). One GPT-Live session per listening session: the guide's conversation, the chapter read
+  aloud paragraph by paragraph, questions mid-chapter and check-ins all happen in it, in one voice.
+  A tap turns the mic on and off; nothing switches over. The logic is in page/live.js.
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; align-items: center; }
+  main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         gap: 22px; width: 100%; padding: 16px; }
+  #orb { width: 180px; height: 180px; border: 0; padding: 0; background: none; cursor: default; position: relative; }
+  #orb svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  #orb .core { fill: var(--accent); transition: opacity .6s, transform .6s; transform-origin: 90px 90px; }
+  #orb .track { fill: none; stroke: var(--line); stroke-width: 3; opacity: 0; }
+  #orb .ring { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; opacity: 0;
+               transform: rotate(-90deg); transform-origin: 90px 90px; transition: stroke-dashoffset .8s; }
+  #orb .icon { fill: var(--bg); opacity: 0; }
+  body.ring #orb .track, body.ring #orb .ring { opacity: 1; }  /* how close the opening is; then where the reading is */
+  body.ring #orb .core { transform: scale(.82); }
+  body.making #orb .core { animation: breathe 3.2s ease-in-out infinite; }
+  body.offer #orb .icon.play { opacity: 1; }  /* the chapter is ready: a tap plays it */
+  body.ready #orb { cursor: pointer; }
+  body.ready #orb .icon.play, body.ready.playing #orb .icon.pause { opacity: 1; }
+  body.ready.playing #orb .icon.play { opacity: 0; }
+  body.problem #orb .core { opacity: .28; }
+  body.thinking #orb .core { animation: breathe 2.4s ease-in-out infinite; }
+  body.idle:not(.talking) #orb, body.voice #orb, body.resting #orb { cursor: pointer; }
+  body.resting:not(.ready) #orb .core { opacity: .5; }
+  #hint { display: none; font-size: 14px; color: var(--muted); text-align: center; }
+  body.resting #hint { display: block; }
+  #stop { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+          text-decoration: underline; text-underline-offset: 3px; }
+  body.voice #orb .core { transition: opacity .6s; animation: none; }  /* follows the sound, not a timer */
+  @keyframes breathe { 50% { opacity: .75; } }
+  /* A question mid-chapter: the circle stays, following the mic and the guide's voice (Ian's third test: the
+     old page's membrane, which this page never draws, had replaced it with nothing). */
+  body.aside #orb .core { opacity: 1; }
+  body.aside.thinking #orb .core { animation: breathe 2s ease-in-out infinite; }
+  #read { font-size: 14px; color: var(--muted); text-underline-offset: 3px; }
+  #transcript details.aside { margin: 6px 0; border-left: 2px solid var(--line); padding-left: 10px; }
+  #transcript details.aside summary { cursor: pointer; color: var(--fg); }
+  #line { min-height: 1.4em; text-align: center; color: var(--muted); max-width: 34em; }
+  body.ready #line { color: var(--fg); font-weight: 600; }
+  #retry { display: none; font: inherit; color: var(--accent); background: none; border: 1px solid var(--accent);
+           border-radius: 999px; padding: 6px 16px; cursor: pointer; }
+  body.problem #retry { display: inline-block; }
+  #halt { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
+          border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+  body.making #halt { display: inline-block; }
+  #halt:disabled { opacity: .5; cursor: default; }
+  #reset { margin-left: 14px; font: inherit; font-size: 14px; color: var(--muted);
+           background: none; border: 0; padding: 0; cursor: pointer; }
+  body.problem.final #retry { display: none; }
+  #last { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+          cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  body.past #last { display: inline-block; }  /* a spending or research limit: retrying cannot help */
+  footer { width: 100%; max-width: 560px; padding: 0 16px 20px; }
+  form { display: none; gap: 8px; }
+  body.typing form { display: flex; }  /* voice couldn't start, or they asked to type */
+  .row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+  #type { width: 36px; height: 36px; margin-right: -8px; padding: 8px; border: 0; border-radius: 999px;
+          background: none; color: var(--muted); cursor: pointer; }  /* the icon's edge lines up with the box's */
+  #type:hover, body.typing #type { color: var(--accent); }
+  #type svg { width: 100%; height: 100%; display: block; }
+  #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
+         border-radius: 999px; padding: 10px 16px; }
+  #say:focus { outline: none; border-color: var(--accent); }
+  #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: #fff;
+          cursor: pointer; }
+  #send:disabled, #say:disabled { opacity: .5; cursor: default; }
+  #toggle { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
+            padding: 0; cursor: pointer; }
+  #transcript { display: none; margin-top: 8px; font-size: 14px; color: var(--muted); max-height: 42vh; overflow: auto; }
+  #transcript.open { display: block; }
+  #transcript p { margin: 6px 0; }
+  #transcript p.you { color: var(--fg); }
+  #transcript p.guide { color: var(--fg); border-left: 2px solid var(--accent); padding-left: 10px; }
+  #transcript p.stage { font-style: italic; }
+
+  body.reading #orb, body.aside #orb, body.checkin #orb, body.waiting #orb, body.done #orb { cursor: pointer; }
+  body.reading #orb .core { animation: none; }
+  body.connecting #orb .core { animation: breathe 1.2s ease-in-out infinite; }
+  #sections { list-style: none; margin: 0; padding: 0; width: 100%; max-width: 26em; }
+  #sections button { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+                     font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; border-radius: 6px;
+                     padding: 4px 8px; text-align: left; cursor: pointer; }
+  #sections button:focus-visible { outline: 2px solid var(--accent); }
+  #sections .state { font-size: 12px; white-space: nowrap; }
+  #sections button[data-state="ready"] .title { color: var(--fg); }
+  #sections button[data-state="playing"] .title { color: var(--fg); font-weight: 600; }
+  #sections button[data-state="playing"] .state { color: var(--accent); }
+  #sections button[data-state="being_written"] { font-style: italic; }
+  /* Play, pause and the slider (Ian's second test): the script at an estimated pace; the written part is
+     the lighter track, the part still being written the faint one. */
+  #player { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 26em; }
+  #player[hidden] { display: none; }
+  #play { flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 999px;
+          background: none; color: var(--fg); cursor: pointer; display: grid; place-items: center; }
+  #play svg { width: 14px; height: 14px; fill: currentColor; display: block; }
+  #play .pause, #play[data-state="pause"] .play { display: none; }
+  #play[data-state="pause"] .pause { display: block; }
+  #play:disabled { opacity: .4; cursor: default; }
+  #play:focus-visible, #seek:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  #seek { flex: 1; min-width: 0; height: 4px; margin: 0; border-radius: 2px; -webkit-appearance: none; appearance: none; cursor: pointer;
+          background: linear-gradient(to right, var(--accent) 0 var(--played, 0%), var(--muted) var(--played, 0%) var(--written, 0%),
+                      var(--line) var(--written, 0%) 100%); }
+  #seek::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--accent); }
+  #seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--accent); }
+  #seek:disabled { cursor: default; opacity: .6; }
+  #time { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #disclose { font-size: 12px; color: var(--muted); text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body class="idle">
+<main>
+  <button id="orb" aria-label="Chapter">
+    <svg viewBox="0 0 180 180" aria-hidden="true">
+      <circle class="core" cx="90" cy="90" r="78"/>
+      <circle class="track" cx="90" cy="90" r="88"/>
+      <circle class="ring" cx="90" cy="90" r="88"/>
+      <path class="icon play" d="M76 62 L124 90 L76 118 Z"/>
+      <g class="icon pause"><rect x="72" y="64" width="12" height="52" rx="2"/><rect x="96" y="64" width="12" height="52" rx="2"/></g>
+    </svg>
+  </button>
+  <div id="line">Tap to begin</div>
+  <div id="player" hidden>
+    <button id="play" data-state="play" aria-label="Play">
+      <svg class="play" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5 L12.5 7 L3 12.5 Z"/></svg>
+      <svg class="pause" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="1.5" width="3.2" height="11" rx=".8"/><rect x="8.3" y="1.5" width="3.2" height="11" rx=".8"/></svg>
+    </button>
+    <input id="seek" type="range" min="0" max="1000" step="1" value="0" aria-label="Where you are in the chapter">
+    <span id="time">0:00</span>
+  </div>
+  <div id="hint"><span id="how">Tap to talk</span> · <button id="stop">Stop listening</button></div>
+  <button id="retry">Try again</button>
+  <button id="halt">Stop making this chapter</button>
+  <button id="last"></button>
+  <ul id="sections" aria-label="Parts of the chapter" style="display:none"></ul>
+  <audio id="audio" preload="none"></audio>
+  <audio id="remote" autoplay></audio>
+</main>
+<footer>
+  <form id="form" autocomplete="off">
+    <input id="say" placeholder="Say something…" aria-label="Talk to your guide">
+    <button id="send">Send</button>
+  </form>
+  <div class="row">
+    <span><button id="toggle" aria-expanded="false">Show transcript</button><button id="reset">Reset memory</button></span>
+    <button id="type" aria-label="Type instead" aria-pressed="false" title="Type instead">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+        <rect x="2.5" y="6" width="19" height="12" rx="2"/>
+        <path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/>
+      </svg>
+    </button>
+  </div>
+  <div id="transcript" aria-live="polite"></div>
+  <div id="disclose">The guide's voice is AI-generated.</div>
+</footer>
+<script src="/align.js"></script>
+<script src="/live.js"></script>
+</body>
+</html>

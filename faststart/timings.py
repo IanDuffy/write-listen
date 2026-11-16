@@ -12,7 +12,13 @@ gitignored, and each machine's first runs have no estimate (the guide then gives
 every wait becomes a check-in).
 
     {"updated": "...", "medians": {"scout": 71.2, "outline": 80.4, "opening": 55.0, ...},
-     "runs": [{"run": "roman-concrete-20261113", "at": "...", "steps": {"scout": [71.2], ...}}]}
+     "runs": [{"run": "roman-concrete-20261113", "at": "...", "steps": {"scout": [71.2], ...}},
+              {"run": "...", "voice": "live", ...}]}
+
+A run read live (faststart/live.py) is tagged "voice": "live". The steps that depend on the voice
+(VOICE_KEYS) are never pooled across voices: `medians` holds the ElevenLabs ones, and load(live=True)
+takes them from the live runs instead, with no recording step at all (first_piece and narrate 0).
+The writing steps are the same work either way, so they are pooled over every run.
 """
 
 from __future__ import annotations
@@ -71,6 +77,8 @@ PROBLEM = "problem"                  # stage, error
 # `medians` only once measured (the scheduler falls back to "lock" without them).
 KEYS = (*MEDIANS, "scout", "outline", "first_audio")
 OPTIONAL = ("lock_solo", "lock_final")
+VOICE_KEYS = ("first_piece", "narrate", "first_audio")  # depend on the voice: kept apart per voice
+NO_RECORDING = ("first_piece", "narrate")  # read live: locked is ready, so these take no time
 KEEP_RUNS = 20
 
 
@@ -115,25 +123,42 @@ def steps(events: list[dict]) -> dict[str, list[float]]:
     return out
 
 
-def medians_of(runs: list[dict]) -> dict:
-    """Each step's median over the runs given, every measurement counting once."""
+def medians_of(runs: list[dict], live: bool = False) -> dict:
+    """Each step's median over the runs given, every measurement counting once; the VOICE_KEYS only
+    over the runs of that voice (live, or ElevenLabs)."""
     pooled: dict[str, list[float]] = {}
     for run in runs:
+        same = (run.get("voice") == "live") == live
         for key, values in (run.get("steps") or {}).items():
+            if key in VOICE_KEYS and not same:
+                continue
             pooled.setdefault(key, []).extend(float(v) for v in values)
     out = {k: (round(median(pooled[k]), 2) if pooled.get(k) else None) for k in KEYS}
     out.update({k: round(median(pooled[k]), 2) for k in OPTIONAL if pooled.get(k)})
     return out
 
 
-def load(cfg: dict) -> dict | None:
+def load(cfg: dict, live: bool = False) -> dict | None:
     """The medians of earlier runs, in seconds, or None before any run has been measured. A step
-    no run has measured yet is None in the dict (the scheduler then gives no estimate that needs it)."""
+    no run has measured yet is None in the dict (the scheduler then gives no estimate that needs it).
+
+    live: for a run read live. No recording step (first_piece and narrate are 0), and the time to
+    the first audio is the live runs' median; before any, the scout, outline and opening medians
+    added up, else the ElevenLabs runs' figure (an upper bound: it includes the recording)."""
     data = base.read_json(path(cfg))
     medians = (data or {}).get("medians") if isinstance(data, dict) else None
     if not isinstance(medians, dict) or not any(v is not None for v in medians.values()):
         return None
-    return {**{k: None for k in KEYS}, **medians}
+    out = {**{k: None for k in KEYS}, **medians}
+    if not live:
+        return out
+    runs = [x for x in data.get("runs") or [] if isinstance(x, dict)]
+    out.update({k: 0.0 for k in NO_RECORDING})
+    steps_sum = [out.get(k) for k in ("scout", "outline", "opening")]
+    out["first_audio"] = (medians_of(runs, live=True)["first_audio"]
+                          or (round(sum(steps_sum), 2) if None not in steps_sum else None)
+                          or medians.get("first_audio"))
+    return out
 
 
 def update(cfg: dict, r: Run) -> dict:
@@ -144,7 +169,8 @@ def update(cfg: dict, r: Run) -> dict:
             if isinstance(x, dict) and x.get("run") != r.name]
     mine = {k: [round(v, 2) for v in vs] for k, vs in steps(base.read_timeline(r)).items() if vs}
     if mine:
-        runs.append({"run": r.name, "at": base.now_iso(), "steps": mine})
+        runs.append({"run": r.name, "at": base.now_iso(), **({"voice": "live"} if base.is_live(r) else {}),
+                     "steps": mine})
     runs = runs[-KEEP_RUNS:]
     medians = medians_of(runs)
     base.write_json(path(cfg), {"updated": base.now_iso(), "medians": medians, "runs": runs})
@@ -152,7 +178,8 @@ def update(cfg: dict, r: Run) -> dict:
 
 
 def estimate(cfg: dict) -> float | None:
-    """Seconds from the topic being set to the first audio, as earlier runs went; None until one
-    has been measured. The guide gives a time only when this is a number."""
-    medians = load(cfg)
+    """Seconds from the topic being set to the first audio, as earlier runs went, for the voice the
+    next chapter will be read in (base.live_voice); None until one has been measured. The guide
+    gives a time only when this is a number."""
+    medians = load(cfg, live=base.live_voice(cfg))
     return medians.get("first_audio") if medians else None

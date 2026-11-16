@@ -181,4 +181,4 @@ def test_the_line_while_waiting_names_the_same_step_as_the_marker(done, word, st
     s.start(0.0)
     snap = s.snapshot()
     assert status.section_step(3, snap["sections"][3], snap["rows"], snap["running"]) == step
-    assert fast_run._Driver._where(NS(sched=s, first_audio=True)) == ("section 3", f"{word} part 3 of 4")
+    assert fast_run._Driver._where(NS(sched=s, first_audio=True, read_live=False)) == ("section 3", f"{word} part 3 of 4")

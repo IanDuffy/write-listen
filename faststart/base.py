@@ -16,7 +16,7 @@ episode page and ask-by-voice read it unchanged:
     listener_notes.md           what the listener said after the topic was set
     fast_timeline.jsonl         one line per event
     fast/                       working files: player.json (position reports), locks, state
-    10_audio/secNN/             a section's pieces as they are narrated
+    10_audio/secNN/             a section's pieces as they are narrated (a live run: live.json, its paragraphs)
     09_script_final.md, 10_audio/chapter.mp3, 11_episode/   written by the archive step
 """
 
@@ -99,14 +99,35 @@ def is_fast(r: Run) -> bool:
     return path(r, "mode").exists()
 
 
-def mark_fast(r: Run, clock=time.time) -> dict:
-    """Mark the run as fast and record when the seed was set (the timeline's zero). Kept on a
-    re-run, so a continued run's times still count from the first start."""
+def live_voice(cfg: dict) -> bool:
+    """Whether config.yaml says the chapter is read by the live voice (live.provider: gpt_live)."""
+    return (cfg.get("live") or {}).get("provider") == "gpt_live"
+
+
+def is_live(r: Run) -> bool:
+    """A fast run read aloud in the live session (fast.json "voice": "live"): no ElevenLabs
+    narration; a locked section's paragraphs go straight to the page's queue (faststart/live.py)."""
+    return (read_json(path(r, "mode")) or {}).get("voice") == "live"
+
+
+def mark_fast(r: Run, clock=time.time, cfg: dict | None = None) -> dict:
+    """Mark the run as fast and record when the seed was set (the timeline's zero), and with `cfg`
+    whether it is read live (live_voice). Kept on a re-run, so a continued run's times still count
+    from the first start and it keeps the voice it was started with."""
     info = read_json(path(r, "mode"))
     if not info:
         info = {"mode": "fast", "seed_set": clock(), "seed_set_at": now_iso()}
+        if cfg is not None and live_voice(cfg):
+            info["voice"] = "live"
         write_json(path(r, "mode"), info)
     return info
+
+
+def voice_matches(root: Path, live: bool) -> bool:
+    """Whether a fast run folder was started in the voice asked for now (read live or narrated): a
+    seed lookup continues a run only in its own voice, since the other page can't play it."""
+    info = read_json(Path(root) / FILES["mode"]) or {}
+    return (info.get("voice") == "live") == live
 
 
 def continues(root: Path, mode: str) -> bool:

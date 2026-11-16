@@ -1,0 +1,17 @@
+[
+  {
+    "name": "start_reading",
+    "description": "Start reading the listener's chapter aloud. Call it only once the app has said the opening is ready and the listener has said they'd like to hear it now, right after the guide's few words of lead-in. The app begins the reading when the guide finishes speaking; reply with an empty message.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "listener_said": {
+          "type": "string",
+          "description": "What the listener said that means yes, word for word."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  }
+]

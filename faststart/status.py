@@ -31,6 +31,10 @@ playable" is `first_audio`. The fields a fast run adds:
     step_ends_in  seconds (as of `updated`) until the step under way reaches its median; null when
                   first_audio_in is. The scout and the outline run without a status write, so the
                   page and the guide drop the countdown themselves once this has run out
+    voice         "live" for a run read in the live session (faststart/live.py), absent otherwise.
+                  Then "ready" means locked: pieces are the section's paragraphs, [{id, seconds}]
+                  (seconds estimated, no src), steps stop at the opening (no recording step), and
+                  a locked section's step is "ready"
 
 The page counts `first_audio_in`, `step_ends_in` and `ready_in` down itself from `updated`, so the run does not
 rewrite status.json for a countdown that is merely running down (settled).
@@ -43,45 +47,50 @@ from __future__ import annotations
 
 from stages.common import Run
 
-from . import base
+from . import base, live
 
 MODE = "fast"
 WORDS = {"played": "played", "playing": "playing", "ready": "ready", "being_written": "being written"}
 # The steps to the first audio: (key, what the page says). The keys are the medians' (timings.KEYS).
 OPENING = (("scout", "Looking into it"), ("outline", "Planning the chapter"),
            ("opening", "Writing the opening"), ("first_piece", "Recording the opening"))
+OPENING_LIVE = OPENING[:3]  # read live: the first audio is ready when the opening is locked
 STEPS = ("researching", "writing", "editing", "recording", "ready")
 
 
-def steps(current: str | None) -> list[dict]:
+def steps(current: str | None, live: bool = False) -> list[dict]:
     """The opening steps, those before `current` done; current None: all done (first audio)."""
-    keys = [k for k, _ in OPENING]
+    opening = OPENING_LIVE if live else OPENING
+    keys = [k for k, _ in opening]
     at = len(keys) if current is None else keys.index(current)
     return [{"key": k, "label": label, "state": "done" if i < at else "doing" if i == at else "todo"}
-            for i, (k, label) in enumerate(OPENING)]
+            for i, (k, label) in enumerate(opening)]
 
 
-def first_audio_by(current: str | None, started: float | None, now: float, medians: dict | None) -> float | None:
+def first_audio_by(current: str | None, started: float | None, now: float, medians: dict | None,
+                   live: bool = False) -> float | None:
     """When the first audio is expected, in the caller's clock: the current step's start, its
-    median and the medians of the steps after it. None when a median is missing, the step's start
-    is unknown, or the step has already run past its median (the time left is then unknown)."""
+    median and the medians of the steps after it (read live: no recording step). None when a median
+    is missing, the step's start is unknown, or the step has already run past its median (the time
+    left is then unknown)."""
     if current is None or started is None or not medians:
         return None
-    keys = [k for k, _ in OPENING]
+    keys = [k for k, _ in (OPENING_LIVE if live else OPENING)]
     lengths = [medians.get(k) for k in keys[keys.index(current):]]
     if any(x is None for x in lengths) or started + float(lengths[0]) <= now:
         return None
     return started + sum(float(x) for x in lengths)
 
 
-def section_step(n: int, info: dict, rows: dict, running: list) -> str:
+def section_step(n: int, info: dict, rows: dict, running: list, live: bool = False) -> str:
     """What is happening to section n, from a scheduler snapshot's section, rows and running
     actions. A step waiting its turn counts as that step (a locked section is "recording" while
-    the one before it is narrated). The opening is written and edited in one step: "writing"."""
+    the one before it is narrated; read live, a locked section is "ready"). The opening is written
+    and edited in one step: "writing"."""
     if info.get("state") == "ready":
         return "ready"
     if info.get("locked"):
-        return "recording"
+        return "ready" if live else "recording"
     if info.get("drafted"):
         return "editing"
     if any(list(a.get("action") or []) == ["draft", n] for a in running):
@@ -126,6 +135,7 @@ def sections(r: Run, outline: dict, snapshot: dict, changed: dict[int, str] | No
     snap = {int(n): s for n, s in (snapshot.get("sections") or {}).items()}
     rows, running = snapshot.get("rows") or {}, snapshot.get("running") or []
     rel = lambda p: str(p.relative_to(r.root))
+    is_live = base.is_live(r)
     out = []
     for s in outline["sections"]:
         n = s["n"]
@@ -133,13 +143,20 @@ def sections(r: Run, outline: dict, snapshot: dict, changed: dict[int, str] | No
         lengths = [float(x) for x in info.get("pieces") or []]
         folder = base.section_dir(r, n)
         text, timing = r.segment_path(n), base.path(r, "section_timings") / f"seg{n:02d}.json"
+        if is_live:  # the section's paragraphs, by the ids the page reads them by
+            ids = [p.get("id") for p in live.paragraphs(r, n)]
+            pieces = [{"id": ids[i] if i < len(ids) else f"s{n}-p{i + 1:02d}", "seconds": secs}
+                      for i, secs in enumerate(lengths)]
+        else:
+            pieces = [{"src": rel(folder / f"p{i:02d}.mp3"), "seconds": secs} for i, secs in enumerate(lengths)]
         out.append({
             "n": n, "title": (changed or {}).get(n) or s["title"],
             "state": info.get("marker") or "being_written",
-            "step": section_step(n, info, rows, running),
+            "step": section_step(n, info, rows, running, live=is_live),
             "ready_in": round(ready_in[1]) if ready_in and ready_in[0] == n else None,
-            "ready": info.get("state") == "ready", "complete": bool(info.get("complete")),
-            "pieces": [{"src": rel(folder / f"p{i:02d}.mp3"), "seconds": secs} for i, secs in enumerate(lengths)],
+            "ready": info.get("state") == "ready" or bool(is_live and info.get("locked")),
+            "complete": bool(info.get("complete")),
+            "pieces": pieces,
             "seconds": round(sum(lengths), 3),
             "text": rel(text) if info.get("locked") and text.exists() else None,
             "timing": rel(timing) if timing.exists() else None})
@@ -153,12 +170,13 @@ def fields(r: Run, outline: dict | None, snapshot: dict | None, changed: dict[in
     """What a fast run adds to status.json. `step`: the opening step under way (OPENING's keys;
     scout when not given); `first_audio_in`, `step_ends_in` and `ready_in` in seconds from now."""
     no_countdown = first_audio or first_audio_in is None
-    return {"mode": MODE,
+    is_live = base.is_live(r)
+    return {"mode": MODE, **({"voice": "live"} if is_live else {}),
             "sections": sections(r, outline, snapshot, changed, ready_in) if outline and snapshot else [],
             "first_audio": bool(first_audio), "waiting_for": waiting_for,
             "eta_seconds": None if eta_seconds is None else round(eta_seconds),
             "check_in": check_in if waiting_for is not None else None,
-            "steps": steps(None if first_audio else step or OPENING[0][0]),
+            "steps": steps(None if first_audio else step or OPENING[0][0], live=is_live),
             "first_audio_in": None if no_countdown else max(0, round(first_audio_in)),
             "step_ends_in": None if no_countdown or step_ends_in is None else max(0, round(step_ends_in))}
 
