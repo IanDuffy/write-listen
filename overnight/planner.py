@@ -15,7 +15,8 @@ card came from is marked used.
 
 Files: listeners/<id>/plans/<plan id>/ (log.jsonl: every call, priced; inputs.md, choice.json, scout.md,
 card.json), then up_next.json, whole. seed_text(card) is 00_source/seed.md for the build's lock stage, with the
-card's notes_added (typed or said after the plan: overnight/live.add_note) under their own heading. A pass takes
+card's notes_added (typed or said after the plan: overnight/live.add_note) under their own heading. After the
+write, moments_follow marks the moment its seed came from as having become this chapter (docs/library-timeline.md). A pass takes
 the notes left for the next chapter (next_notes.jsonl) into the card it writes, and they are marked used; a plan
 that replaces one still only planned keeps that one's notes_added.
 
@@ -524,8 +525,30 @@ def _plan(cfg: dict, listener: Path, request: dict | None, now: datetime, info: 
             library.mark_used(listener, [choice["source"]["ref"]], pid)
         if taken:
             library.mark_used(listener, [n["id"] for n in taken], pid, library.NEXT_NOTES)
+        moments_follow(listener, current, up)
     print(f"  planned {up['title']!r} for {up['for_morning']} ({mode}, {choice['decided']}), ${cost:.3f}")
     return up
+
+def moments_follow(listener: Path, replaced: dict | None, up: dict) -> None:
+    """The listening notes loop (docs/library-timeline.md, Outcome): the moment a card's seed came from reads
+    "Became tonight's chapter"; a card replaced before it was built (planned or failed) puts its moments back to
+    Saved, and their seed back into the pool. Called under the card lock, after up_next.json is written. A
+    display only: it never fails the plan."""
+    from . import timeline
+    try:
+        old_src = (replaced or {}).get("source") or {}
+        new_src = up.get("source") or {}
+        if replaced and replaced.get("id") != up["id"] and replaced.get("status") in ("planned", "failed"):
+            back = timeline.unbecame(listener, replaced["id"])
+            if back and old_src.get("kind") == "seed" and old_src.get("ref") != new_src.get("ref"):
+                library.mark_unused(listener, [old_src.get("ref")], f"replaced by {up['id']}")
+        if new_src.get("kind") == "seed" and new_src.get("ref"):
+            s = library.seed(listener, new_src["ref"])
+            if s:
+                timeline.became(listener, s, up["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"  moments: not updated for {up.get('id')} ({type(e).__name__}: {e})")
+
 
 # --- planning right after a conversation's chapter ------------------------------------------------------
 

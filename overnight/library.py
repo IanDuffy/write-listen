@@ -8,6 +8,7 @@
 
 All three are append-only. An item's id is a hash of what it is, so adding it twice adds it once.
 Using a seed or a queued topic appends {"used": <id>, "by": <plan id>, "t": ...}; nothing is rewritten.
+{"unused": <id>, ...} puts a seed back (its card was replaced before it was built: mark_unused).
 
 after_chapter() is what a finished chapter adds, by code where code can: the ledger's parked ideas
 (seeds, parked), topics the guide saved during asides (seeds, idea, with the listener's words), the
@@ -61,7 +62,12 @@ def work_id(kind: str, title: str, creator: str | None = None) -> str:
 
 def _items(path: Path, unused: bool) -> list[dict]:
     recs = profiles.read_jsonl(path)
-    used = {r["used"] for r in recs if isinstance(r.get("used"), str)}
+    used: set[str] = set()
+    for r in recs:  # in order: {"unused": id} puts a seed back (its card was replaced before it was built)
+        if isinstance(r.get("used"), str):
+            used.add(r["used"])
+        elif isinstance(r.get("unused"), str):
+            used.discard(r["unused"])
     out, seen = [], set()
     for r in recs:
         if "id" not in r or r["id"] in seen or (unused and r["id"] in used):
@@ -168,6 +174,19 @@ def mark_used(listener: Path, ids: list[str], by: str, file: str = SEEDS) -> Non
     for i in ids:
         if i:
             profiles.append_jsonl(listener / file, {"used": i, "by": by, "t": _now()})
+
+
+def mark_unused(listener: Path, ids: list[str], by: str, file: str = SEEDS) -> None:
+    """Append {"unused": id, "by": ...}: a used seed goes back into the planner's pool (the card that used it was
+    replaced before it was built, and the listener's moment reads Saved again: docs/library-timeline.md)."""
+    for i in ids:
+        if i:
+            profiles.append_jsonl(listener / file, {"unused": i, "by": by, "t": _now()})
+
+
+def seed(listener: Path, sid: str) -> dict | None:
+    """One seed by id, used or not."""
+    return next((s for s in seeds(listener, unused=False) if s.get("id") == sid), None)
 
 
 # --- what a finished chapter adds ---------------------------------------------------

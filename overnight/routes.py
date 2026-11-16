@@ -5,13 +5,17 @@ Change by voice add their live-session routes here).
                          page/index.html mounts below the orb: Up next, the latest chapter, history)
     GET  /library.js     the module: its markup, the mini player, the chapter view (#/chapter/<run>)
     GET  /api/library    what the page shows (the card, its state line, the latest chapter, every
-                         finished chapter newest first as history, settings)
+                         finished chapter newest first as history, settings, and `timeline`: every chapter
+                         oldest first with its moments and playback, for the strip and the chapter page,
+                         overnight/timeline.py, docs/library-timeline.md)
+    POST /api/chapters/{run}/playback  {"t", "duration", "start"}: the player's progress -> playback.json
     POST /api/settings   {"overnight": {...}, "chapter": {...}, "playback": {...}} -> settings.json
 """
 
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +25,7 @@ from fastapi.responses import HTMLResponse, Response
 from stages import common
 from stages.common import ROOT, StageError
 
-from . import profiles
+from . import profiles, timeline
 
 PAGE = ROOT / "page" / "library.html"
 LIBRARY_JS = ROOT / "page" / "library.js"
@@ -116,12 +120,17 @@ def library_state(cfg: dict, now: datetime | None = None) -> dict:
         can, why = False, ""
     shown = card if state in ("planned", "building", "failed") else None
     latest = profiles.latest_chapter(listener=listener)
+    g = listener / "guide.md"
+    from stages import memory
+    guide_name = memory._guide_name(g.read_text(encoding="utf-8")) if g.exists() else None
     return {"listener": listener.name, "now": now.isoformat(timespec="seconds"),
             "up_next": {"state": state, "line": line, "card": shown,
                         "change": state in ("planned", "failed"), "can_change": can,
                         "change_note": why, "plan_failed": (failed or {}).get("reason")},
             "latest": _chapter_info(latest) if latest else None,
             "history": history(listener),
+            "timeline": timeline.state(listener, shown, state, latest.name if latest else None, guide_name,
+                                       today=now.date()),
             "settings": settings}
 
 
@@ -141,6 +150,19 @@ def mount(app: FastAPI, cfg: dict, pipe=None, chat=None) -> None:
     @app.get("/api/library")
     def library() -> dict:
         return library_state(cfg)
+
+    @app.post("/api/chapters/{run}/playback")
+    def playback(run: str, body: dict) -> dict:
+        """The player's progress in a chapter (every 10 seconds while it plays, and on pause and at the end)."""
+        root = common.listener_dir(cfg) / "chapters" / run
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run) or not timeline.in_library(root):
+            raise HTTPException(404, "No such chapter.")
+        try:
+            t = float(body.get("t") or 0)
+            dur = float(body["duration"]) if body.get("duration") else None
+        except (TypeError, ValueError):
+            raise HTTPException(400, "t and duration are seconds.") from None
+        return timeline.record_playback(root, t, dur, start=bool(body.get("start")))
 
     @app.post("/api/settings")
     def save(changes: dict) -> dict:
