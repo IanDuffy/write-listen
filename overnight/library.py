@@ -305,7 +305,9 @@ def after_chapter(cfg: dict, listener: Path, chapter_root: Path) -> dict:
     for s in saved_seeds(root):
         seed_items.append({"kind": "idea", "text": s["topic"] + (f" ({s['why']})" if s["why"] else ""),
                            "words": s["words"], "source": {**src, "aside": "seeds.md"}})
-    questions = aside_questions(root)
+    from . import timeline  # an aside whose moments the memory pass wrote already made its question seeds
+    captured = {m.get("aside") for m in timeline.moments(root) if m.get("aside")}
+    questions = [q for q in aside_questions(root) if q.get("aside") not in captured]
     judged = set(done.get("judged") or [])
     if "open_questions" in done and "judged" not in done:  # written before "judged" was kept
         judged = {_norm(q["words"]) for q in done["open_questions"]}

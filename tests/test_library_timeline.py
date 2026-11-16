@@ -230,3 +230,28 @@ def test_colours_follow_dates_not_folder_names(tmp_path):
     profiles.write_json(early / "finished.json", {"t": "2026-11-11T06:00:00"})
     st = timeline.state(lis, None, "none", None, None, today=date(2026, 11, 20))
     assert [(r["title"], r["color"]) for r in st["chapters"]] == [("Beauty", "teal"), ("Herons", "coral")]
+
+
+def test_a_days_chapters_keep_the_order_they_finished_in(tmp_path):
+    lis = tmp_path / "l"
+    later = chapter(lis, "aaa-later-20261112", "Later")
+    earlier = chapter(lis, "zzz-earlier-20261112", "Earlier")
+    profiles.write_json(later / "finished.json", {"t": "2026-11-12T20:00:00"})
+    profiles.write_json(earlier / "finished.json", {"t": "2026-11-12T09:00:00"})
+    st = timeline.state(lis, None, "none", None, None, today=date(2026, 11, 20))
+    assert [r["title"] for r in st["chapters"]] == ["Earlier", "Later"]
+
+
+def test_a_planned_card_still_counts_as_tonight_with_overnight_off(cfg, tmp_path):
+    from overnight import routes
+    lis = profiles.create("ian")
+    profiles.set_active("ian")
+    root = chapter(lis, "2026-11-14-herons", "Herons", audio=True)
+    timeline.add_moments(root, [{"kind": "question", "position_s": 10, "text": "Gardens?", "session": "s",
+                                 "outcome": "became_chapter", "outcome_ref": "plan-up"}])
+    profiles.write_json(lis / "up_next.json", {"id": "plan-up", "title": "Borrowed Scenery", "status": "planned",
+                                               "for_morning": "2026-11-17"})
+    profiles.save_settings(cfg, {"overnight": {"enabled": False}}, listener=lis)
+    st = routes.library_state(cfg)
+    assert st["up_next"]["state"] == "off"
+    assert st["timeline"]["chapters"][0]["moments"][0]["outcome_label"] == "Became tonight's chapter"

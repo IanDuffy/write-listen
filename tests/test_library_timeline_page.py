@@ -363,3 +363,52 @@ def test_the_player_reports_every_ten_seconds_while_it_plays(site, browser, monk
     pg.wait_for_function("!document.getElementById('chapter-audio').paused")
     pg.wait_for_timeout(11500)
     assert len(posts) >= 2 and page.errors == []  # the start, then one ten seconds in
+
+
+# --- after the multi-agent review --------------------------------------------------------------------------
+
+def test_a_poll_while_it_plays_keeps_the_open_offer_and_the_label_matches_the_card(site, browser):
+    page = open_page(site, browser, path=f"/library#/chapter/{LATEST}")
+    pg = page.p
+    pg.wait_for_function("document.querySelectorAll('#pg-marks .lt-mk').length === 3")
+    pg.click("#pg-play")  # no intro brief: the recording plays
+    pg.wait_for_function("!document.getElementById('chapter-audio').paused")
+    pg.click("#pg-marks .lt-mk.question")
+    assert pg.is_visible("#pg-list .lt-mrow:nth-child(1) .lt-offer")
+    timeline.record_playback(site.root, 15, site.duration)  # a report arrives; then the poll
+    pg.evaluate("window.Library.reload()")
+    pg.wait_for_timeout(500)
+    assert pg.is_visible("#pg-list .lt-mrow:nth-child(1) .lt-offer")  # not rebuilt under the listener
+    pg.click("#player-toggle")
+    pg.wait_for_function("document.getElementById('chapter-audio').paused")
+    pg.evaluate(f"document.getElementById('chapter-audio').currentTime = 0")
+    pg.evaluate("window.Library.reload()")
+    pg.wait_for_timeout(500)
+    assert pg.inner_text("#pg-heard") != "Not started"  # 15 s heard with a play: as the card counts it
+    assert page.errors == []
+
+
+def test_a_reloaded_transcript_shows_play_on_the_latest_only(site, browser):
+    page = open_page(site, browser, path=f"/library#/chapter/{LATEST}/transcript")
+    pg = page.p
+    pg.wait_for_function("!document.getElementById('ch-play').hidden")
+    pg.evaluate(f"location.hash = '#/chapter/{CARDS[0][0]}/transcript'")
+    pg.wait_for_timeout(400)
+    assert not pg.is_visible("#ch-play") and page.errors == []
+
+
+def test_two_chapters_on_one_day_each_get_their_own_tick(site, browser):
+    lis = site.listener
+    root = lis / "chapters" / "2026-11-12-second"
+    profiles.write_json(root / "00_source" / "up_next.json", {"title": "Second That Day", "minutes": 10})
+    profiles.write_json(root / "finished.json", {"t": "2026-11-12T20:00:00", "demo": True})
+    page = open_page(site, browser)
+    pg = page.p
+    xs = tick_xs(pg, "ch")
+    titles = pg.eval_on_selector_all("#strip .lt-ch a.lt-ctitle", "els => els.map((e) => e.textContent)")
+    i = titles.index("Second That Day")
+    assert titles[i - 1] == "A Chapter With Nothing Saved" and xs[i] > xs[i - 1]  # side by side, in finish order
+    box = pg.locator("#scrubber").bounding_box()
+    pg.mouse.click(box["x"] + box["width"] * xs[i] / 100, box["y"] + box["height"] / 2)
+    settled(pg, i)
+    assert page.errors == []

@@ -100,3 +100,25 @@ Written down here rather than worked around; what was done instead, if anything,
   demo with `wl overnight wait` running never plans or builds for it.
 - **A replaced card's seed goes back in the pool** (`library.mark_unused`), only when a moment came from it: its
   moment reads Saved again, which should mean the planner can take it again.
+
+## Review (2026-11-16)
+
+Two rounds. A single-context review (10 findings, 8 fixed). Then four independent reviewers, one per area (the
+screens, the data, capture, the demo and tests), each finding put to a skeptic who tried to refute it: 23
+candidates, 12 confirmed, all fixed with a regression test:
+
+- Screens: a day's chapters sat on one scrubber point (now side by side, in the order they finished); Play on the
+  chapter page started the live intro with nothing on screen (the line now shows there too, and Play reads "Skip
+  to the chapter"); the transcript's Play could stay hidden on the latest chapter after a reload; a poll while a
+  chapter played rebuilt the moments (closing an open "Play from") and the strip each minute (status lines now
+  change in place); the page said Not started where the card said 1 of N min.
+- Data: an open question after_chapter restated (it names the aside, not the session) never found its moment
+  (moments now carry the aside id), and after_chapter no longer re-seeds an aside the pass already captured; with
+  overnight off, a planned card's moment read "Became a chapter".
+- Capture: an ask's question was seeded twice (the code's raw words and the pass's tidied ones: with the pass on
+  for asks, only the pass's); an ask's pass could make a guide conversation still open at the time look "older
+  than one already remembered" and skip it (asks no longer count in that ordering); a note was taken over by any
+  saved question (now only one that shares its words); a chapter read live on the orb page got notes at 0:00 (no
+  longer); a person mentioned was filed as a work too.
+- A flaky test, flaky before this branch too (the read-along takeover read the position before the seek landed):
+  it now waits for the seek.

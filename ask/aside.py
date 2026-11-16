@@ -316,11 +316,12 @@ def clear_asides(runs_dir: Path, dest: Path) -> list[str]:
 
 
 def save_seed(run: Path, topic: str, why: str, t: float, sentence_id: str, session: str | None = None,
-              paragraph_id: str | None = None) -> dict:
+              paragraph_id: str | None = None, note: bool = True) -> dict:
     """The guide saved a topic for a future chapter during an aside: 12_asks/seeds.md, and a note in the chapter's
     moments.jsonl at the place they tapped (docs/library-timeline.md: "the seed now also writes a moment"), naming
     the seed it becomes (the id after_chapter and the aside's own seeds give it)."""
-    _note_moment(run, topic, why, t, sentence_id, session, paragraph_id)
+    if note:  # not for a chapter read live on the orb page: no place in a recording to put it
+        _note_moment(run, topic, why, t, sentence_id, session, paragraph_id)
     d = asks_dir(run)
     d.mkdir(exist_ok=True)
     p = d / "seeds.md"

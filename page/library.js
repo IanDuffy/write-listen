@@ -298,6 +298,7 @@
         <div class="lt-barlabels"><span id="pg-heard"></span><span id="pg-length"></span></div>
       </div>
     </div>
+    <p id="pg-live" class="lt-empty" aria-live="polite"></p>
     <section class="lt-moments" aria-labelledby="pg-mkick">
       <p class="lt-kicker" id="pg-mkick">Your moments</p>
       <div id="pg-list"></div>
@@ -310,7 +311,7 @@
     <a href="#/" id="lib-back">← Chapter</a>
     <h1 id="ch-title"></h1>
     <p id="ch-angle"></p>
-    <div class="lib-row"><button class="lib-pill solid" id="ch-play">Play</button><span class="lib-meta" id="ch-meta"></span></div>
+    <div class="lib-row"><button class="lib-pill solid" id="ch-play" hidden>Play</button><span class="lib-meta" id="ch-meta"></span></div>
     <p class="lib-empty" id="ch-problem" hidden></p>
     <div id="ch-layout">
       <div id="ch-text" aria-live="off"></div>
@@ -359,7 +360,10 @@
   const SUPERSEDED = "superseded";
   let state = null;
 
-  function line(text) { $("live").textContent = text || ""; $("player-line").textContent = text || ""; }
+  function line(text) {  // the latest card's line, the chapter page's and the mini player's
+    $("live").textContent = text || ""; $("player-line").textContent = text || "";
+    const pl = $("pg-live"); if (pl) pl.textContent = text || "";
+  }
   async function post(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
     if (!res.ok) { let d = ""; try { d = (await res.json()).detail; } catch (e) {} throw new Error(d || `${res.status}`); }
@@ -978,13 +982,18 @@
   function renderTimeline(s) {
     const tl = s.timeline || { chapters: [] };
     T.tl = tl;
-    const key = JSON.stringify([tl.chapters.map((c) => [c.run, c.title, c.date, c.minutes, c.color, c.playable, c.status_line, c.counts]),
+    const key = JSON.stringify([tl.chapters.map((c) => [c.run, c.title, c.date, c.minutes, c.color, c.playable]),
                                 tl.first, tl.tonight, !!(s.latest && s.latest.intro)]);
     const rebuilt = key !== T.key;
     if (rebuilt) { T.key = key; buildStrip(tl, s); }
+    T.items.forEach((it) => {  // status lines change as chapters are heard: in place, never a rebuild
+      const c = it.run && rowFor(it.run), st = c && it.el.querySelector(".lt-cstatus");
+      if (st && st.textContent !== statusLine(c)) st.textContent = statusLine(c);
+    });
     buildScrubber(tl);  // cheap, and the width may have changed
     renderFrom();
-    const pageKey = view.page ? JSON.stringify([rowFor(view.page), tl.guide, tl.up_next_short]) : "";
+    if (view.run) show($("ch-play"), !!(rowFor(view.run) || {}).playable);  // the transcript's Play, once the library is known
+    const pageKey = view.page ? JSON.stringify([pageShape(rowFor(view.page)), tl.guide, tl.up_next_short]) : "";
     if (view.page && pageKey !== T.pageKey) showPage(view.page);  // its moments or progress changed
   }
 
@@ -1117,14 +1126,16 @@
     const sc = scale(tl);
     const parts = [], ticks = [];
     T.xs = [];
+    const perDay = {}, nthOfDay = tl.chapters.map((c) => { const k = c.date || tl.tonight; perDay[k] = (perDay[k] || 0) + 1; return perDay[k] - 1; });
     tl.chapters.forEach((c, i) => {
-      const d0 = dayNum(c.date || tl.tonight), x = sc.at(d0);
+      const n = perDay[c.date || tl.tonight], off = n > 1 ? (0.7 * nthOfDay[i]) / n : 0;  // a day's chapters side by side
+      const d0 = dayNum(c.date || tl.tonight) + off, x = sc.at(d0);
       T.xs.push(x);
       ticks.push({ x, i });
       parts.push(`<div class="lt-tick ch" style="left:${x}%"></div>`);
       (c.moments || []).forEach((m) => {
         const f = c.duration_s ? Math.min(1, (m.position_s || 0) / c.duration_s) : 0.5;
-        const mx = sc.at(d0 + 0.2 + 0.55 * f);
+        const mx = sc.at(d0 + (n > 1 ? 0.7 / n : 0.75) * (0.25 + 0.7 * f));
         ticks.push({ x: mx, i });
         parts.push(`<div class="lt-tick mo" style="left:${mx}%"></div>`);
       });
@@ -1290,7 +1301,7 @@
   // --- the chapter page (#/chapter/<run>, sketch D) ---------------------------------------------------------
   function showPage(run) {
     view.page = run;
-    T.pageKey = JSON.stringify([rowFor(run), ((state || {}).timeline || {}).guide, ((state || {}).timeline || {}).up_next_short]);
+    T.pageKey = JSON.stringify([pageShape(rowFor(run)), ((state || {}).timeline || {}).guide, ((state || {}).timeline || {}).up_next_short]);
     const c = rowFor(run);
     const info = infoFor(run);
     const s = state || {};
@@ -1327,6 +1338,10 @@
     $("pg-demo").textContent = c.demo ? "Demo chapter" : "No transcript yet";
     pageProgress();
   }
+
+  // What the page is built from, without its progress (pageProgress keeps the bar current): a poll while it plays
+  // never rebuilds the moments under the listener.
+  function pageShape(c) { if (!c) return null; const { playback, status, status_line, ...rest } = c; return rest; }
 
   function momentRow(c, m, guide) {
     const row = el("div", `lt-mrow${m.outcome === "became_chapter" ? " became" : ""}`);
@@ -1376,11 +1391,13 @@
     const finished = pb.finished || (d && furthest >= 0.95 * d);
     $("pg-fill").style.width = `${finished ? 100 : d ? Math.min(100, (100 * furthest) / d) : 0}%`;
     const heard = Math.max(1, Math.floor(furthest / 60));
-    $("pg-heard").textContent = finished ? "Finished" : furthest >= 30 ? (d ? `${heard} of ${Math.round(d / 60)} min heard` : `${heard} min heard`) : "Not started";
-    const playing = here && !audio.paused;
+    const begun = furthest >= 30 || (furthest > 0 && (pb.plays || here));  // as timeline.status_of counts it
+    $("pg-heard").textContent = finished ? "Finished" : begun ? (d ? `${heard} of ${Math.round(d / 60)} min heard` : `${heard} min heard`) : "Not started";
+    const live = !!L.mode && L.run === c.run && L.mode !== "change";  // the intro (or an ask) is on for it
+    const playing = (here && !audio.paused) || live;
     const b = $("pg-play");
     b.innerHTML = playing ? ICON_PAUSE : ICON_PLAY;
-    b.setAttribute("aria-label", playing ? "Pause chapter" : "Play chapter");
+    b.setAttribute("aria-label", live ? L.button : playing ? "Pause chapter" : "Play chapter");
   }
   $("pg-play").addEventListener("click", () => {
     const c = view.page && rowFor(view.page);
@@ -1506,6 +1523,7 @@
   async function showChapter(run) {
     if (view.run === run && view.sentences.length) return highlight();
     Object.assign(view, { run, sentences: [], refs: [], cur: -1, refK: -2 });
+    show($("ch-play"), !!(rowFor(run) || {}).playable);  // only the latest plays; render() repeats this once known
     const info = infoFor(run);
     $("ch-title").textContent = plain(info.title);
     $("ch-angle").textContent = info.overview || "";

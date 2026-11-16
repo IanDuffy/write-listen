@@ -306,7 +306,8 @@ def mount(app, cfg: dict, pipe, chat) -> None:
                 return {"saved": False, "reason": "no chapter to keep it with"}
             from ask import aside as ask_aside
             r = Run.open(run, runs_dir=pipe.runs_dir)
-            return {"saved": True, **ask_aside.save_seed(r.root, args.get("topic", ""), args.get("why", ""), 0.0, "live")}
+            return {"saved": True, **ask_aside.save_seed(r.root, args.get("topic", ""), args.get("why", ""), 0.0, "live",
+                                                                note=False)}  # no tap position: no moment
         return None
 
     @app.post("/api/live/line")

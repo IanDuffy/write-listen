@@ -71,7 +71,9 @@ def test_a_session_never_ended_is_ended_when_the_next_starts(app):
 
 
 def test_an_aside_adds_its_saved_topics_and_the_listeners_questions_to_seeds(app):
-    """C15: after_chapter ran at build time, so a morning aside's seeds go to seeds.jsonl when it ends."""
+    """C15: after_chapter ran at build time, so a morning aside's seeds go to seeds.jsonl when it ends. (With the
+    after-conversation pass on for asks, the pass writes the questions instead: test_library_capture.py.)"""
+    app.cfg["overnight"]["live"]["memory_on_asks"] = False
     root = chapter(app)
     s = app.c.post("/api/overnight/live/start", json={"mode": "ask", "sdp": "offer", "run": root.name, "t": 20}).json()
     for text in ("Wait, why do herons stand so still?", "Huh, OK"):

@@ -100,8 +100,13 @@ def session_date(transcript: Path) -> str:
 
 
 def newest_done(cfg: dict) -> str | None:
-    done = sorted(p.stem for p in (listener_dir(cfg) / "sessions").glob("*.done"))
-    return done[-1] if done else None
+    """The newest conversation already remembered, asks left out: an ask's pass (its moments) must never make a
+    conversation that was still open while it happened count as older than one already remembered."""
+    d = listener_dir(cfg) / "sessions"
+    for stem in sorted((p.stem for p in d.glob("*.done")), reverse=True):
+        if session_start(d / f"{stem}.jsonl").get("mode") != "ask":
+            return stem
+    return None
 
 
 def after_session(cfg: dict, transcript: Path) -> bool:
@@ -192,9 +197,8 @@ STOP = {"the", "a", "an", "of", "and", "to", "in", "on", "for", "is", "are", "do
 
 
 def _matching_note(notes: list[dict], question: str) -> dict | None:
-    """The save_seed note that saved this question: the only note of the aside, or the one sharing most words."""
-    if len(notes) == 1:
-        return notes[0]
+    """The save_seed note that saved this question: the one sharing most words with it (a note about something
+    else is left as it is, and the question gets a seed of its own)."""
     words = {w for w in re.findall(r"[a-z0-9']+", question.lower()) if w not in STOP}
     best = max(notes, key=lambda n: len(words & set(re.findall(r"[a-z0-9']+", n["text"].lower()))), default=None)
     return best if best and words & set(re.findall(r"[a-z0-9']+", best["text"].lower())) else None
@@ -210,7 +214,7 @@ def remember_moments(d: Path, start: dict, data: dict, transcript: Path) -> list
     if not root.is_dir():
         return []
     sid, at = transcript.stem, {"position_s": float(start.get("t") or 0), "paragraph_id": start.get("paragraph_id"),
-                                "sentence_id": start.get("sentence_id")}
+                                "sentence_id": start.get("sentence_id"), "aside": start.get("aside")}
     src = {"chapter": root.name, "session": sid}
     notes = [m for m in timeline.moments(root) if m.get("session") == sid and m["kind"] == "note"]
     items = []
@@ -223,7 +227,11 @@ def remember_moments(d: Path, start: dict, data: dict, transcript: Path) -> list
         if x["kind"] == "mention":
             title = (x.get("title") or "").strip() or text
             creator = (x.get("creator") or "").strip() or None
-            kind = "work"
+            listed = [w for w in data.get("library") or [] if isinstance(w, dict)
+                      and library._norm(w.get("title")) == library._norm(title)]
+            kind = listed[0].get("kind") if listed and listed[0].get("kind") in ("work", "person") else "work"
+            if kind == "person":  # a person is filed as the pass listed them, never as a work too
+                creator = (listed[0].get("creator") or "").strip() or None
             library.add_works(d, [{"kind": kind, "title": title, "creator": creator, "note": "", "source": src}])
             items.append({**at, "kind": "mention", "text": text, "title": title, "creator": creator, "work_kind": kind,
                           "outcome": "in_library", "outcome_ref": library.work_id(kind, title, creator), "session": sid})

@@ -476,11 +476,10 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
                                            "transcript": s["lines"], "ended": reason, "seconds": round(seconds, 1),
                                            "restart": restart, "rewind_asked": rewind, "seeds": s["seeds"],
                                            "live_id": s["live_id"], "cost_usd": usd})
-                aside_seeds(s)
+                aside_seeds(s, questions=not remembers(s))
             out["restart"] = restart
         write_line(s, {"who": "session", "ended": how, "seconds": billed, "cost_usd": usd})
-        remember = s["mode"] != "ask" or lcfg(cfg).get("memory_on_asks", True)  # asks: their moments too
-        if remember and chat is not None:  # the usual after-conversation pass (profile, library, seeds, moments)
+        if remembers(s) and chat is not None:  # the usual after-conversation pass (profile, library, seeds, moments)
             from stages import memory
             t = threading.Thread(target=memory.after_session, args=(cfg, s["path"]), name="overnight-memory",
                                  daemon=True)
@@ -488,7 +487,10 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             t.start()
         return out
 
-    def aside_seeds(s: dict) -> None:
+    def remembers(s: dict) -> bool:  # the after-conversation pass; for an ask, it writes the aside's moments
+        return chat is not None and (s["mode"] != "ask" or bool(lcfg(cfg).get("memory_on_asks", True)))
+
+    def aside_seeds(s: dict, questions: bool = True) -> None:
         """An aside's saved topics (kind idea) and the listener's questions (in their words) into seeds.jsonl:
         after_chapter ran when the chapter was built, before any morning aside existed."""
         items, last = [], None
@@ -496,7 +498,7 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
             text = (ln.get("text") or "").strip()
             if ln.get("who") == "listener" and text:
                 last = text
-                if library.is_question(text):
+                if questions and library.is_question(text):  # else the pass makes them, in tidied words
                     items.append({"kind": "question", "text": text, "words": text})
             elif ln.get("who") == "tool" and ln.get("name") == "save_seed":
                 args = ln.get("input") or {}
@@ -558,7 +560,8 @@ def mount(app, cfg: dict, pipe=None, chat=None) -> None:
         first = {"who": "session", "mode": req.mode, "run": req.run, "live_id": got["id"],
                  "voice": session["audio"]["output"]["voice"], "model": session["model"]}
         if req.mode == "ask":  # where they tapped: the memory pass puts the aside's moments there
-            first.update(t=round(extra["t"], 2), sentence_id=extra["sentence_id"], paragraph_id=extra["paragraph_id"])
+            first.update(t=round(extra["t"], 2), sentence_id=extra["sentence_id"], paragraph_id=extra["paragraph_id"],
+                         aside=extra["aside"])
         write_line(s, first)
         with lock:
             open_[sid] = s

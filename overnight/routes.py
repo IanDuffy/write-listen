@@ -129,7 +129,8 @@ def library_state(cfg: dict, now: datetime | None = None) -> dict:
                         "change_note": why, "plan_failed": (failed or {}).get("reason")},
             "latest": _chapter_info(latest) if latest else None,
             "history": history(listener),
-            "timeline": timeline.state(listener, shown, state, latest.name if latest else None, guide_name,
+            "timeline": timeline.state(listener, card if (card or {}).get("status") in ("planned", "building", "failed")
+                                       else None, state, latest.name if latest else None, guide_name,
                                        today=now.date()),
             "settings": settings}
 

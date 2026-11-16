@@ -340,7 +340,9 @@ def test_read_along_opens_the_chapter_view_in_this_page(site):
         page.click("#read")
         page.wait_for_function("location.hash === '#/chapter/synthetic/transcript'")
         page.wait_for_function("!document.getElementById('chapter-audio').paused && document.getElementById('audio').paused")
-        assert page.evaluate("document.getElementById('chapter-audio').currentTime") >= 30
+        # play() reports playing before the metadata arrives; the seek to where the orb was lands with it, before
+        # any sound (the test read 0 there one run in five, before this branch too)
+        page.wait_for_function("document.getElementById('chapter-audio').currentTime >= 30", timeout=5000)
         assert len(page.context.pages) == 1
     finally:
         browser.close()

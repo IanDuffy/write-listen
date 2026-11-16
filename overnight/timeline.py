@@ -106,7 +106,7 @@ def add_moments(root: Path, items: list[dict]) -> list[dict]:
                    "text": " ".join(it["text"].split()), "reply": (it.get("reply") or "").strip() or None,
                    "outcome": it.get("outcome") if it.get("outcome") in OUTCOMES else None,
                    "outcome_ref": it.get("outcome_ref"), "session": it.get("session")}
-            for k in ("seed", "title", "creator", "work_kind", "t"):
+            for k in ("seed", "title", "creator", "work_kind", "aside", "t"):
                 if it.get(k) is not None:
                     rec[k] = it[k]
             if any(_same(rec, r) for r in rows):
@@ -151,11 +151,12 @@ def moments_for_seed(listener: Path, seed: dict) -> list[tuple[Path, dict]]:
     if found:
         return found
     src = seed.get("source") or {}
-    session = src.get("session")
-    if not session:
+    session, aside = src.get("session"), src.get("aside")  # after_chapter's open questions name the aside only
+    if not session and not aside:
         return []
     cands = [(root, m) for root in _chapter_roots(listener) if not src.get("chapter") or root.name == src["chapter"]
-             for m in moments(root) if m.get("session") == session and m["kind"] in ("question", "note")]
+             for m in moments(root) if m["kind"] in ("question", "note")
+             and ((session and m.get("session") == session) or (aside and m.get("aside") == aside))]
     if len(cands) <= 1:
         return cands
     words = set(_norm(f"{seed.get('text')} {seed.get('words')}").split())
@@ -267,8 +268,8 @@ def state(listener: Path, card: dict | None, card_state: str, latest: str | None
     the first conversation, and where Tonight sits. `card` is the listener's up_next.json when it is still to come
     (planned, building, failed), else None; `latest` the playable chapter's folder name."""
     today = today or date.today()
-    roots = sorted((p for p in profiles.chapters(listener=listener) if in_library(p)),
-                   key=lambda p: (_day(p, {}) or "", p.name))  # by date: colours go by first appearance in time
+    roots = sorted((p for p in profiles.chapters(listener=listener) if in_library(p)),  # by date, then finish time:
+                   key=lambda p: (_day(p, {}) or "", profiles.finished_at(p), p.name))  # colours by first appearance
     built_from: dict[str, Path] = {}
     for p in profiles.chapters(listener=listener):
         cid = (profiles.read_json(p / "00_source" / "up_next.json", {}) or {}).get("id")
@@ -296,7 +297,7 @@ def state(listener: Path, card: dict | None, card_state: str, latest: str | None
                      "audio": profiles.finished(root), "episode": (root / "11_episode" / "episode.json").exists(),
                      "demo": bool(c.get("demo") or (profiles.read_json(root / "finished.json", {}) or {}).get("demo")),
                      "playback": pb, "status": st, "status_line": line, "moments": moments(root)})
-    rows.sort(key=lambda r: (r["date"] or "", r["run"]))
+    # roots are already in time order (a day's chapters by when they finished): the strip keeps it
     tonight_id = (card or {}).get("id")
     for r in rows:
         for m in r["moments"]:

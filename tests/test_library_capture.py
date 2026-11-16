@@ -225,3 +225,81 @@ def test_a_saved_question_takes_over_only_the_note_it_matches(world, cfg):
     memory.after_session(cfg, s)
     got = sorted((m["kind"], m["text"]) for m in timeline.moments(world.root))
     assert got == [("note", "Heron eyesight"), ("question", "Do Japanese gardens hide the view on purpose?")]
+
+
+# --- after the multi-agent review --------------------------------------------------------------------------
+
+def test_a_note_about_something_else_is_left_alone(world, cfg):
+    """A save_seed note and an unrelated saved question in one aside: two moments, each with its own seed."""
+    world.use({"gardens": [{"kind": "question", "text": "Why do Japanese gardens hide the view?", "outcome": "saved",
+                            "reply": "", "title": "", "creator": ""}]})
+    sid = "20261114-095000"
+    A.save_seed(world.root, "Heron eyesight", "", 850.0, "seg04-s001", session=sid)
+    s = ask_session(world.lis, sid, 850.0, [{"who": "listener", "text": "Why do Japanese gardens hide the view?"}])
+    memory.after_session(cfg, s)
+    ms = {m["kind"]: m for m in timeline.moments(world.root)}
+    assert ms["note"]["text"] == "Heron eyesight" and ms["question"]["text"] == "Why do Japanese gardens hide the view?"
+    assert ms["question"]["seed"] != ms["note"]["seed"] and library.seed(world.lis, ms["question"]["seed"])
+
+
+def test_a_person_mentioned_is_filed_as_a_person(world, cfg, monkeypatch):
+    resp = Aside({"Oliver": [{"kind": "mention", "text": "Mary Oliver", "title": "Mary Oliver", "creator": "",
+                              "outcome": "saved", "reply": ""}]})
+    orig = resp.__call__
+
+    def with_library(kwargs):  # the pass also lists her under library, as a person
+        out = orig(kwargs)
+        if "You keep the memory of a guide" in all_text(kwargs):
+            data = json.loads(out.content[0].text)
+            data["library"] = [{"kind": "person", "title": "Mary Oliver", "creator": "", "note": "loves her"}]
+            out.content[0].text = json.dumps(data)
+        return out
+    resp.__call__ = with_library
+    monkeypatch.setattr(llm, "_client", FakeAnthropic(with_library))
+    s = ask_session(world.lis, "20261114-096000", 500, [{"who": "listener", "text": "I love Mary Oliver."}])
+    memory.after_session(cfg, s)
+    works = library.works(world.lis)
+    assert [(w["kind"], w["title"]) for w in works] == [("person", "Mary Oliver")]
+    m = timeline.moments(world.root)[0]
+    assert m["work_kind"] == "person" and m["outcome_ref"] == works[0]["id"]
+
+
+def test_an_asks_pass_never_makes_an_open_conversation_look_older(world, cfg):
+    """An ask's .done must not count when ordering conversations: the guide conversation open while it happened
+    still gets its whole pass when it ends."""
+    world.use({"leg": [{"kind": "question", "text": "Why one leg?", "outcome": "answered", "reply": "Warmth.",
+                        "title": "", "creator": ""}]})
+    talk = world.lis / "sessions" / "20261116-080000.jsonl"
+    talk.write_text(json.dumps({"who": "listener", "text": "I pour concrete."}) + "\n")
+    ask = ask_session(world.lis, "20261116-082000", 402, [{"who": "listener", "text": "Why one leg?"}])
+    assert memory.after_session(cfg, ask) is True
+    assert memory.newest_done(cfg) is None
+    assert memory.after_session(cfg, talk) is True and "concrete" in (world.lis / "profile.md").read_text()
+
+
+def test_an_open_question_seed_from_after_chapter_finds_its_moment_by_aside(world, cfg):
+    world.use({"gardens": [{"kind": "question", "text": "Do gardens make us notice like this?", "outcome": "saved",
+                            "reply": "", "title": "", "creator": ""}]})
+    p = ask_session(world.lis, "20261114-091800", 850.0, [{"who": "listener", "text": "Do gardens make us notice like this?"}])
+    lines = p.read_text().splitlines()
+    first = {**json.loads(lines[0]), "aside": "20261114-091800-live"}
+    p.write_text("\n".join([json.dumps(first)] + lines[1:]) + "\n")
+    memory.after_session(cfg, p)
+    assert timeline.moments(world.root)[0]["aside"] == "20261114-091800-live"
+    seed = {"id": "s-open", "text": "Can gardens train attention?", "source": {"chapter": RUN, "aside": "20261114-091800-live"}}
+    assert [m["text"] for _, m in timeline.moments_for_seed(world.lis, seed)] == ["Do gardens make us notice like this?"]
+
+
+def test_after_chapter_leaves_out_asides_the_pass_captured(world, cfg):
+    A.append_aside(world.root, {"id": "a-live", "kind": "ask", "segment": 2, "transcript": [
+        {"who": "listener", "text": "Do gardens make us notice like this?"}]})
+    timeline.add_moments(world.root, [{"kind": "question", "position_s": 850, "text": "Do gardens make us notice like this?",
+                                       "session": "s", "aside": "a-live", "outcome": "saved"}])
+    profiles.write_json(world.root / "13_library.json", {"open_questions": [], "judged": []})
+    library.after_chapter(cfg, world.lis, world.root)
+    assert [s["kind"] for s in library.seeds(world.lis)] == []  # no question seed: the moment made its own
+
+
+def test_a_chapter_read_live_writes_no_note(world):
+    A.save_seed(world.root, "Borrowed scenery", "", 0.0, "live", note=False)
+    assert timeline.moments(world.root) == []
