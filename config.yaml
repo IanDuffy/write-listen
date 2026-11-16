@@ -540,3 +540,26 @@ fast:
     agent_name: write-listen guide (check-in)
     reasoning_effort: low
     turn_timeout_secs: 30       # the page handles silence itself; the platform should not nudge first
+
+# Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys here.
+demo:
+  interviewer:                  # part C: demo/interviewer.py, page/interview.js, prompts/interviewer*.md
+    voice: cedar                # its own GPT-Live voice (the guide's is live.voice); model and backend are live's
+    store: true                 # OpenAI keeps the session's audio 30 days; fetched into study/<live_id>.mp3
+    intro_max_minutes: 3        # the page asks for the handover 30 s before, and hands over itself at this
+    debrief_target_minutes: 8   # the page tells it to skip to question five and close
+    debrief_max_minutes: 9      # then to thank them and end; a minute later the page closes it
+    stale_minutes: 15           # a session the page never ended is closed after this long without a line
+    audio_tries: 6              # the recording: after live.archive_wait_seconds, every live.archive_retry_seconds
+    summary_role: researcher    # debrief_summary.md on Sonnet 5.5 (models.researcher), effort medium
+    summary_effort: medium
+    scripts: [/align.js, /live.js, /library.js]  # loaded in order at the handover (never named in the gate's source)
+    entry: Live                 # window.<entry>.handoff({name, stream}) takes over (part D)
+    page:                       # page/interview.js (demo/interviewer.py PAGE_DEFAULTS has the rest)
+      close_quiet_ms: 1400      # after the handover or the thanks: close once both sides are this quiet
+      close_max_ms: 9000
+      act_grace_ms: 3500        # said "I'll hand you over" (or thanked them after the last question) with no tool call: the page acts
+    checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests
+      intro_minutes: 2.5        # a simulated intro's connected time at most
+      debrief_minutes: 8        # a debrief's (live.checks.run_cap_usd also bounds it: $0.40 is 8 minutes)
+      time_note_minutes: 6.5    # the debrief's time note, on a compressed clock (the page's is debrief_target_minutes)

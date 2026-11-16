@@ -1,0 +1,13 @@
+[
+  {"name": "set_listener_name",
+   "description": "Save the person's name, once they have confirmed it, so whoever they talk with next knows it. Reply with an empty message.",
+   "input_schema": {"type": "object", "properties": {
+     "name": {"type": "string", "description": "Their name as they confirmed it, capitalised as a name."}},
+     "required": ["name"], "additionalProperties": false}},
+  {"name": "handoff_to_guide",
+   "description": "Hand the person over, right after the interviewer has said it is handing them over. Reply with an empty message.",
+   "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}},
+  {"name": "end_debrief",
+   "description": "End the conversation, right after the interviewer has thanked them by name at the very end. Reply with an empty message.",
+   "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}}
+]
