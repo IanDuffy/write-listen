@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Testers</title>
+<!--
+  The Tester Demo's admin page (docs/tester-demo.md, "Admin page"), served at /admin by demo/routes.py and
+  guarded there (loopback, or basic auth; Caddy guards it too on the droplet). One table; on a phone each
+  row becomes a card. Data and actions: /api/admin/*.
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; --warn: #b3412e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; --warn: #e07a66; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  #total { color: var(--muted); margin: 0 0 14px; }
+  form { display: flex; gap: 8px; margin: 0 0 16px; }
+  input, select, button { font: inherit; color: inherit; }
+  input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; }
+  button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.warn { color: var(--warn); }
+  select { padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 8px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  a { color: var(--accent); }
+  #msg { min-height: 1.4em; color: var(--muted); }
+  @media (max-width: 760px) {
+    thead { display: none; }
+    tr { display: block; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 12px; padding: 4px 0; }
+    td { display: flex; gap: 10px; border: 0; padding: 5px 12px; }
+    td::before { content: attr(data-label); flex: 0 0 96px; color: var(--muted); font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Testers</h1>
+  <p id="total">Loading…</p>
+  <form id="new" autocomplete="off">
+    <input id="label" placeholder="Label for a new tester (e.g. Pilot 1)" aria-label="Label" required>
+    <button class="primary">Create link</button>
+  </form>
+  <div id="msg" aria-live="polite"></div>
+  <table>
+    <thead><tr><th>Tester</th><th>Stage</th><th>Last active</th><th>Chapter</th><th>Questions asked</th><th>Debrief</th><th>Cost</th><th>Actions</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const money = (x) => "$" + (x || 0).toFixed(2);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const when = (iso) => {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
+function say(text) { $("msg").textContent = text || ""; }
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+async function copy(link) {
+  try { await navigator.clipboard.writeText(link); say("Link copied."); }
+  catch (e) { window.prompt("Copy the link:", link); }
+}
+
+// The inner div keeps a cell's lines stacked when a phone turns the cell into a label-and-value row.
+function cell(label, html) { return `<td data-label="${label}"><div>${html}</div></td>`; }
+
+function row(t) {
+  const study = (name) => `/api/admin/testers/${encodeURIComponent(t.lid)}/study/${encodeURIComponent(name)}`;
+  const stage = esc(t.stage) + (t.left_early ? ' <span class="sub">(left early)</span>' : "");
+  const chapter = t.title ? `${esc(t.title)}<div class="sub">${t.minutes_heard} of ${t.chapter_minutes} min heard</div>`
+                          : '<span class="sub">–</span>';
+  const links = [t.debrief.summary && `<a href="${study(t.debrief.summary)}" target="_blank">summary</a>`,
+                 t.debrief.transcript && `<a href="${study(t.debrief.transcript)}" target="_blank">transcript</a>`]
+                .filter(Boolean).join(" · ");
+  const debrief = (t.debrief.done ? "Done" : "Not yet") + (links ? `<div class="sub">${links}</div>` : "");
+  const cost = `${money(t.cost.total)}<div class="sub">Claude ${money(t.cost.claude)} · GPT-Live ${money(t.cost.gpt_live)}`
+             + (t.cost.estimated ? ` (${money(t.cost.estimated)} est.)` : "") + "</div>";
+  const tester = `${esc(t.label)}${t.name ? `<div class="sub">${esc(t.name)}</div>` : ""}`
+               + (t.link ? ` <button data-do="copy" data-link="${esc(t.link)}">Copy link</button>`
+                         : ' <span class="sub">revoked</span>');
+  const card = `<select data-do="card" aria-label="Debrief card">${["auto", "on", "off"].map((v) =>
+    `<option value="${v}"${t.debrief_card === v ? " selected" : ""}>card: ${v === "auto" ? "auto" : v === "on" ? "show" : "hide"}</option>`).join("")}</select>`;
+  const actions = `<div class="actions">${t.link ? '<button data-do="revoke">Revoke</button>' : ""}
+    <button data-do="reset">Reset</button>${card}<button class="warn" data-do="delete">Delete all data</button></div>`;
+  return `<tr data-lid="${esc(t.lid)}" data-label="${esc(t.label)}">${cell("Tester", tester)}${cell("Stage", stage)}`
+       + `${cell("Last active", when(t.last_active))}${cell("Chapter", chapter)}${cell("Questions", t.questions)}`
+       + `${cell("Debrief", debrief)}${cell("Cost", cost)}${cell("Actions", actions)}</tr>`;
+}
+
+async function load() {
+  try {
+    const got = await api("/api/admin/testers");
+    const t = got.totals;
+    $("total").textContent = `Total ${money(t.total)}: Claude ${money(t.claude)}, GPT-Live ${money(t.gpt_live)}`
+      + (t.estimated ? ` (${money(t.estimated)} estimated)` : "") + ` · ${got.testers.length} tester${got.testers.length === 1 ? "" : "s"}`;
+    $("rows").innerHTML = got.testers.map(row).join("");
+  } catch (e) { say("Couldn't load: " + e.message); }
+}
+
+$("new").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const label = $("label").value.trim();
+  if (!label) return;
+  try {
+    const got = await api("/api/admin/testers", { label });
+    $("label").value = "";
+    await load();
+    await copy(got.link);
+    say(`Created ${got.label}: ${got.link}`);
+  } catch (e) { say("Couldn't create: " + e.message); }
+});
+
+const CONFIRM = {
+  revoke: (l) => `Revoke ${l}'s link? It stops working; their data stays.`,
+  reset: (l) => `Reset ${l}? Their folder is moved aside and they start fresh on the same link.`,
+  delete: (l) => `Delete all of ${l}'s data and their link? This cannot be undone.`,
+};
+
+$("rows").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("button[data-do]");
+  if (!b) return;
+  const tr = b.closest("tr"), lid = tr.dataset.lid, label = tr.dataset.label, act = b.dataset.do;
+  if (act === "copy") return copy(b.dataset.link);
+  if (!window.confirm(CONFIRM[act](label))) return;
+  try { await api(`/api/admin/testers/${encodeURIComponent(lid)}/${act}`, {}); say(`${label}: ${act} done.`); }
+  catch (e) { say(`Couldn't ${act}: ${e.message}`); }
+  load();
+});
+
+$("rows").addEventListener("change", async (ev) => {
+  const s = ev.target.closest("select[data-do=card]");
+  if (!s) return;
+  const tr = s.closest("tr");
+  try { await api(`/api/admin/testers/${encodeURIComponent(tr.dataset.lid)}/card`, { value: s.value }); say(`${tr.dataset.label}: debrief card ${s.value}.`); }
+  catch (e) { say("Couldn't change the card: " + e.message); }
+  load();
+});
+
+load();
+</script>
+</body>
+</html>

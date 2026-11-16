@@ -38,3 +38,6 @@ faststart/timings.json
 # GPT-Live live checks: the listener's cached speech, transcripts, grades, audio (costs are in voice/gpt_live/build_costs.jsonl)
 voice/gpt_live/_cache/
 voice/gpt_live/_runs/
+
+# Tester Demo: the study report and its cost log (wl study report)
+/study/

@@ -61,6 +61,7 @@ from pydantic import BaseModel
 
 from ask import aside as ask_aside
 from ask import routes as ask_routes
+from demo import routes as demo_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
@@ -314,6 +315,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     cfg = cfg or load_config()
     app = FastAPI(title="write-listen")
     app.state.pipeline = pipe
+    demo_routes.mount(app, cfg)  # first: with demo.enabled its GET / wins over the one below
 
     @app.get("/", response_class=HTMLResponse)
     def page(chapter: str | None = None) -> str:
