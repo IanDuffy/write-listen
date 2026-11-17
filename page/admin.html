@@ -33,7 +33,8 @@
   .sub { color: var(--muted); font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   a { color: var(--accent); }
-  #msg { min-height: 1.4em; color: var(--muted); }
+  #msg { min-height: 1.4em; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+  #linkbox { flex: 1 1 320px; color: var(--fg, inherit); font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
   @media (max-width: 760px) {
     thead { display: none; }
     tr { display: block; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 12px; padding: 4px 0; }
@@ -76,9 +77,15 @@ async function api(path, body) {
   return r.json();
 }
 
-async function copy(link) {
-  try { await navigator.clipboard.writeText(link); say("Link copied."); }
-  catch (e) { window.prompt("Copy the link:", link); }
+// The link in a selected box beside the message, copied too where the browser allows (no prompt(): some
+// browsers, and embedded ones, refuse it).
+async function copy(link, before) {
+  let copied = false;
+  try { await navigator.clipboard.writeText(link); copied = true; } catch (e) { /* the box below still shows it */ }
+  $("msg").innerHTML = `${esc(before ? before + " " : "")}${copied ? "Link copied:" : "The link:"} `
+    + `<input id="linkbox" readonly value="${esc(link)}" aria-label="Tester link">`;
+  $("linkbox").focus();
+  $("linkbox").select();
 }
 
 // The inner div keeps a cell's lines stacked when a phone turns the cell into a label-and-value row.
@@ -125,8 +132,7 @@ $("new").addEventListener("submit", async (ev) => {
     const got = await api("/api/admin/testers", { label });
     $("label").value = "";
     await load();
-    await copy(got.link);
-    say(`Created ${got.label}: ${got.link}`);
+    await copy(got.link, `Created ${got.label}.`);
   } catch (e) { say("Couldn't create: " + e.message); }
 });
 

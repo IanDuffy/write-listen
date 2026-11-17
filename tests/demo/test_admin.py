@@ -181,6 +181,12 @@ def test_the_admin_page_lists_creates_and_acts_with_confirms(dcfg, site):
     page.click("#new button")
     page.wait_for_selector("tr[data-lid='t-pilot-2']")
     assert testers.record("t-pilot-2")
+    # The new link shows in a box on the page, never in a prompt() (refused by some browsers: it said
+    # "Couldn't create" though the tester was made).
+    page.wait_for_selector("#linkbox")
+    assert page.input_value("#linkbox").endswith("/t/" + testers.record("t-pilot-2")["token"])
+    assert "Created Pilot 2." in page.inner_text("#msg") and "Couldn't" not in page.inner_text("#msg")
+    assert not any("Copy the link" in m for m in dialogs)
 
     page.click("tr[data-lid='t-pilot-2'] button[data-do='revoke']")
     page.wait_for_function("document.querySelector(\"tr[data-lid='t-pilot-2']\").innerText.includes('revoked')")
