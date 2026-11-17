@@ -167,6 +167,7 @@ def site(cfg, tmp_path, monkeypatch):
                                greet_fallback_ms=1500, answer_wait_ms=2500, start_nudge_ms=1500,
                                # the clock-driven cues are off unless a test turns them on (Live.S)
                                hello_silence_secs=1000, pitch_nudge_secs=[1000, 1000], ready_remind_secs=1000,
+                               pitch_hold={"explained_secs": 0, "question_secs": 0, "max_secs": 0},
                                aside_quiet_secs=1000, end_hold_secs=1000, talk_rest_secs=1000, wake_grace_secs=0,
                                # every listener counts as engaged (the guide keeps them company after the start)
                                # unless a test says otherwise
@@ -1395,6 +1396,60 @@ def test_a_long_conversation_without_a_chapter_is_nudged_toward_one_twice_at_mos
     p.page.wait_for_timeout(1000)
     got = instructions(p)
     assert got.count(w.notes["pitch_nudge"]) == 1 and got.count(w.notes["pitch_nudge_again"]) == 1
+
+
+def test_the_pitch_nudge_waits_after_the_guide_says_what_it_does(world):
+    """Ian's tester run (2026-11-16): the nudge came 31 s after the guide explained itself and 12 s after its
+    first open question, mid-answer, and it pitched the first thing he said. Held for explained_secs."""
+    w = world
+    p = connect(w, start=False)
+    cue(p, "pitch_hold", {"explained_secs": 3, "question_secs": 0, "max_secs": 0})
+    p.say("I make short audio chapters for one person at a time.")
+    p.wait("L.explainedAt")
+    cue(p, "pitch_nudge_secs", [0.5, 1000])
+    p.page.wait_for_timeout(1700)
+    p.hear("Um, boy. So much")
+    p.page.wait_for_timeout(600)
+    assert w.notes["pitch_nudge"] not in instructions(p)
+    p.page.wait_for_timeout(1500)  # past the hold
+    p.hear("mostly the garden, lately")
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['pitch_nudge'])})", timeout=3000)
+
+
+def test_the_pitch_nudge_waits_for_the_answer_to_the_guides_question_but_not_forever(world):
+    """Not while its latest question is being answered; a guide that keeps asking is still nudged, max_secs late."""
+    w = world
+    p = connect(w, start=False)
+    cue(p, "pitch_hold", {"explained_secs": 0, "question_secs": 1000, "max_secs": 3})
+    p.say("What have you been tinkering with lately?")
+    p.wait("L.askedAt")
+    cue(p, "pitch_nudge_secs", [0.5, 1000])
+    p.page.wait_for_timeout(1700)
+    p.hear("Um, boy. So much")
+    p.page.wait_for_timeout(600)
+    assert w.notes["pitch_nudge"] not in instructions(p)
+    for _ in range(12):  # they go on talking: the nudge goes once it is max_secs overdue
+        p.hear("and another thing")
+        p.page.wait_for_timeout(500)
+        if w.notes["pitch_nudge"] in instructions(p):
+            break
+    assert w.notes["pitch_nudge"] in instructions(p)
+
+
+def test_the_second_pitch_nudge_keeps_its_gap_after_a_late_first(world):
+    w = world
+    p = connect(w, start=False)
+    cue(p, "pitch_nudge_secs", [0.2, 2.7])  # the first is long overdue by the time anyone speaks
+    p.page.wait_for_timeout(3000)
+    p.hear("so I was building a shelf")
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['pitch_nudge'])})", timeout=3000)
+    p.page.wait_for_timeout(1000)
+    p.hear("and then the glue")
+    p.page.wait_for_timeout(500)
+    assert w.notes["pitch_nudge_again"] not in instructions(p)
+    p.page.wait_for_timeout(1500)
+    p.hear("anyway")
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['pitch_nudge_again'])})", timeout=3000)
 
 
 def test_no_nudge_once_the_chapter_is_started(world):

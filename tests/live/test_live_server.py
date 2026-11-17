@@ -689,3 +689,19 @@ def test_a_rests_end_opens_a_session_told_why(app, cfg):
                         ("play", "continue"), ("dropped", "returned")):
         c.post("/api/live/resume", json={"session": sid, "sdp": "O", "reason": reason})
         assert offers[-1][0]["input"][-1]["content"][0]["text"] == notes[key], reason
+
+
+def test_the_pitch_waits_for_real_interest(app, cfg):
+    """Ian's tester run (2026-11-16): nudged 12 s after its first open question, the guide pitched the first
+    thing he said ("not that compelling"), then guessed again after his no."""
+    notes, pitch = S.notes(), S.instructions(S.values_for(cfg, VALUES))
+    assert "passing mention" in notes["pitch_nudge"] and "waved off" in notes["pitch_nudge"]
+    assert "don't pitch: ask one easy question" in notes["pitch_nudge"]
+    assert "don't guess again" in notes["pitch_nudge_again"]
+    assert "never at a passing mention" in pitch and "If they say no to a pitch, don't guess again" in pitch
+    assert "Want to hear what I do?" in pitch  # the offer he liked stays
+    page = cfg["live"]["page"]
+    hold = page["pitch_hold"]
+    assert hold["explained_secs"] >= 45 and hold["question_secs"] >= 15 and hold["max_secs"] <= 90
+    assert page["explained"] == S.EXPLAINED.pattern  # the page and the server agree on "explained"
+    assert '"pitch_hold"' in app[0].get("/live.js").text

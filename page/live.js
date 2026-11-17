@@ -38,6 +38,7 @@
   const YES = new RegExp(S.ready_yes, "i"), NOT_YET = new RegExp(S.ready_not_yet, "i");
   const LEAD_IN = new RegExp(S.lead_in, "i");
   const READY_ASK = new RegExp(S.ready_ask, "i");           // the listener asking for the ready chapter outright
+  const EXPLAINED = new RegExp(S.explained || "$^", "i");   // the guide telling them what it does (holds the pitch nudge)
   const MIC_OFF = new RegExp(S.mic_off_ask, "i");           // "turn off your mic": then only a tap wakes it
   const STALL = new RegExp(S.stall, "i");
   const STEPPING = /\b(step (back|away)|tap (my|the) (circle|dot)|speak up)\b/i;  // the guide's step-back line, question or not
@@ -71,6 +72,7 @@
     offer: null,            // the ready chapter offered in conversation: {at, askedAt, reminded}
     pausedAt: null,         // paused: {id, sentence} the reading goes on from
     convAt: 0, pitchNudges: 0, helloChecked: false, quietAt: 0,  // the conversation's start; nudges sent
+    explainedAt: 0, askedAt: 0, pitchNudgeAt: 0,  // the guide said what it does; its latest question; the last pitch nudge
     aside: null,            // {t0, at: {id, sentence}, resumeAsked, lastGuide, silenced}
     wait: null,             // {n, since, checkedIn, silenced, arrived}
     pending: null,          // a step waiting for the guide to finish speaking: {fn, since, max}
@@ -352,7 +354,7 @@
     L.run = null; L.chapter = null; L.chapterAt = ""; L.feed = { items: [], next: 0, cur: null, ahead: null };
     L.readStarted = false; L.finished = false; L.archived = false; L.aside = null; L.wait = null; L.dropAt = null;
     L.runEnded = false; L.leading = false; L.lastAt = null; L.stalled = null; L.lastGuideLine = ""; L.lastGuideAt = 0; L.lastListenerAt = 0;
-    L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
+    L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.explainedAt = 0; L.askedAt = 0; L.pitchNudgeAt = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
     L.heardLines = 0; L.recentWords = []; L.stepBackAt = 0;
     L.handoffOpen = null; L.handingBack = null;
@@ -515,6 +517,8 @@
         note(text, "guide");
         L.lastGuideLine = text; L.lastGuideAt = t;
         guideSaid(text, t, L.lineAt || t);
+        if (!L.explainedAt && EXPLAINED.test(text)) L.explainedAt = t;  // the pitch nudge waits for these (conversationCues)
+        if (text.includes("?")) L.askedAt = t;
         // A promise to start never counts in a line that asks (a pitch or an offer: the listener hasn't agreed
         // yet), and is dropped once the guide asks something else.
         if (["talk", "resting"].includes(L.phase) && !L.own && !L.startCalled && !text.includes("?") && START_PROMISE.test(text)) L.promiseAt = L.promiseAt || t;
@@ -628,10 +632,18 @@
       mark("hello-silence");
       return instruct(N.hello_silence);
     }
-    const nudges = S.pitch_nudge_secs || [];
-    if (!L.own && !L.startCalled && !L.cont && L.convAt && L.pitchNudges < nudges.length
-        && t - L.convAt > nudges[L.pitchNudges] * 1000 && (theyTalk || lull)) {
-      L.pitchNudges++;
+    // The pitch nudge. Ian's tester run (2026-11-16): it went 12 s after the guide's first open question, 31 s
+    // after it had said what it does, mid-answer, and the guide pitched the first thing he mentioned. So it
+    // waits a while after the explanation, and for the answer to the guide's latest question (that wait is
+    // bounded: a guide that asks every turn is still nudged); the second comes no sooner after the first
+    // than the settings' gap.
+    const nudges = S.pitch_nudge_secs || [], H = S.pitch_hold || {}, n = L.pitchNudges;
+    const due = n < nudges.length && L.convAt
+      ? Math.max(L.convAt + nudges[n] * 1000, n ? L.pitchNudgeAt + (nudges[n] - nudges[n - 1]) * 1000 : 0) : 0;
+    const held = (L.explainedAt && t - L.explainedAt < (H.explained_secs || 0) * 1000)
+      || (L.askedAt && t - L.askedAt < (H.question_secs || 0) * 1000 && t - due < (H.max_secs || 0) * 1000);
+    if (!L.own && !L.startCalled && !L.cont && due && t > due && !held && (theyTalk || lull)) {
+      L.pitchNudges++; L.pitchNudgeAt = t;
       mark("pitch-nudge", L.pitchNudges);
       return instruct(L.pitchNudges === 1 ? N.pitch_nudge : N.pitch_nudge_again);
     }

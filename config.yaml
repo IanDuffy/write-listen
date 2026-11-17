@@ -352,6 +352,11 @@ live:
     # After Ian's second test (2026-11-15):
     hello_silence_secs: 7       # no word from the listener this long after the guide's hello: it checks in, once
     pitch_nudge_secs: [150, 210]  # into a conversation with no chapter yet: the guide is asked to move toward one
+    # Ian's tester run (2026-11-16): the nudge landed 12 s after the guide's first open question and it pitched
+    # the first thing he said. No nudge this soon after the guide says what it does, nor while its latest
+    # question is being answered (that second hold delays a nudge by max_secs at most).
+    pitch_hold: {explained_secs: 60, question_secs: 25, max_secs: 60}
+    explained: "\\baudio chapters?\\b"  # the guide saying what it does (voice/gpt_live/session.py EXPLAINED)
     ready_remind_secs: 120      # a ready chapter offered and not taken up: the guide asks once more, at a pause
     opening_estimate_secs: 240  # the ring's guess at the opening's wait when no earlier runs have timed it
     words_per_second: 2.5       # the slider's estimate of the reading's pace (voice/gpt_live/chapter.py WORDS_PER_SECOND)
