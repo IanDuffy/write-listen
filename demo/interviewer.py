@@ -2,10 +2,19 @@
 
 A separate GPT-Live session from the guide's, in its own voice (demo.interviewer.voice), twice per tester:
 
-    intro     thanks them, gets and confirms their name (set_listener_name), says it would like a few minutes
-              afterwards, "I'll hand you over now." (handoff_to_guide); the page then brings in the guide
-    debrief   the five core questions in order, question three from their real moments (demo/debrief.py), the
-              closing question, thanks by name (end_debrief)
+    intro     checks who it is by the name given with the link ("Hi, is this Rolando?"; asks when there is
+              none; set_listener_name for a correction), says Ian built what it is about to show them, how
+              this will go, takes questions, "I'll hand you over now." (handoff_to_guide); the page then
+              brings in the guide. About 60-90 seconds.
+    debrief   a conversation gathering product feedback for Ian around TOPICS, their real moments
+              (demo/debrief.py) for the one about asking questions, the closing question, thanks by name
+              (end_debrief)
+
+Ian's notes after his own run (2026-11-16) made both what they are: the intro had taken 15 seconds, and in the
+debrief the interviewer answered him with "Mm-hmm", "Mm.", "Hmm." and then nothing for 77 seconds. Nothing
+muted it (his words were transcribed throughout): its instructions told it to leave pauses, not to fill a
+silence and to keep to five fixed questions, and no page cue covered a tester left waiting. The prompts now
+have it reply, and the page sends `waiting` (page/interview.js) when it hasn't.
 
 The session is opened like the guide's (voice/gpt_live/session.py): the page's WebRTC offer goes to OpenAI with
 the configuration and the key stays here. The tools run through GPT-Live's delegation to a Responses backend
@@ -20,7 +29,7 @@ the tester spoke in as a past conversation with the guide, which would then skip
     log.jsonl                                costs (GPT-Live per session, kind "interviewer"; the summary's Claude call)
     <live_id>.mp3 (or .wav if ffmpeg fails)  the session's recording from OpenAI (store: true), fetched after
                                              live.archive_wait_seconds in a background thread
-    debrief.json                             {done, finished_at, questions_asked, session}: the first completed
+    debrief.json                             {done, finished_at, topics, closing, session}: the first completed
                                              debrief's, never overwritten by a later one (debrief-<sid>.json)
     debrief_summary.md                       one Claude call (prompts/debrief_summary.md); the first completed
                                              debrief's, a later one writes debrief_summary-<sid>.md
@@ -70,7 +79,7 @@ NAME_MAX = 60
 
 DEFAULTS = {
     "voice": "cedar", "store": True,
-    "intro_max_minutes": 3, "debrief_max_minutes": 9, "debrief_target_minutes": 8,
+    "intro_max_minutes": 4, "debrief_max_minutes": 9, "debrief_target_minutes": 8,
     "stale_minutes": 15,              # a session the page never ended is closed after this long without a line
     "audio_tries": 6,                 # the recording: tries after live.archive_wait_seconds, live.archive_retry_seconds apart
     "summary_role": "researcher", "summary_effort": "medium",
@@ -88,21 +97,27 @@ PAGE_DEFAULTS = {
     "start_timeout_ms": 10000,
     "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
     "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
-    "handover": r"\bhand(ing)? you over\b",
+    "reply_wait_ms": 6000,            # they finished this long ago and it has said nothing but a backchannel: `waiting`
+    "reply_words": 3,                 # a line of the voice's with fewer words than this is a backchannel, not a reply
+    # "I'll hand you over now.", not the intro's own "in a moment I'll hand you over to someone else"
+    "handover": r"\bhand(ing)? you over\b(?!\s+(to|in)\b)|\bhand(ing)? you over\b[^.?!]*\bnow\b",
     "closing_question": r"\banything I didn['’]?t ask\b",  # the page also straightens curly quotes first
     "thanks": r"\bthank(s| you)\b",
 }
 
-# The five core questions and the close, as the interviewer's lines show them (docs/tester-demo.md). Matching
-# is loose on purpose: GPT-Live rarely says a line word for word.
-QUESTIONS = {
-    1: r"what (that|it) was like|from the start",
-    2: r"most into it|drift(ed)?\b|felt off",
-    3: r"\byou asked\b|stop it and ask|want(ed)? to stop",
-    4: r"\bto a friend\b",
-    5: r"tomorrow morning|make the difference",
+# What the debrief is for, as the interviewer's lines show it came up (prompts/interviewer_debrief.md, "WHAT IAN
+# WANTS TO LEARN"; the same six in prompts/debrief_summary.md and study_report.md). Matching is loose on purpose:
+# it is a conversation, and GPT-Live rarely says a line word for word. None is required.
+TOPICS = {
+    "stood_out": r"\b(stood|stand|stands) out\b|stuck with you|stay(ed|s)? with you|tell Ian first",
+    "use": r"\b(you'd|you would|would you|could you|do you|can you)\b[^.?!]*\b(use|using|come back to|listen again)\b",
+    "future": r"\bimagine\b|\bbecome\b|where (this|it) (could|might|should|would) go|want (this|it) to (be|do)\b",
+    "voice": r"\bvoices?\b",
+    "asking": r"\byou asked\b|stop it (and|to) ask|\bask(ing|ed)?\b[^.?!]*\bquestions?\b|\binterrupt",
+    "confusing": r"confus|(got|get|getting) in (the|your) way|unclear|didn't know what to do|trip(ped)? you up",
 }
-CLOSING = r"anything I didn'?t ask"  # matched, like QUESTIONS, on norm_quotes(text)
+CLOSING = r"anything I didn'?t ask"  # matched, like TOPICS, on norm_quotes(text)
+THANKS = r"\bthank(s| you)\b"
 
 BACKGROUND: list[threading.Thread] = []  # after-end work (audio, summary): tests join these
 _FILE_LOCK = threading.Lock()
@@ -131,17 +146,22 @@ def _fill(text: str, **fields) -> str:
     return text
 
 
-# The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_intro.md, step 2); a
-# correction gets a second confirmation, so the last one counts. Failing that, the tester's short answer to
-# the name question ("Sam.", "It's Sam Lee"), then their own "I'm Sam" anywhere. Only the phrases are
-# case-insensitive: a name needs a real capital, and a word in NOT_NAMES is never one ("Sam. Got it. Did I
-# get that right?" once saved "Got it"). Matched on norm_quotes(text).
+# The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_notes.md step_first,
+# step_named); a correction gets a second confirmation, so the last one counts. Failing that, the tester's
+# answer to the name question ("Sam.", "It's Sam Lee", or "No, it's Roland" after "Hi, is this Rolando?"), then
+# (only when no name is known yet) their own "I'm Sam" anywhere. Only the phrases are case-insensitive: a name
+# needs a real capital, and a word in NOT_NAMES is never one ("Sam. Got it. Did I get that right?" once saved
+# "Got it"). Matched on norm_quotes(text).
 NAME = r"[A-Z][A-Za-z'-]+(?: [A-Z][A-Za-z'-]+)?"
 CONFIRM_RE = re.compile(r"\b(" + NAME + r")[.,!]?\s+"
                         r"(?:(?i:got it|okay|ok|right|great|lovely|perfect|nice|thanks|thank you)[.,!]?\s+)?"
                         r"(?i:did i get that right|is that right|have i got that right|did i say that right)")
 SELF_RE = re.compile(r"\b(?i:i'?m|i am|my name is|my name's|this is|it'?s|call me)\s+(" + NAME + ")")
-NAME_ASKED_RE = re.compile(r"(?i:\byour name\b|\bcall you\b|\bwho am i (talking|speaking) (to|with)\b)")
+NAME_ASKED_RE = re.compile(r"(?i:\byour name\b|\bcall you\b|\bis this\b|\b(talking|speaking) (to|with)\b)")
+# With a name known, an answer that opens with a yes confirms it: nothing in that line replaces it ("Yes, it's
+# Orlando" is the transcript mishearing Rolando more often than a correction; a real one is said back and
+# confirmed by the interviewer, which CONFIRM_RE takes).
+YES_RE = re.compile(r"^\s*(?i:yes|yeah|yep|yup|that's me|speaking|it is|correct|sure|mm-?hm+|uh-?huh)\b")
 ANSWER_RE = re.compile(r"^\s*(?:(?i:it'?s|i'?m|i am|my name is|my name's|call me|just|oh|um|uh|yeah|yes|sure|"
                        r"hi|hello|hey)[,.]?\s+)*(" + NAME + r")\s*[.!,]?\s*$")
 NOT_NAMES = {"Yes", "Yeah", "Yep", "No", "Nope", "Sorry", "Okay", "Ok", "Alright", "All", "Hi", "Hello", "Hey",
@@ -170,16 +190,18 @@ def _a_name(found: str | None) -> str | None:
         return None
     out = []
     for w in words:
-        if w in NOT_NAMES:
+        if w in NOT_NAMES or w.endswith("'s"):  # "it's Ian's thing" is not a name
             break
         out.append(w)
-    return " ".join(out)
+    return " ".join(out) or None
 
 
-def confirmed_name(lines: list[dict]) -> str | None:
+def confirmed_name(lines: list[dict], known: str | None = None) -> str | None:
     """The name from an intro's transcript lines ({who, text}): the interviewer's last confirmation, else the
-    tester's short answer right after it asked their name, else their own introduction. None when none is
-    there (the guide then asks, as it always could)."""
+    tester's answer right after it asked their name or checked who they are, else (with no name known) their
+    own introduction anywhere. None when none is there: a known name then stays, and with none the guide asks,
+    as it always could. `known` is the name given with the link: it is never replaced by a weaker guess (a
+    line that opens with a yes, or an "it's ..." somewhere later in the talk)."""
     said = [(x.get("who"), norm_quotes(x.get("text"))) for x in lines]
     found = None
     for who, text in said:
@@ -193,11 +215,17 @@ def confirmed_name(lines: list[dict]) -> str | None:
         if who == "interviewer":
             asked = bool(NAME_ASKED_RE.search(text))
         elif who == "listener" and asked:
+            asked = False  # only the answer right after the question
+            if known and YES_RE.match(text):
+                continue
             m = ANSWER_RE.match(text)
             name = _a_name(m.group(1)) if m else None
+            for m in SELF_RE.finditer(text) if not name else ():
+                name = name or _a_name(m.group(1))
             if name:
                 return name
-            asked = False  # only the answer right after the question
+    if known:
+        return None
     for who, text in said:
         if who == "listener":
             for m in SELF_RE.finditer(text):
@@ -232,14 +260,23 @@ def _when(seconds: float | None, n: dict) -> str:
 
 
 def intro_values(listener_dir: Path) -> dict:
+    """The intro's placeholders: with a name (given with the link, or saved by an earlier try) it checks who
+    it is; with none it asks."""
+    return intro_values_for((tester_record(listener_dir).get("name") or "").strip())
+
+
+def intro_values_for(name: str | None) -> dict:
     n = notes()
-    name = (tester_record(listener_dir).get("name") or "").strip()
-    return {"meeting": _fill(n["meeting_again"], name=name) if name else n["meeting_first"]}
+    if name:
+        return {"meeting": _fill(n["meeting_named"], name=name), "first_step": _fill(n["step_named"], name=name),
+                "_name": name}
+    return {"meeting": n["meeting_first"], "first_step": n["step_first"], "_name": None}
 
 
 def debrief_values(cfg: dict, listener_dir: Path) -> dict:
     """The debrief's placeholders: name, the chapter (title, summary, how much they heard) and their moments
-    (demo/debrief.py). Question three names their first moment, or asks whether anything made them want to."""
+    (demo/debrief.py). The topic about asking questions names their first moment, or asks whether anything
+    made them want to."""
     from demo import debrief
     name = (tester_record(listener_dir).get("name") or "").strip()
     return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg))
@@ -257,14 +294,14 @@ def values_from(name: str, ctx: dict, got: list[dict]) -> dict:
     else:
         heard_line = _fill(n["heard_some"], heard=round(heard), minutes=round(minutes or 10))
     if got:
-        q3 = _fill(n["q3_moment"], when=_when(got[0]["at_s"], n), words=got[0]["words"])
+        asking = _fill(n["asking_moment"], when=_when(got[0]["at_s"], n), words=got[0]["words"])
         lines = "\n".join("  - " + _fill(n["moment_line"], when=_when(m["at_s"], n), words=m["words"]) for m in got)
         moments_text = "\n" + lines
     else:
-        q3, moments_text = n["q3_none"], n["moments_none"]
+        asking, moments_text = n["asking_none"], n["moments_none"]
     return {"person": name, "title": ctx.get("title") or n["title_unknown"],
             "summary": ctx.get("summary") or n["summary_unknown"], "heard": heard_line,
-            "moments": moments_text, "question_three": q3,
+            "moments": moments_text, "asking": asking,
             "_moments": got, "_context": ctx}
 
 
@@ -299,11 +336,15 @@ def session_config(cfg: dict, mode: str, values: dict, *, transport: str = "webr
 
 
 def page_notes(mode: str, values: dict) -> dict:
-    """The notes the page sends during this session, filled."""
-    n, name = notes(), values.get("person") or ""
-    keys = ("opened_intro", "handover_now") if mode == "intro" else ("opened_debrief", "time_up", "wrap_now")
-    out = {k.replace("_intro", "").replace("_debrief", ""): _fill(n[k], name=name) for k in keys}
-    return out
+    """The notes the page sends during this session, filled: `opened`, `waiting`, and the mode's clock notes."""
+    n = notes()
+    if mode == "intro":
+        name = values.get("_name") or ""
+        got = {"opened": n["opened_intro_named"] if name else n["opened_intro"], "handover_now": n["handover_now"]}
+    else:
+        name = values.get("person") or ""
+        got = {"opened": n["opened_debrief"], "time_up": n["time_up"], "wrap_now": n["wrap_now"]}
+    return {k: _fill(v, name=name) for k, v in {**got, "waiting": n["waiting"]}.items()}
 
 
 def page_settings(cfg: dict, mode: str) -> dict:
@@ -314,19 +355,23 @@ def page_settings(cfg: dict, mode: str) -> dict:
 
 # --- the transcript ---------------------------------------------------------------------------------
 
-def questions_asked(lines: list[dict]) -> dict:
-    """Which core questions the interviewer asked, in the order first asked, and whether it closed:
-    {"asked": [1, 2, ...], "in_order": bool, "closing": bool}."""
-    first: dict[int, int] = {}
-    closing = False
-    said = [norm_quotes(x.get("text")) for x in lines if x.get("who") == "interviewer"]
-    for i, text in enumerate(said):
-        for q, pat in QUESTIONS.items():
-            if q not in first and re.search(pat, text, re.I):
-                first[q] = i
-        closing = closing or bool(re.search(CLOSING, text, re.I))
-    asked = sorted(first, key=lambda q: (first[q], q))
-    return {"asked": asked, "in_order": asked == sorted(asked), "closing": closing}
+def covered(lines: list[dict]) -> dict:
+    """What a debrief's lines show: {"topics": [keys of TOPICS, in the order they first came up], "closing":
+    the closing question was asked, "answered": they said something after it, "thanked": the interviewer
+    thanked them after that}. A debrief with all three is finished, whether or not end_debrief came."""
+    topics: list[str] = []
+    closing = answered = thanked = False
+    for x in lines:
+        text = norm_quotes(x.get("text"))
+        if x.get("who") == "interviewer":
+            topics += [k for k, pat in TOPICS.items() if k not in topics and re.search(pat, text, re.I)]
+            if re.search(CLOSING, text, re.I):
+                closing, answered, thanked = True, False, False
+            elif closing and answered and re.search(THANKS, text, re.I):
+                thanked = True
+        elif x.get("who") == "listener" and closing and text.strip():
+            answered = True
+    return {"topics": topics, "closing": closing, "answered": answered, "thanked": thanked}
 
 
 def read_lines(path: Path) -> list[dict]:
@@ -589,10 +634,10 @@ def mount(app, cfg: dict) -> None:
         return usd
 
     def mark_done(s: dict, how: str) -> None:
-        q = questions_asked(read_lines(s["path"]))
+        q = covered(read_lines(s["path"]))
         write_json_atomic(state_path(s["study"], s["id"]), {
-            "done": True, "finished_at": datetime.now().isoformat(timespec="seconds"), "questions_asked": q["asked"],
-            "in_order": q["in_order"], "closing": q["closing"], "session": s["id"], "how": how})
+            "done": True, "finished_at": datetime.now().isoformat(timespec="seconds"), "topics": q["topics"],
+            "closing": q["closing"], "session": s["id"], "how": how})
 
     def close(s: dict, how: str) -> dict:
         """End a session: its cost if the page never reported it (wall clock), the debrief's state, then the
@@ -603,20 +648,18 @@ def mount(app, cfg: dict) -> None:
         write(s, {"who": "session", "ended": how})
         out: dict = {"ended": True}
         if s["mode"] == "debrief":
-            q = questions_asked(read_lines(s["path"]))
-            out["questions_asked"] = q["asked"]
+            q = covered(read_lines(s["path"]))
+            out["topics"] = q["topics"]
             state_p = state_path(s["study"], s["id"])
             state = read_json(state_p)
             if not state.get("done"):
-                # Delegation misses tools: a debrief that asked all five and the closing question, and thanked
-                # them, is finished whether or not end_debrief came.
-                said = [norm_quotes(x.get("text")) for x in read_lines(s["path"]) if x.get("who") == "interviewer"]
-                thanked = any(re.search(PAGE_DEFAULTS["thanks"], t, re.I) for t in said[-2:])
-                if s.get("ended_by_tool") or (q["asked"] == [1, 2, 3, 4, 5] and q["closing"] and thanked):
+                # Delegation misses tools: a debrief whose closing question was asked and answered, and that
+                # thanked them after, is finished whether or not end_debrief came.
+                if s.get("ended_by_tool") or (q["closing"] and q["answered"] and q["thanked"]):
                     mark_done(s, "complete" if not s.get("ended_by_tool") else "end_debrief")
                 else:
-                    write_json_atomic(state_p, {"done": False, "finished_at": None, "questions_asked": q["asked"],
-                                                "session": s["id"], "how": how})
+                    write_json_atomic(state_p, {"done": False, "finished_at": None, "topics": q["topics"],
+                                                "closing": q["closing"], "session": s["id"], "how": how})
             out["done"] = bool(read_json(state_p).get("done"))
         t = threading.Thread(target=_after_end, args=(cfg, s["study"], s), name=f"interviewer-{s['id']}", daemon=True)
         BACKGROUND.append(t)
@@ -662,20 +705,16 @@ def mount(app, cfg: dict) -> None:
                   "model": sc["model"], "backend": sc["delegation"]["responses"]["model"],
                   "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
                   "tools": [t["name"] for t in sc["delegation"]["responses"]["tools"]],
-                  **({"moments": values["_moments"], "chapter": values["_context"]} if req.mode == "debrief" else {})})
+                  **({"moments": values["_moments"], "chapter": values["_context"]} if req.mode == "debrief"
+                     else {"name_given": values.get("_name")})})
         return {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
                 "settings": page_settings(cfg, req.mode)}
 
-    def name_from_transcript(s: dict) -> str | None:
+    def name_from_transcript(s: dict, known: str | None = None) -> str | None:
         """The name, when set_listener_name never came (live check 2026-11-16: the voice delegated in none of
-        four intros): the one the interviewer last confirmed, from the intro's transcript."""
-        lines = []
-        for x in s["path"].read_text(encoding="utf-8").splitlines() if s["path"].exists() else []:
-            try:
-                lines.append(json.loads(x))
-            except ValueError:
-                continue
-        return confirmed_name(lines)
+        four intros): the one the interviewer last confirmed, or the tester's answer to who they are, from the
+        intro's transcript. `known` (the name given with the link) stays unless the transcript is clear."""
+        return confirmed_name(read_lines(s["path"]), known=known)
 
     @app.post("/api/interview/tool")
     def tool(req: Tool) -> dict:
@@ -707,9 +746,12 @@ def mount(app, cfg: dict) -> None:
                 except Exception as e:  # noqa: BLE001 (the handover happens anyway: the person is waiting)
                     out["not_saved"] = f"{type(e).__name__}: {e}"
                 s["handed_over"] = True
-            if out.get("handed_over") and not s["name"] and not tester_record(s["listener"]).get("name"):
-                found = name_from_transcript(s)
-                if found:
+            if out.get("handed_over") and not s["name"]:
+                # No tool call saved a name in this session: a name they gave, or a correction of the one they
+                # were greeted by, is taken from the transcript.
+                known = (tester_record(s["listener"]).get("name") or "").strip() or None
+                found = name_from_transcript(s, known)
+                if found and found.lower() != (known or "").lower():
                     try:
                         from demo import testers
                         testers.set_name(lid, found)

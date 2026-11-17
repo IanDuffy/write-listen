@@ -255,3 +255,35 @@ def test_debrief_card_and_update(dcfg):
     assert testers.update("t-pilot-1", stage_hint="chapter")["stage_hint"] == "chapter"
     with pytest.raises(StageError):
         testers.update("t-nobody", x=1)
+
+
+def test_a_name_given_with_the_link_is_saved_for_the_interviewer_and_the_guide(dcfg):
+    """Ian's notes (2026-11-16): the interviewer is given the tester's name ("Hi, is this Rolando?"). It is saved
+    at creation as set_name saves one, so the guide has it even if the intro never calls a tool."""
+    got = testers.create(dcfg, "Pilot 1", name="  Rolando ")
+    assert got["name"] == "Rolando"
+    rec = testers.record("t-pilot-1")
+    assert rec["name"] == "Rolando" and rec["given_name"] == "Rolando"
+    assert (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text().strip() == testers.NAME_LINE.format(name="Rolando")
+    reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
+    assert reg["tokens"][got["token"]]["given_name"] == "Rolando"
+    assert testers.lookup(got["token"])["name"] == "Rolando"
+    # a correction in the intro replaces the name; a reset starts again from the one given
+    testers.set_name("t-pilot-1", "Roland")
+    assert testers.record("t-pilot-1")["name"] == "Roland" and testers.record("t-pilot-1")["given_name"] == "Rolando"
+    testers.reset("t-pilot-1", dcfg)
+    assert testers.record("t-pilot-1")["name"] == "Rolando"
+    assert "Rolando" in (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text()
+    # a folder gone missing is remade with it on first open
+    import shutil
+    shutil.rmtree(common.LISTENERS_DIR / "t-pilot-1")
+    assert testers.open_link(dcfg, got["token"])["name"] == "Rolando"
+
+
+def test_a_label_that_reads_as_a_first_name_is_the_name_when_none_is_given(dcfg):
+    for label, want in (("Rolando", "Rolando"), ("Mary Ann", "Mary Ann"), ("O'Neil", "O'Neil"), ("Pilot 1", None),
+                        ("Ian test", None), ("rolando", None), ("Friend Of Ian", None), ("QA", None), ("A", None)):
+        got = testers.create(dcfg, label)
+        assert got["name"] == want and testers.record(got["lid"])["name"] == want, label
+    assert testers.create(dcfg, "Pilot 2", name="Rolando")["name"] == "Rolando"  # a given name wins over the label
+    assert not (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").exists()  # no name: nothing for the guide yet

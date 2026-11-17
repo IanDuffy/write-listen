@@ -20,9 +20,9 @@
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
   #total { color: var(--muted); margin: 0 0 14px; }
-  form { display: flex; gap: 8px; margin: 0 0 16px; }
+  form { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
   input, select, button { font: inherit; color: inherit; }
-  input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; }
+  input { flex: 1 1 180px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; }
   button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button.warn { color: var(--warn); }
@@ -49,6 +49,7 @@
   <p id="total">Loading…</p>
   <form id="new" autocomplete="off">
     <input id="label" placeholder="Label for a new tester (e.g. Pilot 1)" aria-label="Label" required>
+    <input id="name" placeholder="First name to greet them by (optional)" aria-label="Name">
     <button class="primary">Create link</button>
   </form>
   <div id="msg" aria-live="polite"></div>
@@ -129,10 +130,10 @@ $("new").addEventListener("submit", async (ev) => {
   const label = $("label").value.trim();
   if (!label) return;
   try {
-    const got = await api("/api/admin/testers", { label });
-    $("label").value = "";
+    const got = await api("/api/admin/testers", { label, name: $("name").value.trim() || null });
+    $("label").value = ""; $("name").value = "";
     await load();
-    await copy(got.link, `Created ${got.label}.`);
+    await copy(got.link, `Created ${got.label}` + (got.name ? `, greeted as ${got.name}.` : "."));
   } catch (e) { say("Couldn't create: " + e.message); }
 });
 

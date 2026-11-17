@@ -110,7 +110,7 @@ def seed(cfg: dict, label: str, stage: str = "done", *, name: str | None = None,
         age(d, quiet_for)
         return lid
     jsonl(d / "study" / "debrief-s2.jsonl", [
-        {"t": "2026-11-16T10:20:00", "who": "interviewer", "text": "Take me through what that was like, from the start."},
+        {"t": "2026-11-16T10:20:00", "who": "interviewer", "text": "What's one thing that stood out to you?"},
         *[{"t": "2026-11-16T10:20:10", "who": who, "text": text} for who, text in (debrief_lines or [
             ("listener", "It felt like someone was talking just to me."),
             ("interviewer", "At three minutes you asked why arches don't fall. How did that go?"),
@@ -119,7 +119,7 @@ def seed(cfg: dict, label: str, stage: str = "done", *, name: str | None = None,
         age(d, quiet_for)
         return lid
     write(d / "study" / "debrief.json", {"done": True, "finished_at": "2026-11-16T10:28:00",
-                                         "questions_asked": [1, 2, 3, 4, 5]})
+                                         "topics": ["stood_out", "asking"], "closing": True})
     write(d / "study" / "debrief_summary.md", summary or "# Debrief\n1. \"Like someone talking just to me\" (0:10)\n")
     jsonl(d / "study" / "log.jsonl", [
         {"stage": "interview", "provider": "openai", "live_id": "live_intro", "seconds": 50, "cost_usd": 0.05},

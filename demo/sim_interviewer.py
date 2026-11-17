@@ -1,17 +1,20 @@
 """Simulated checks of the interviewer (docs/tester-demo.md, acceptance checks 4 and 8), on the real GPT-Live.
 
-    python -m demo.sim_interviewer intro --runs 10 [--grade]     check 4: the intro says nothing about the
-                                                                 product, including when the tester asks
-    python -m demo.sim_interviewer debrief --runs 10 [--grade]   check 8: the five questions in order, question
-                                                                 three from their real moments, thanks by name,
-                                                                 no leading questions
+    python -m demo.sim_interviewer intro --runs 10 [--grade]     check 4: the intro greets them by the name given,
+                                                                 says Ian built it and how this will go, and
+                                                                 never what it is, including when the tester asks
+    python -m demo.sim_interviewer debrief --runs 10 [--grade]   check 8: a conversation (it replies, answers
+                                                                 direct questions, never goes silent) that
+                                                                 brings up Ian's topics, their real moment, the
+                                                                 closing question, thanks by name
     python -m demo.sim_interviewer grade <run.json>              grade one saved run again
+    --persona <key> (repeatable) runs only those personas, e.g. --persona fragments --persona asksback
 
 Claude plays a tester (prompts/interviewer_tester.md, a persona from prompts/interviewer_testers.md, cycled to
 --runs) and talks by voice to the interviewer's real session through voice/gpt_live/sim.Sim (the session the
 page opens: demo/interviewer.session_config, over the WebSocket). The page's side is played too: the opening
-note as speakable context, the handover the page acts on when the voice says it without the tool, and the
-debrief's time note (at checks.time_note_minutes: a compressed clock, since one check is capped at
+note as speakable context, the `waiting` note when the tester has finished and the voice hasn't replied, the
+handover the page acts on when the voice says it without the tool, and the debrief's time note (at checks.time_note_minutes: a compressed clock, since one check is capped at
 live.checks.run_cap_usd). Code checks every run (`checks`); `--grade` adds a fresh-context judge
 (prompts/interviewer_grade.md, live.checks.grade_role) whose quotes code checks against the transcript.
 
@@ -43,10 +46,15 @@ SILENT, LEAVE = "[SILENT]", "[LEAVE]"
 WAIT_SECS = 20         # the interviewer has said nothing this long: the tester is asked what they'd do
 TESTER_USD = 0.03      # an upper estimate for one tester line (Sonnet, effort low)
 GRADE_USD = 0.15
-# Words the intro must never say (check 4): what the product is, does or who made it. Loose on purpose; the
-# grade reads the hits in context.
+# Words the intro must never say (check 4): what the product is or does. It may say Ian built it. Loose on
+# purpose; the grade reads the hits in context.
 PRODUCT_WORDS = re.compile(r"\b(chapters?|audio|podcasts?|lessons?|stor(y|ies)|research\w*|guides?|narrat\w*|"
-                           r"episodes?|learn(ing)? about|an app|made (this|it)|Ian)\b", re.I)
+                           r"episodes?|learn(ing)? about|an app)\b", re.I)
+# How this will go, as the intro tells it (prompts/interviewer_intro.md, step 3).
+EXPLAINS = {"someone_else": r"someone else", "listen": r"ten minutes|\blisten", "interrupt": r"interrupt|ask (a |any )?questions?",
+            "done": r"\bdone\b|\bstop\b", "afterwards": r"afterwards?|come back|after that"}
+# A first debrief question as broad as the one Ian got ("take me through what that was like, from the start").
+BROAD = re.compile(r"take me through|what (that|it) was like|how (was|did) (it|that)( go)?\b|what did you think", re.I)
 DEFLECT = re.compile(r"see in a moment|you'll see|you will see", re.I)
 
 _MISSES = {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["quote", "why"],
@@ -60,14 +68,14 @@ GRADE_SCHEMA = {"type": "object", "additionalProperties": False, "required": [*G
 # --- personas ---------------------------------------------------------------------------------------
 
 def personas(mode: str | None = None) -> list[dict]:
-    """prompts/interviewer_testers.md: [{"key", "mode", "name", "asks", "heard", "moments", "text"}] in order."""
+    """prompts/interviewer_testers.md: [{"key", "mode", "name", "known", "asks", "heard", "moments", "text"}] in order."""
     out = []
     for block in re.split(r"^## +", load_prompt("interviewer_testers"), flags=re.M)[1:]:
         key, _, rest = block.partition("\n")
-        p = {"key": key.strip(), "mode": "intro", "name": "", "asks": False, "heard": None, "moments": []}
+        p = {"key": key.strip(), "mode": "intro", "name": "", "known": None, "asks": False, "heard": None, "moments": []}
         text, in_moments = [], False
         for line in rest.splitlines():
-            m = re.match(r"^(mode|name|asks|heard|moments):\s*(.*)$", line)
+            m = re.match(r"^(mode|name|known|asks|heard|moments):\s*(.*)$", line)
             if m:
                 k, v = m.groups()
                 in_moments = k == "moments"
@@ -91,7 +99,7 @@ def personas(mode: str | None = None) -> list[dict]:
 
 def values_for(p: dict) -> dict:
     if p["mode"] == "intro":
-        return {"meeting": IV.notes()["meeting_first"]}
+        return IV.intro_values_for(p.get("known"))
     heard, minutes = 10.0, 10.0
     if m := re.match(r"(\d+(?:\.\d+)?)\s+of\s+(\d+(?:\.\d+)?)", p.get("heard") or ""):
         heard, minutes = float(m.group(1)), float(m.group(2))
@@ -164,34 +172,63 @@ def _overlap(words: str, line: str) -> float:
     return len(a & set(P._norm(line).split())) / len(a) if a else 0.0
 
 
+def real(text: str | None, words: int = IV.PAGE_DEFAULTS["reply_words"]) -> bool:
+    """More than a backchannel ("Mm-hmm.", "Hmm."): page/interview.js's rule for a reply."""
+    return len(str(text or "").split()) >= words
+
+
+def unanswered(timeline: list[dict]) -> list[str]:
+    """The tester's direct questions that got no reply in words before the tester's next turn (or silence)."""
+    tl = sorted(timeline, key=lambda r: r["t"])
+    out = []
+    for i, x in enumerate(tl):
+        if x["who"] != "listener" or not str(x.get("text") or "").rstrip().endswith("?"):
+            continue
+        after = tl[i + 1:]
+        nxt = next((k for k, y in enumerate(after) if y["who"] in ("listener", "quiet")), None)
+        if nxt is None:
+            continue  # the run ended on it: nothing to judge
+        if not any(y["who"] == "guide" and real(y.get("text")) for y in after[:nxt]):
+            out.append(x["text"])
+    return out
+
+
 def code_checks(p: dict, timeline: list[dict], calls: list[dict], by_page: str | None = None) -> dict:
     """What code can check of one run (the grade reads the rest)."""
-    said = [x["text"] for x in sorted(timeline, key=lambda r: r["t"]) if x["who"] == "guide" and x.get("text")]
+    tl = sorted(timeline, key=lambda r: r["t"])
+    said = [x["text"] for x in tl if x["who"] == "guide" and x.get("text")]
     names = [c["name"] for c in calls]
+    lines = [{"who": "interviewer" if x["who"] == "guide" else x["who"], "text": x.get("text")} for x in tl]
+    silences = sum(x["who"] == "quiet" for x in tl)
     if p["mode"] == "intro":
+        known = p.get("known")
         saved = [c["args"].get("name") for c in calls if c["name"] == "set_listener_name"]
         if not saved:  # the server takes it from the transcript at the handover (demo/interviewer.confirmed_name)
-            lines = [{"who": "interviewer" if x["who"] == "guide" else x["who"], "text": x.get("text")} for x in timeline]
-            found = IV.confirmed_name(lines)
+            found = IV.confirmed_name(lines, known=known) or known
             saved = [found] if found else []
         hits = [{"text": t, "word": m.group(0)} for t in said for m in [PRODUCT_WORDS.search(t)] if m]
+        told = [k for k, pat in EXPLAINS.items() if any(re.search(pat, t, re.I) for t in said)]
         out = {"name_saved": bool(saved) and P._norm(saved[-1]) == P._norm(p["name"]), "saved_as": saved[-1] if saved else None,
+               "greeted_by_name": bool(known) and bool(said) and known.lower() in said[0].lower(),
+               "said_ian": any(re.search(r"\bIan\b", t) for t in said), "explained": told,
                "handed_over": "handoff_to_guide" in names, "handover_by_page": by_page == "handover",
-               "product_words": hits, "deflected": (not p["asks"]) or any(DEFLECT.search(t) for t in said)}
+               "product_words": hits, "deflected": (not p["asks"]) or any(DEFLECT.search(t) for t in said),
+               "seconds": round(max((x["t"] for x in tl if x["who"] == "guide"), default=0)), "silences": silences}
         out["ok"] = (out["name_saved"] and (out["handed_over"] or out["handover_by_page"]) and not hits
-                     and out["deflected"])
+                     and out["deflected"] and out["said_ian"] and len(told) >= 4
+                     and (not known or out["greeted_by_name"]))
         return out
-    q = IV.questions_asked([{"who": "interviewer", "text": t} for t in said])
-    q3_line = next((t for t in said if re.search(IV.QUESTIONS[3], t, re.I)), "")
-    if p["moments"]:
-        q3_ok = _overlap(p["moments"][0]["words"], q3_line) >= 0.6
-    else:
-        q3_ok = bool(re.search(r"stop it and ask|want(ed)? to stop", q3_line, re.I))
+    q = IV.covered(lines)
+    first = next((t for t in said if "?" in t or BROAD.search(t)), "")  # Ian's was a request, with no question mark
+    # their real moment, in their words, in a line about asking (short questions overlap any line by chance)
+    moment = (not p["moments"]) or any(_overlap(p["moments"][0]["words"], t) >= 0.6 and re.search(r"\bask", t, re.I)
+                                       for t in said)
     thanked = any(re.search(r"\bthank", t, re.I) and re.search(rf"\b{re.escape(p['name'])}\b", t, re.I) for t in said[-2:])
-    out = {"questions_asked": q["asked"], "all_five_in_order": q["asked"] == [1, 2, 3, 4, 5], "closing": q["closing"],
-           "q3_line": q3_line, "q3_uses_moment": q3_ok, "thanked_by_name": thanked,
+    out = {"topics": q["topics"], "closing": q["closing"], "first_question": first, "first_question_broad": bool(BROAD.search(first)),
+           "uses_moment": moment, "unanswered": unanswered(tl), "silences": silences, "thanked_by_name": thanked,
            "ended": "end_debrief" in names or by_page == "close"}
-    out["ok"] = out["all_five_in_order"] and out["closing"] and q3_ok and thanked and out["ended"]
+    out["ok"] = (len(q["topics"]) >= 3 and q["closing"] and moment and thanked and out["ended"]
+                 and not out["unanswered"] and not out["first_question_broad"])
     return out
 
 
@@ -234,9 +271,22 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
     await sim.note("commentary", notes["opened"])  # the page's opening, as speakable context
     since, said, silent, stop, by_page, noted = 0, 0, 0, "turns", None, False
     done_tool = "handoff_to_guide" if mode == "intro" else "end_debrief"
+    reply_wait = min(float(PAGE["reply_wait_ms"]) / 1000, wait_secs)
+    spoke_at = None  # when the tester last finished a line the voice hasn't answered
     try:
         while True:
-            new = await sim.wait_guide(since, wait_secs)
+            new = await sim.wait_guide(since, reply_wait if spoke_at is not None else wait_secs)
+            if spoke_at is not None and not any(real(x["text"], PAGE["reply_words"]) for x in new):
+                # The page's `waiting` note: they finished reply_wait ago and it has said nothing but "mm".
+                await asyncio.sleep(max(0.0, reply_wait - (sim.now() - spoke_at)))
+                if sim.speaking:  # mid-reply: the page waits for the line too
+                    await sim.wait_guide(since, 0.1)
+                if (not any(real(x["text"], PAGE["reply_words"]) for x in sim.turns[since:])
+                        and not any(c["name"] == done_tool for c in sim.calls) and not sim.closed.is_set()):
+                    await sim.note("instructions", notes["waiting"])
+                    await sim.wait_guide(len(sim.turns), wait_secs)
+                new = sim.turns[since:]
+            spoke_at = None
             since = len(sim.turns)
             if any(c["name"] == done_tool for c in sim.calls):
                 await sim.wait_guide(since, 4)
@@ -280,6 +330,7 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
                 continue
             silent = 0
             await sim.say(reply)
+            spoke_at = sim.now()
             said += 1
             if said >= max_turns:
                 await sim.wait_guide(since, wait_secs)
@@ -342,7 +393,7 @@ def summary(t: dict, g: dict | None = None) -> str:
     c, k = t["cost"], t["checks"]
     line = (f"{t['kind']} {t['persona']}: stop={t['stop']}, {c['seconds']:.0f} s, ${c['usd']:.3f}, "
             f"checks {'ok' if k['ok'] else 'FAILED'}: " + ", ".join(f"{a}={b}" for a, b in k.items()
-                                                                     if a not in ("ok", "q3_line")))
+                                                                     if a not in ("ok", "first_question")))
     if g:
         found = {x: len(g.get(x, [])) for x in GRADE_KEYS}
         line += f"\n  grade {g['score']}/10, misses {found}, quotes not found {g['quotes_not_found']}: {g['summary']}"
@@ -356,6 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, default=10)
     ap.add_argument("--grade", action="store_true")
     ap.add_argument("--max-turns", type=int, default=None)
+    ap.add_argument("--persona", action="append", help="only this persona (a key in prompts/interviewer_testers.md); repeatable")
     a = ap.parse_args(argv)
     cfg = load_config()
     try:
@@ -363,14 +415,16 @@ def main(argv: list[str] | None = None) -> int:
             path = Path(a.path)
             print(summary(json.loads(path.read_text(encoding="utf-8")), grade(cfg, path)))
             return 0
-        people = personas(a.what)
+        people = [p for p in personas(a.what) if not a.persona or p["key"] in a.persona]
+        if not people:
+            raise StageError(f"No {a.what} persona named {', '.join(a.persona)}.")
         out = RUNS / time.strftime("%Y%m%d-%H%M%S")
         ok = 0
         for i in range(a.runs):
             p = dict(people[i % len(people)])
             if i >= len(people):
                 p["key"] = f"{p['key']}-{i // len(people) + 1}"
-            t = asyncio.run(converse(cfg, p, out, max_turns=a.max_turns or (8 if a.what == "intro" else 16)))
+            t = asyncio.run(converse(cfg, p, out, max_turns=a.max_turns or (10 if a.what == "intro" else 16)))
             g = grade(cfg, out / f"{a.what}-{p['key']}.json") if a.grade else None
             ok += bool(t["checks"]["ok"])
             print(summary(t, g), flush=True)

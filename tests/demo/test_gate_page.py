@@ -312,3 +312,43 @@ def test_no_product_words_in_the_gate_or_its_client(site, page):
         assert not PRODUCT.search(text), (f, PRODUCT.search(text))
     started(page)  # and the live document, once the talk has begun
     assert not PRODUCT.search(page.page.content())
+
+
+def test_a_tester_left_waiting_has_the_voice_told_so(site, page):
+    """Ian's debrief (2026-11-16): he asked "what's a different question" and got "Hmm." and then 77 seconds of
+    nothing. The page tells the voice they're waiting: once after reply_wait_ms, once more at three times that,
+    and not at all when it answered in words."""
+    page.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await Interview.start("debrief", { stream: s, onDone: (x) => { window.__done = x; } }); }""")
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { Interview.I.S.reply_wait_ms = 500; }")
+    notes = lambda: [e["content"] for e in page.sent("session.instructions.append") if "waiting for you" in e["content"]]  # noqa: E731
+    page.say("So take me through what that was like.")
+    time.sleep(0.4)
+    page.emit({"type": "session.input_transcript.delta", "delta": "What's a different question?"})
+    time.sleep(0.3)
+    page.say("Hmm.")  # a backchannel is not a reply
+    wait_for(lambda: len(notes()) == 1)
+    assert page.sent("session.input_audio.unmute")  # an instruction is only acted on with the mic open
+    wait_for(lambda: len(notes()) == 2, timeout=4)
+    time.sleep(2.0)
+    assert len(notes()) == 2  # twice for one turn of theirs, never a stream of them
+    page.emit({"type": "session.input_transcript.delta", "delta": "Hello?"})
+    time.sleep(0.1)
+    page.say("Sorry. What's one thing that stood out to you?")  # answered in words: nothing more is sent
+    time.sleep(2.0)
+    assert len(notes()) == 2
+    said = [x for x in page.posted("api/interview/line") if x["who"] == "page"]
+    assert sum("waiting for you" in x["text"] for x in said) == 2  # in the transcript, for whoever reads it later
+
+
+def test_saying_someone_else_comes_next_is_not_the_handover(site, page):
+    """The intro now explains how this will go; "I'll hand you over to someone else" in that explanation would
+    have counted as the handover itself (the page acts on the words when no tool call follows)."""
+    started(page)
+    page.say("In a moment I'll hand you over to someone else, and you'll talk a little.")
+    time.sleep(1.5)  # act_grace_ms is 400 here
+    assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None
+    page.say("I'll hand you over now.")
+    page.wait("window.__handed")
+    assert page.posted("api/interview/tool")[-1]["by"] == "page"
