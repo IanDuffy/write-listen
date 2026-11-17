@@ -247,7 +247,8 @@
   // and the clock at intro_max_minutes are not held by this.
   function mayHandOver() {
     const min = I.S.handover_min_ms == null ? 15000 : I.S.handover_min_ms;
-    return !!I.startedAt && !!I.heardAt && now() - I.startedAt >= min;
+    const el = now() - I.startedAt;  // a tester who never speaks (a nod, a mic not heard) is handed over too, later
+    return !!I.startedAt && el >= min && (!!I.heardAt || el >= 3 * min);
   }
 
   const rx = (k) => { try { return I.S[k] ? new RegExp(I.S[k], "i") : null; } catch (e) { return null; } };

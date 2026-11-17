@@ -434,10 +434,21 @@ def test_the_handover_words_do_nothing_in_the_intros_opening(site, page):
 
 def test_the_handover_words_need_the_tester_to_have_spoken_but_the_tool_does_not(site, page):
     started(page)
+    page.js("() => { Interview.I.S.handover_min_ms = 60000; }")  # (a silent tester is handed over at three times this)
     page.say("I'll hand you over now.")
     time.sleep(0.9)
     assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None
     page.tool("handoff_to_guide")  # the voice's own call is never held
+    page.wait("window.__handed", timeout=8000)
+
+
+def test_a_tester_who_never_speaks_is_still_handed_over_on_the_words_later(site, page):
+    """Review: with the tester silent (a nod, a mic not transcribed) the words never handed over, and they waited
+    in silence for the intro's 4-minute clock."""
+    started(page)
+    page.js("() => { Interview.I.S.handover_min_ms = 300; }")
+    time.sleep(1.0)  # past three times the minimum, the tester still silent
+    page.say("I'll hand you over now.")
     page.wait("window.__handed", timeout=8000)
 
 

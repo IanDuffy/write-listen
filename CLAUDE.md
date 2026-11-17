@@ -428,7 +428,8 @@ later phase. Report, doc answers, live results, costs and Ian's script: `voice/g
   `listener/_saved_20261115-132151/`). Leave-taking ("we'll get back to you") rests the page too; resting has
   wake on sound again (`page/wake.js` on a clone of the mic track; `wake_listen_secs`, `voice.wake`). The ready
   chapter is said word for word through `opening_words` (`offer_line` in talk; `ready_line_resting` with the mic
-  off, where the play button shows); no play button in talk. Pause closes the GPT-Live session (`closeLive`);
+  off, where the play button shows); no play button in talk (reversed 2026-11-16: the bottom bar's play
+  button shows in talk too, see Tester Demo). Pause closes the GPT-Live session (`closeLive`);
   play reconnects with reason `paused`, a tap while paused with `paused-ask` (`asking`). In a question, stalls
   and a bare "okay" aren't answers (`live.page.stall`, anchored), `unanswered` asks it to answer, the backend may
   answer a handed-over question, and a quiet aside ends (resumed if answered, else paused).
