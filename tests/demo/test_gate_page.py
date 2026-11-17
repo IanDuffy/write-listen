@@ -296,7 +296,8 @@ def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page
     assert 250 < handed["at"] - held["at"] < 2500  # after the quiet, not after act_grace_ms or close_quiet_ms
     tool = page.posted("api/interview/tool")
     assert [(t["name"], t["by"]) for t in tool] == [("handoff_to_guide", "page")]
-    wait_for(lambda: page.posted("api/interview/end") and page.posted("api/interview/end")[-1]["how"] == "handover")
+    wait_for(lambda: page.posted("api/interview/end") and page.posted("api/interview/end")[-1]["how"] == "handover",
+             timeout=15)  # the end is posted behind the handover now (the session's close, then its cost), slower under load
 
 
 def test_nothing_is_timed_before_the_session_has_started(site, page):
