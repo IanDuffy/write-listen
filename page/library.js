@@ -149,7 +149,6 @@
       <div id="latest-body">
         <h2 id="latest-title"></h2>
         <p class="lib-overview" id="latest-overview"></p>
-        <p class="lib-summary" id="latest-summary" hidden></p>
         <p class="lib-meta" id="latest-meta"></p>
         <div class="lib-row">
           <button class="lib-pill solid" id="lib-play">Play</button>
@@ -850,8 +849,6 @@
     if (l) {
       $("latest-title").textContent = l.title;
       $("latest-overview").textContent = l.overview || "";
-      $("latest-summary").textContent = l.summary || "";  // a chapter made in conversation: its card, now it is written
-      show($("latest-summary"), !!l.summary);
       $("latest-meta").textContent = dateLabel(l);
       show($("episode"), !!l.episode);
       if (l.episode) $("episode").href = l.episode;

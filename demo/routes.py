@@ -10,6 +10,7 @@
     GET  /admin                     page/admin.html
     GET  /api/admin/testers         every tester's record and state, and the cost totals
     POST /api/admin/testers         {label, name?}: a new link (name: what the interviewer greets them by)
+    POST /api/admin/greeting        {label, name?}: {name} it would greet them as, or null (it asks); nothing made
     POST /api/admin/testers/{lid}/revoke | reset | delete
     POST /api/admin/testers/{lid}/card    {value: auto|on|off}
     GET  /api/admin/testers/{lid}/study/{name}   the debrief summary, or a transcript as plain text
@@ -228,6 +229,12 @@ def mount(app: FastAPI, cfg: dict) -> None:
             return testers.create(cfg, req.label, base=base_of(request), name=req.name)
         except StageError as e:
             raise HTTPException(400, str(e)) from None
+
+    @app.post("/api/admin/greeting")
+    def admin_greeting(req: NewTester, request: Request) -> dict:
+        """What the interviewer would greet a tester made with this label and name as (null: it asks)."""
+        guard(request)
+        return {"name": testers.greeting_name(req.label, req.name)}
 
     @app.post("/api/admin/testers/{lid}/revoke")
     def admin_revoke(lid: str, request: Request) -> dict:

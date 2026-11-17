@@ -213,6 +213,75 @@ def test_a_held_session_never_let_go_is_closed_and_its_conversation_ended(demo):
     assert [e["content"] for e in p.sent("session.commentary.append")] == [w.notes["handoff"].replace("{name}", "Sam")]
 
 
+def failing_start(p):
+    """/api/live/start hangs until window.__fail() answers it with a 500."""
+    p.js("""() => {
+      const f = window.fetch;
+      window.fetch = (u, o) => !String(u).includes("/api/live/start") ? f(u, o) : new Promise((done) => {
+        window.__fail = () => done(new Response(JSON.stringify({ detail: "Voice couldn't start." }),
+                                                { status: 500, headers: { "Content-Type": "application/json" } }));
+      });
+    }""")
+
+
+def test_a_session_opened_ahead_that_fails_after_the_handover_shows_the_screen_and_why(demo):
+    """Review of the handover fix: opened ahead (hold), let go of at the handover, and then the connection
+    failed: nothing revealed the screen (a held connect never did), the gate faded regardless, and the tester
+    was left with a bare circle. Now the screen comes up, with the page's line saying why."""
+    w = demo
+    p = w.open_demo(tester=False)
+    failing_start(p)
+    p.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      window.__handStream = s; Live.handoff({ stream: s, hold: true }); }""")
+    p.page.wait_for_function("!!window.__fail")
+    assert "handoff" in p.body() and "revealed" not in p.body()
+    p.js("() => { Live.handoff({ name: 'Sam', stream: window.__handStream }); }")  # the handover: let go of
+    p.page.wait_for_timeout(300)
+    assert "revealed" not in p.body() and not p.marks("revealed")
+    p.js("() => window.__fail()")
+    p.wait("L.log.some((x) => x[1] === 'revealed')", timeout=4000)
+    p.wait("L.phase === 'idle' && !L.pc")
+    assert p.page.is_visible("#transcript") and "Voice couldn't start." in p.page.inner_text("#transcript")
+    p.wait("!document.body.classList.contains('handoff')", timeout=5000)  # the screen is the page's again
+    assert p.page.is_visible("#line") and p.js("getComputedStyle(document.querySelector('#line')).pointerEvents") != "none"
+
+
+def test_a_session_opened_ahead_that_fails_before_the_handover_waits_for_it(demo):
+    """Only opened ahead, and it failed: the gate still covers the screen, so nothing is revealed yet; the
+    handover's own call starts again, and if that fails too the screen comes up."""
+    w = demo
+    p = w.open_demo(tester=False)
+    failing_start(p)
+    p.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      window.__handStream = s; Live.handoff({ stream: s, hold: true }); }""")
+    p.page.wait_for_function("!!window.__fail")
+    p.js("() => { window.__fail(); window.__fail = null; }")
+    p.wait("L.phase === 'idle' && !L.hold")
+    p.page.wait_for_timeout(300)
+    assert not p.marks("revealed") and "handoff" in p.body()
+    p.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      Live.handoff({ name: 'Sam', stream: s }); }""")
+    p.page.wait_for_function("!!window.__fail")
+    p.js("() => window.__fail()")
+    p.wait("L.log.some((x) => x[1] === 'revealed')", timeout=4000)
+
+
+def test_the_mic_is_on_before_the_debrief_starts(demo):
+    """The guide's page may have the mic disabled (while it reads); the debrief now starts before the guide's
+    session has finished closing, so the mic is enabled first: the interviewer hears them from its first word."""
+    w = demo
+    p = start_tester_reading(w)
+    p.js("""() => { const start = window.Interview.start;
+      window.Interview.start = (mode, opts) => { window.__micAtDebrief = opts.stream.getAudioTracks()[0].enabled; return start(mode, opts); }; }""")
+    p.page.click("#done")
+    p.wait("L.phase === 'handback'")
+    p.page.wait_for_timeout(400)
+    p.js("() => { window.Live.L.mic.enabled = false; }")
+    p.say("Let's leave it there. I'm handing you back to the person who welcomed you now.")
+    p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
+    assert p.js("window.__micAtDebrief") is True
+
+
 def test_the_debrief_starts_while_the_guides_session_closes(demo):
     """Ian's notes: the handback waited for the guide's session to close (up to 3 s), its cost and its end
     before the interviewer's session even began to connect."""
@@ -258,25 +327,26 @@ def test_no_card_shows_while_the_chapter_is_made_or_read_only_the_steps_and_the_
     assert not [u for u in p.js("performance.getEntriesByType('resource').map((e) => e.name)") if "/api/live/card" in u]
 
 
-def test_the_finished_chapter_in_the_library_carries_the_cards_overview_and_summary(demo):
-    """A chapter made in conversation has no Up next card; its own card (faststart/card.py) is what the library
-    shows for it once it is written, under the outline's title."""
+def test_the_finished_chapter_in_the_library_carries_the_cards_overview_only(demo):
+    """A chapter made in conversation has no Up next card; its own card's overview (faststart/card.py) is what
+    the library shows for it once it is written, under the outline's title. Not the card's longer summary: Ian
+    "didn't like seeing so much info" (the first fix had added that paragraph to the Latest card)."""
     from overnight import routes as library_routes
     w = demo
-    assert library_routes._chapter_info(w.root)["summary"] == ""  # no card: as before
+    assert "summary" not in library_routes._chapter_info(w.root)
     base.write_json(w.root / "fast" / "card.json", {**CARD, "run": RUN})
     info = library_routes._chapter_info(w.root)
     assert info["title"] == "The List"  # the outline's
-    assert info["overview"] == CARD["overview"] and info["summary"] == CARD["summary"]
+    assert info["overview"] == CARD["overview"] and "summary" not in info
     def with_latest(route):  # the library's state with this chapter as its latest (it has no recording here)
         res = route.fetch()
         route.fulfill(response=res, body=json.dumps({**res.json(), "latest": info}))
     p = w.open_demo(tester=False)
     p.page.route("**/api/library", with_latest)
     p.js("() => window.Library.reload()")
-    p.page.wait_for_selector("#latest-summary:not([hidden])", timeout=5000)
-    assert p.page.text_content("#latest-summary") == CARD["summary"]
-    assert p.page.text_content("#latest-overview") == CARD["overview"] and p.page.text_content("#latest-title") == "The List"
+    p.page.wait_for_function("document.getElementById('latest-title').textContent === 'The List'", timeout=5000)
+    assert p.page.text_content("#latest-overview") == CARD["overview"]
+    assert p.js("document.getElementById('latest-summary')") is None and CARD["summary"] not in p.page.text_content("#library")
 
 
 def test_im_done_stays_reachable_above_the_fixed_player_bar(demo):

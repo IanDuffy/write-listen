@@ -38,6 +38,11 @@ COOKIE = "wl_tester"   # demo.cookie; routes.mount sets it from config
 CARD_VALUES = ("auto", "on", "off")
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
 NAME_LINE = "Their name is {name} (they told the interviewer just now)."
+GIVEN_LINE = "Their name is {name} (Ian gave it when he invited them)."  # the guide reads this: say what is true
+# Labels that are not what you'd call someone: the interviewer asks the name instead of "Hi, is this Pilot?".
+NOT_A_NAME = {"pilot", "test", "tester", "testing", "friend", "demo", "team", "qa", "mom", "mum", "dad", "design",
+              "trial", "user", "guest", "sample", "beta", "alpha", "staff", "internal", "family", "colleague",
+              "wife", "husband", "boss", "client", "customer", "group", "round", "batch", "study", "someone"}
 _WORD = r"[A-Z](?=[A-Za-z'’-]*[a-z])[A-Za-z'’-]+"
 FIRST_NAME = re.compile(_WORD + "(?: " + _WORD + ")?")  # "Rolando", "Mary Ann"; not "Pilot 1", "Ian test", "QA"
 
@@ -116,8 +121,18 @@ def _new_lid(label: str) -> str:
 
 
 def first_name(label: str) -> str | None:
-    """The label, when it reads as a name: one or two capitalised words without digits."""
-    return label if FIRST_NAME.fullmatch(label or "") else None
+    """The label, when it reads as a name: one or two capitalised words without digits, none of them a word
+    for a kind of tester ("Pilot", "Design Team", "Mom")."""
+    if not FIRST_NAME.fullmatch(label or "") or any(w.lower() in NOT_A_NAME for w in label.split()):
+        return None
+    return label
+
+
+def greeting_name(label: str, name: str | None = None) -> str | None:
+    """What the interviewer will greet a new tester as: the name given, else a label that reads as one, else
+    None (it asks)."""
+    label = " ".join(str(label or "").split())
+    return " ".join(str(name or "").split())[:60] or first_name(label)
 
 
 def _make_folder(cfg: dict, rec: dict) -> Path:
@@ -128,7 +143,7 @@ def _make_folder(cfg: dict, rec: dict) -> Path:
     profiles.save_settings(cfg, {"chapter": {"minutes": minutes}, "overnight": {"enabled": False}}, listener=d)
     _write_record(rec["lid"], rec)
     if rec.get("given_name"):
-        set_name(rec["lid"], rec["given_name"])
+        set_name(rec["lid"], rec["given_name"], given=True)
     return d
 
 
@@ -147,7 +162,7 @@ def create(cfg: dict, label: str, base: str | None = None, name: str | None = No
     label = " ".join(str(label or "").split())
     if not label:
         raise StageError("A tester needs a label.")
-    given = " ".join(str(name or "").split())[:60] or first_name(label)
+    given = greeting_name(label, name)
     with _LOCK:
         lid = _new_lid(label)
         token = secrets.token_urlsafe(24)  # 32 characters
@@ -289,9 +304,9 @@ def update(lid: str, **fields) -> dict:
         return rec
 
 
-def set_name(lid: str, name: str) -> dict:
-    """The tester's name (given with the link, or heard by the interviewer): in tester.json, and one line in
-    profile.md for the guide."""
+def set_name(lid: str, name: str, given: bool = False) -> dict:
+    """The tester's name (given with the link: `given`; or heard by the interviewer): in tester.json, and one
+    line in profile.md for the guide, saying which."""
     name = " ".join(str(name or "").split())
     if not name:
         raise StageError("No name given.")
@@ -300,7 +315,7 @@ def set_name(lid: str, name: str) -> dict:
         p = folder(lid) / "profile.md"
         lines = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
         lines = [x for x in lines if not x.startswith("Their name is ")]  # a corrected name replaces the old line
-        lines.append(NAME_LINE.format(name=name))
+        lines.append((GIVEN_LINE if given else NAME_LINE).format(name=name))
         p.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return rec
 

@@ -99,7 +99,8 @@ def site(cfg, monkeypatch, own_listeners):
     cfg.setdefault("demo", {})["interviewer"] = {
         **(cfg.get("demo", {}).get("interviewer") or {}), "scripts": ["/next.js"], "entry": "Next",
         "page": {"line_quiet_ms": 200, "close_quiet_ms": 300, "close_min_ms": 100, "close_max_ms": 4000,
-                 "act_grace_ms": 400, "greet_fallback_ms": 100000}}
+                 "act_grace_ms": 400, "greet_fallback_ms": 100000,
+                 "handover_min_ms": 0}}  # the opening's guard is off unless a test sets it (the tester must still have spoken)
     consents = []
     app = FastAPI()
 
@@ -196,6 +197,11 @@ def started(page):
     page.wait("window.Interview.I.sid && window.Interview.I.started && !window.Interview.I.connecting")
 
 
+def heard(page, text="Yes, that's me."):
+    """The tester says something: the page acts on the handover's words only after they have."""
+    page.emit({"type": "session.input_transcript.delta", "delta": text})
+
+
 def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     assert page.page.inner_text("#w-tap") == "Tap to begin"
     started(page)
@@ -255,6 +261,7 @@ def test_mic_refused_says_so_and_tries_again(site, page):
 
 def test_handover_said_without_the_tool_is_acted_on_by_the_page(site, page):
     started(page)
+    heard(page)
     page.say("Good to meet you, Sam. I'll hand you over now.")
     page.wait("window.__handed", timeout=8000)
     tool = page.posted("api/interview/tool")
@@ -274,8 +281,9 @@ def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page
     assert page.js("!window.Next && !document.getElementById('next')")  # in memory only: the document is as it was
     assert not PRODUCT.search(page.page.content())
     page.js("() => { Interview.I.S.act_grace_ms = 60000; Interview.I.S.close_quiet_ms = 60000; Interview.I.S.handover_quiet_ms = 300; }")
-    page.say("Good to meet you, Sam. I'll hand you over")
+    heard(page)
     t0 = page.js("Date.now()")
+    page.say("Good to meet you, Sam. I'll hand you over now.")
     page.wait("window.__held", timeout=3000)
     held = page.js("window.__held")
     assert held["at"] - t0 < 1000 and held["gate"] and held["open"]  # while the welcome's session is still open
@@ -283,7 +291,6 @@ def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page
     assert page.js("document.body.classList.contains('w-warm') && !!document.getElementById('next')")
     assert page.js("window.__fetched.filter((u) => u === '/app' || u === '/next.js').length") == 2  # not fetched again
     assert not page.js("[...document.scripts].some((s) => (s.src || '').endsWith('/next.js'))")  # run from memory
-    page.say("now.")
     page.wait("window.__handed", timeout=3000)
     handed = page.js("window.__handed")
     assert 250 < handed["at"] - held["at"] < 2500  # after the quiet, not after act_grace_ms or close_quiet_ms
@@ -391,9 +398,61 @@ def test_saying_someone_else_comes_next_is_not_the_handover(site, page):
     """The intro now explains how this will go; "I'll hand you over to someone else" in that explanation would
     have counted as the handover itself (the page acts on the words when no tool call follows)."""
     started(page)
-    page.say("In a moment I'll hand you over to someone else, and you'll talk a little.")
-    time.sleep(1.5)  # act_grace_ms is 400 here
-    assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None
+    heard(page)
+    # None of these is the handover: it explains that one is coming, or asks before it (Ian's intro now says how
+    # this will go and takes questions; the looser pattern ended it at "before I hand you over").
+    for line in ("In a moment I'll hand you over to someone else, and you'll talk a little.",
+                 "Any questions before I hand you over?", "Before I hand you over, any questions?",
+                 "In a moment I'll hand you over.", "I'll hand you over whenever you're ready."):
+        page.say(line)
+        time.sleep(0.9)  # line_quiet_ms 200, act_grace_ms 400
+        assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None, line
     page.say("I'll hand you over now.")
     page.wait("window.__handed")
     assert page.posted("api/interview/tool")[-1]["by"] == "page"
+
+
+def test_the_handover_words_do_nothing_in_the_intros_opening(site, page):
+    """The page acts on the words the moment they are heard, so they must never end the intro in its opening:
+    not before the tester has spoken, and not before handover_min_ms. The tool itself still hands over."""
+    started(page)
+    page.js("() => { Interview.I.S.handover_min_ms = 1500; }")
+    page.say("Hi, is this Sam? I'll hand you over now.")  # nobody has spoken yet, and it has only just begun
+    time.sleep(0.9)
+    assert page.posted("api/interview/tool") == [] and not page.js("window.__held")
+    heard(page)
+    page.say("Lovely. I'll hand you over now.")  # they have spoken, but the intro is under handover_min_ms old
+    time.sleep(0.3)
+    assert page.posted("api/interview/tool") == [] and not page.js("window.__held")
+    page.wait("Date.now() - window.Interview.I.startedAt > 1600")
+    time.sleep(0.6)
+    assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None  # nothing was left armed
+    page.say("Right. I'll hand you over now.")
+    page.wait("window.__handed", timeout=5000)
+    assert page.posted("api/interview/tool")[-1]["by"] == "page"
+
+
+def test_the_handover_words_need_the_tester_to_have_spoken_but_the_tool_does_not(site, page):
+    started(page)
+    page.say("I'll hand you over now.")
+    time.sleep(0.9)
+    assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None
+    page.tool("handoff_to_guide")  # the voice's own call is never held
+    page.wait("window.__handed", timeout=8000)
+
+
+def test_the_name_handed_over_is_the_latest_known(site, page):
+    """The page calls the handover as its words are said; a name saved after that call (a correction still
+    being delegated) is the one handed on, not the one the call returned."""
+    started(page)
+    heard(page, "I'm Sam.")
+    page.tool("set_listener_name", {"name": "Sam"})
+    wait_for(lambda: site.testers.names == [("t-sam", "Sam")])
+    page.js("() => { Interview.I.S.handover_quiet_ms = 1500; }")
+    page.say("I'll hand you over now.")
+    page.wait("window.Interview.I.handover")
+    assert page.js("window.Interview.I.handover.name") == "Sam"
+    page.tool("set_listener_name", {"name": "Samira"})
+    page.wait("window.Interview.I.name === 'Samira'")
+    page.wait("window.__handed", timeout=8000)
+    assert page.js("window.__handed.name") == "Samira"

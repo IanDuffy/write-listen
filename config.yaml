@@ -355,6 +355,7 @@ live:
     # Ian's tester run (2026-11-16): the nudge landed 12 s after the guide's first open question and it pitched
     # the first thing he said. No nudge this soon after the guide says what it does, nor while its latest
     # question is being answered (that second hold delays a nudge by max_secs at most).
+    # Within max_secs of due it also goes only in a lull, never while they are talking.
     pitch_hold: {explained_secs: 60, question_secs: 25, max_secs: 60}
     explained: "\\baudio chapters?\\b"  # the guide saying what it does (voice/gpt_live/session.py EXPLAINED)
     ready_remind_secs: 120      # a ready chapter offered and not taken up: the guide asks once more, at a pause
@@ -574,6 +575,7 @@ demo:
       close_quiet_ms: 1400      # after the handover or the thanks: close once both sides are this quiet
       close_max_ms: 9000
       handover_quiet_ms: 900    # the handover's words heard: the guide comes in once both sides are this quiet
+      handover_min_ms: 15000    # ... and those words count only once the tester has spoken and the intro is this old
       act_grace_ms: 3500        # said "I'll hand you over" (or thanked them after the last question) with no tool call: the page acts
       reply_wait_ms: 6000       # they finished this long ago and it has said nothing but "mm": the page tells it they're waiting (again at 3x)
     checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests

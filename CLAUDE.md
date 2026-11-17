@@ -517,7 +517,7 @@ Deploy: `DEPLOY.md`, `deploy/`.
 - **The guide is unchanged:** it gets the name through profile.md (`testers.set_name`) and the handoff opening
   note (`notes.md` `handoff`). Tester runs are 10 minutes (`faststart.base.sized_overrides`, written into the
   run's config.yaml by `start_seed`); a chapter card (`faststart/card.py`, `prompts/fast_card.md`,
-  `/api/live/card/<run>`) shows within seconds of the start. "I'm done" and the chapter's end hand back
+  `/api/live/card/<run>`) is written within seconds of the start (no longer shown while the chapter is made: below). "I'm done" and the chapter's end hand back
   (`handback_done`, `handback_end`), then `Live.debrief` starts the interviewer's debrief.
 - **The handover is prepared ahead** (Ian's notes, 2026-11-16: 20 s from the interviewer's last words to the
   guide's first, a jumpy screen). The gate fetches /app and the scripts into memory during the intro; when the
@@ -529,6 +529,22 @@ Deploy: `DEPLOY.md`, `deploy/`.
   times it live (about $0.02).
 - Interviewer checks (acceptance 4 and 8): `python -m demo.sim_interviewer intro|debrief --runs N [--grade]`
   (costs in `demo/build_costs.jsonl`, capped like the live checks).
+- **After Ian's first tester run (2026-11-16)**, what differs from the spec and the lines above:
+  - The interviewer is given the name (`wl study create "Label" --name Rolando`, the admin form, or a label that
+    reads as a first name; not "Pilot", "Design Team": `testers.NOT_A_NAME`) and opens "Hi, is this Rolando?". It
+    says Ian built it and how the session will go, 60 to 90 seconds; still never what the thing is.
+  - The handover happens on the words "hand you over now" (the page calls the tool as it hears them, once the
+    tester has spoken and the intro is `handover_min_ms` old), so the intro prompt keeps "hand you over" for
+    its final line. The guide's session opens ahead of the handover (`Live.handoff({hold})`), silent and deaf:
+    about 2 s from the interviewer's last word to the guide's first.
+  - The debrief is a conversation around topics (`interviewer.TOPICS`), not five fixed questions; it replies to
+    each answer, and the page tells it when a tester is left waiting (`waiting`).
+  - No chapter card while the chapter is made: the steps to the opening, then the chapter's parts. The card is
+    still written at the start (the debrief and the admin page read it); the library shows its overview.
+  - The play button is on a bottom bar fixed to the screen (`#player`), never on the circle; the bar shows
+    whenever this conversation's chapter is ready and not started. A tap on the circle only talks or rests.
+  - The pitch nudge waits for real interest: held after the guide says what it does and after its latest
+    question, sent in a lull (`live.page.pitch_hold`); after a no the guide asks rather than guessing again.
 
 ## Local setup
 

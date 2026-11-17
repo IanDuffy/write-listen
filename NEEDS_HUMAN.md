@@ -10,6 +10,22 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## After Ian's first tester run (2026-11-16): what to listen for on the next one
+Make the link with a name (`cli.py study create "Ian test" --name Ian`, or the admin form, which shows what the
+interviewer will say). Then:
+- **The intro's length and warmth.** It should open "Hi, is this Ian?", say Ian built it and how the session
+  will go, ask for questions, and take 60 to 90 seconds: welcoming, not long. It must not hand over before its
+  final "I'll hand you over now."
+- **The handover.** The guide's first words should come about 2 to 3 seconds after the interviewer's last, by
+  name, with no glitch in the sound and no jump on screen.
+- **Tap to talk after a rest.** Let the guide step back for a couple of minutes, tap the circle: it should say
+  it's here and stay. With the chapter ready, the play button stays on the bottom bar while you talk.
+- **The pitch.** It should explore before pitching, not pitch the first thing you mention; say no once and it
+  should ask rather than guess again.
+- **The debrief replying.** Answer in fragments and ask it something back: it should respond in words within a
+  couple of seconds every time, never "Mm-hmm" and silence.
+- **On a phone:** the bottom bar clear of the home indicator, with "I'm done" above it.
+
 ## 5. The guide uses the name from the interviewer and never asks for it
 Open a tester link, tap, give your name to the interviewer, and listen to the guide's first words after the
 handover: it should greet you by name and give its own, and never ask your name.

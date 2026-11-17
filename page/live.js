@@ -329,6 +329,11 @@
     } else if (!resume && L.cont) {  // its first message is the startup input, which alone may not make it speak
       const first = (L.cont.begun ? N.reloaded : (L.cont.ready ? N.ready_unheard : N.reopened)).replace("{title}", L.cont.title || "their chapter");
       setTimeout(() => { if (silent()) instruct(`[${first}]`); }, S.greet_fallback_ms);
+    } else if (resume === "tap" || resume === "dropped") {
+      // Back on a tap (or typed text) after a rest or a drop: the note that says so is the new session's startup
+      // message, which alone may not make it speak. Nothing said by either side yet: once more, the mic open.
+      const again = resume === "tap" ? N.wake : `[${N.returned}]`;
+      setTimeout(() => { if (silent()) { mark("back-again", resume); instruct(again); } }, S.greet_fallback_ms);
     }
     if (!resume && L.cont && L.cont.begun) {  // the page was reopened mid-chapter: once the guide has said it's back, read on
       onStatus(L.status);
@@ -636,13 +641,15 @@
     // after it had said what it does, mid-answer, and the guide pitched the first thing he mentioned. So it
     // waits a while after the explanation, and for the answer to the guide's latest question (that wait is
     // bounded: a guide that asks every turn is still nudged); the second comes no sooner after the first
-    // than the settings' gap.
+    // than the settings' gap. And it waits for a lull rather than going while they talk (an answer longer
+    // than the question hold was still cut into), until max_secs past due.
     const nudges = S.pitch_nudge_secs || [], H = S.pitch_hold || {}, n = L.pitchNudges;
     const due = n < nudges.length && L.convAt
       ? Math.max(L.convAt + nudges[n] * 1000, n ? L.pitchNudgeAt + (nudges[n] - nudges[n - 1]) * 1000 : 0) : 0;
     const held = (L.explainedAt && t - L.explainedAt < (H.explained_secs || 0) * 1000)
       || (L.askedAt && t - L.askedAt < (H.question_secs || 0) * 1000 && t - due < (H.max_secs || 0) * 1000);
-    if (!L.own && !L.startCalled && !L.cont && due && t > due && !held && (theyTalk || lull)) {
+    const opening = lull || (theyTalk && t - due >= (H.max_secs || 0) * 1000);
+    if (!L.own && !L.startCalled && !L.cont && due && t > due && !held && opening) {
       L.pitchNudges++; L.pitchNudgeAt = t;
       mark("pitch-nudge", L.pitchNudges);
       return instruct(L.pitchNudges === 1 ? N.pitch_nudge : N.pitch_nudge_again);
@@ -775,10 +782,14 @@
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "page", text });
   }
 
-  // The ready chapter's play button (the bar's; the circle has no play mark: Ian, 2026-11-16): only with the mic
-  // off (Ian's third test), or just woken by a sound with nothing said yet (they may be reaching for play).
+  // The ready chapter's play button (the bar's; the circle has no play mark: Ian, 2026-11-16): whenever this
+  // conversation's chapter is ready and not yet started, in talk as well as resting. The bar is the one way to
+  // start it by hand, so it no longer goes away when they tap the circle to talk (it was only shown with the
+  // mic off, after Ian's third test, when the circle still played). "Ready" is the opening written, not the
+  // offer made: a tap back to talk drops the offer until the guide has made it again in the new session.
   function offerShown() {
-    return !!(L.offer && !L.readStarted && (L.phase === "resting" || (L.phase === "talk" && L.wokeAt && !(L.heardAt > L.wokeAt))));
+    const ready = L.offer || (L.chapter && L.own && L.run === L.own && sectionLocked(1) && !(L.cont && L.cont.begun));
+    return !!(ready && !L.readStarted && (L.phase === "resting" || L.phase === "talk"));
   }
 
   // Play the offered chapter; with no session (it dropped), reconnect first and play, with no second offer.
@@ -1478,6 +1489,7 @@
     // The interviewer's session opens while the guide's closes (its close, up to 3 s, and its cost report were
     // waited for before the debrief even began to connect).
     const ending = endConversation(true);
+    if (L.mic) L.mic.enabled = true;  // disabled while the chapter was read, perhaps: the interviewer must hear them from its first word
     debrief({ stream });
     await ending;
     L.handingBack = null;
@@ -1530,7 +1542,7 @@
     if (L.hold) {
       const held = L.hold;
       held.who.name = who;
-      if (!hold) held.go(true);
+      if (!hold) { held.let = true; held.go(true); }  // let go of: from here a failure must show (below)
       return held.done;
     }
     L.tester = true;
@@ -1544,7 +1556,10 @@
     if (hold) { held = L.hold = { who: L.handoff }; held.released = new Promise((r) => { held.go = r; }); }
     const done = connect().then((ok) => {
       if (L.hold === held) L.hold = null;  // it couldn't open: the handover's own call starts again
-      if (!ok && !held) reveal();
+      // It couldn't open: the screen (with its "Voice couldn't start") comes up, unless this was only the
+      // session opened ahead and the handover hasn't come (its own call starts again). A held connect that
+      // failed after it was let go of once left a tester with a bare circle.
+      if (!ok && (!held || held.let)) { reveal(); $("transcript").classList.add("open"); }  // the reason, in sight
       return ok;
     });
     if (held) held.done = done;
@@ -2090,8 +2105,11 @@
   const STATE_WORD = { played: "played", playing: "playing", ready: "ready", being_written: "being written" };
   function renderMarkers() {
     const list = $("sections");
-    // Once the opening is written (ready, offered) and while it is read: every part and where it stands.
-    if (!L.chapter || L.run !== L.own || !(L.readStarted || L.offer) || ["idle", "done"].includes(L.phase)) { list.style.display = "none"; return; }
+    // Once the opening is written and while it is read: every part and where it stands. From the run's first
+    // audio with the chapter loaded, not only from the offer (in talk the offer waits for a pause, and neither
+    // the steps nor the parts showed meanwhile).
+    const written = L.readStarted || L.offer || (mine_(L.status) && L.status.first_audio);
+    if (!L.chapter || L.run !== L.own || !written || ["idle", "done"].includes(L.phase)) { list.style.display = "none"; return; }
     list.style.display = "";
     while (list.children.length > L.chapter.sections.length) list.lastChild.remove();
     L.chapter.sections.forEach((sec, k) => {

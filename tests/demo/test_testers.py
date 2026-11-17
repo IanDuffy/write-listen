@@ -264,13 +264,15 @@ def test_a_name_given_with_the_link_is_saved_for_the_interviewer_and_the_guide(d
     assert got["name"] == "Rolando"
     rec = testers.record("t-pilot-1")
     assert rec["name"] == "Rolando" and rec["given_name"] == "Rolando"
-    assert (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text().strip() == testers.NAME_LINE.format(name="Rolando")
+    # the guide reads this line: a name Ian gave is not one "they told the interviewer just now"
+    assert (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text().strip() == "Their name is Rolando (Ian gave it when he invited them)."
     reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
     assert reg["tokens"][got["token"]]["given_name"] == "Rolando"
     assert testers.lookup(got["token"])["name"] == "Rolando"
     # a correction in the intro replaces the name; a reset starts again from the one given
     testers.set_name("t-pilot-1", "Roland")
     assert testers.record("t-pilot-1")["name"] == "Roland" and testers.record("t-pilot-1")["given_name"] == "Rolando"
+    assert (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text().strip() == "Their name is Roland (they told the interviewer just now)."
     testers.reset("t-pilot-1", dcfg)
     assert testers.record("t-pilot-1")["name"] == "Rolando"
     assert "Rolando" in (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").read_text()
@@ -287,3 +289,16 @@ def test_a_label_that_reads_as_a_first_name_is_the_name_when_none_is_given(dcfg)
         assert got["name"] == want and testers.record(got["lid"])["name"] == want, label
     assert testers.create(dcfg, "Pilot 2", name="Rolando")["name"] == "Rolando"  # a given name wins over the label
     assert not (common.LISTENERS_DIR / "t-pilot-1" / "profile.md").exists()  # no name: nothing for the guide yet
+
+
+def test_a_label_for_a_kind_of_tester_is_not_greeted_as_a_name(dcfg):
+    """"Hi, is this Pilot?": a label that is one or two capitalised words is not always a name. These the
+    interviewer asks, as before; a name given beside such a label is still used."""
+    for label in ("Pilot", "Test", "Tester", "Friend", "Demo", "Team", "Qa", "Mom", "Dad", "Design Team", "Test Ian"):
+        assert testers.first_name(label) is None and testers.greeting_name(label) is None, label
+        got = testers.create(dcfg, label)
+        assert got["name"] is None and testers.record(got["lid"])["name"] is None, label
+        assert not (common.LISTENERS_DIR / got["lid"] / "profile.md").exists()
+    assert testers.greeting_name("Rolando") == "Rolando" and testers.greeting_name("  Mary   Ann ") == "Mary Ann"
+    assert testers.greeting_name("Design Team", " Purnima ") == "Purnima"
+    assert testers.create(dcfg, "Mom", name="Ruth")["name"] == "Ruth"

@@ -94,7 +94,8 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
   - `lookup(token) -> record | None`, `listener_for_request(scope) -> lid | None` (cookie), `revoke(lid)`,
     `reset(lid)` (moves the folder aside to `listeners/_cleared_<time>/<lid>` and recreates it, same token),
     `delete(lid)` (removes folder and token), `set_name(lid, name)` (tester.json, and one line in profile.md:
-    "Their name is <name> (they told the interviewer just now)."), `record_consent(lid)`, `set_debrief_card`,
+    "Their name is <name> (they told the interviewer just now).", or "(Ian gave it when he invited them)." for a
+    name given at creation), `record_consent(lid)`, `set_debrief_card`,
     `update(lid, **fields)` (merge into tester.json; C sets `intro_done` at the handoff).
   - lid is `t-<slug(label)>`, unique (a numeric suffix on collision).
 - Routes: `GET /t/{token}` sets the cookie (HttpOnly, SameSite=Lax, Secure per `secure_cookie`), creates the folder
@@ -119,7 +120,8 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
 - Storage: `listeners/<lid>/study/` (never `sessions/`): `intro-<sid>.jsonl`, `debrief-<sid>.jsonl` (same line
   format as session transcripts: `{"t", "who", "text", ...}`), `log.jsonl` (usage and Claude costs, same record
   shape as sessions/log.jsonl), `<live_id>.wav` / `.mp3` (fetched from OpenAI after the session, store: true),
-  `debrief_summary.md`, `debrief.json` `{done, finished_at, questions_asked: [1..5]}`.
+  `debrief_summary.md`, `debrief.json` `{done, finished_at, topics: [...], closing}` (the topics that came
+  up, `interviewer.TOPICS`; before Ian's first run it was `questions_asked: [1..5]`).
 - Routes `/api/interview/{start,tool,line,usage,end}`: `start {mode: "intro"|"debrief", sdp}` → `{sid, live_id,
   sdp}`; tools: `set_listener_name {name}`, `handoff_to_guide {}` (intro), `end_debrief {}` (debrief).
   `end {sid}` closes, fetches audio in the background, and for a debrief writes the summary (Claude, cost in
@@ -152,8 +154,9 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
   first word.
 - Chapter card: at `start_chapter` (server side, part A's start_seed hook calls `faststart.card.start(run_root,
   cfg)` in a thread) one Sonnet call (prompts/fast_card.md, schema {title, overview, summary}) writes
-  `<run>/fast/card.json`; `GET /api/live/card/{run}`; the page shows it under the orb once this conversation's
-  chapter has one; the outline's title replaces the card's title when it lands.
+  `<run>/fast/card.json`; `GET /api/live/card/{run}`. The page no longer shows it (see "After Ian's first tester
+  run" below); the debrief brief and the admin page read it, and the library shows its overview on the
+  finished chapter.
 - 10-minute sizing: `faststart.base.sized_overrides(minutes)`; prompts/fast_outline*.md wording that assumes
   three or more sections is softened.
 - Tester mode (`body.tester`, injected when the request is a tester's): hides Start fresh, Stop making this
@@ -177,3 +180,26 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
 
 Each part adds tests under `tests/demo/` (pytest, fakes as in tests/fakes.py, no network). Page parts use headless
 Chromium like tests/live/test_live_page.py. Run the whole suite before committing.
+
+## After Ian's first tester run (2026-11-16)
+
+What changed from the spec (`docs/tester-demo.md`) and from the contracts above:
+
+- **The intro.** The interviewer is given the tester's name (the admin form, `wl study create --name`, or a label
+  that reads as a first name; labels like "Pilot" or "Design Team" are not names, and it asks as before). It
+  opens "Hi, is this Rolando?", says Ian built what it is about to show them and how the session will go, takes
+  questions, and hands over. About 60 to 90 seconds, not "about a minute" of three lines.
+- **The handover.** The page acts on the words "hand you over now" as they are said, only once the tester has
+  spoken and the intro is `handover_min_ms` old; the prompt keeps "hand you over" for its final line. The
+  guide's session opens ahead of the handover, silent and deaf, and is let go of once both sides are quiet:
+  about 2 s between the two voices. If that session fails after the handover the screen comes up and says why.
+- **The debrief** is a conversation around topics (what stood out, would they use it, where it could go, the
+  voice, asking questions, anything confusing), not five fixed questions in order. It replies to each answer and
+  answers direct questions; the closing question and the thanks by name are kept.
+- **No chapter card while the chapter is made.** The page shows the steps to the opening, then the chapter's
+  parts. The card is still written at the start for the debrief and the admin page.
+- **The play button** is on a bottom bar fixed to the screen, not on the circle. It shows whenever this
+  conversation's chapter is ready and not yet started; a tap on the circle talks or rests.
+- **The pitch nudge waits for real interest**: held after the guide says what it does and while its latest
+  question is answered, sent in a lull; after a no the guide asks which of the other things they mentioned
+  they'd rather hear about.

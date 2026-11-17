@@ -33,6 +33,7 @@
   .sub { color: var(--muted); font-size: 13px; }
   .actions { display: flex; flex-wrap: wrap; gap: 6px; }
   a { color: var(--accent); }
+  #greet { min-height: 1.4em; margin: 0 0 6px; }
   #msg { min-height: 1.4em; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
   #linkbox { flex: 1 1 320px; color: var(--fg, inherit); font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
   @media (max-width: 760px) {
@@ -52,6 +53,7 @@
     <input id="name" placeholder="First name to greet them by (optional)" aria-label="Name">
     <button class="primary">Create link</button>
   </form>
+  <div id="greet" class="sub" aria-live="polite"></div>
   <div id="msg" aria-live="polite"></div>
   <table>
     <thead><tr><th>Tester</th><th>Stage</th><th>Last active</th><th>Chapter</th><th>Questions asked</th><th>Debrief</th><th>Cost</th><th>Actions</th></tr></thead>
@@ -125,13 +127,31 @@ async function load() {
   } catch (e) { say("Couldn't load: " + e.message); }
 }
 
+// Beside the form: what the interviewer will greet them as, or that it will ask (the server decides: a label
+// like "Pilot 1" or "Design Team" is not a name).
+let greetSeq = 0, greetTimer = null;
+async function greeting() {
+  const label = $("label").value.trim(), name = $("name").value.trim(), mine = ++greetSeq;
+  if (!label) { $("greet").textContent = ""; return; }
+  try {
+    const got = await api("/api/admin/greeting", { label, name: name || null });
+    if (mine !== greetSeq) return;
+    $("greet").textContent = got.name ? `The interviewer will say: "Hi, is this ${got.name}?"`
+                                      : "No name: the interviewer will ask their name.";
+  } catch (e) { if (mine === greetSeq) $("greet").textContent = ""; }
+}
+for (const id of ["label", "name"]) $(id).addEventListener("input", () => {
+  clearTimeout(greetTimer);
+  greetTimer = setTimeout(greeting, 200);
+});
+
 $("new").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const label = $("label").value.trim();
   if (!label) return;
   try {
     const got = await api("/api/admin/testers", { label, name: $("name").value.trim() || null });
-    $("label").value = ""; $("name").value = "";
+    $("label").value = ""; $("name").value = ""; greetSeq++; $("greet").textContent = "";
     await load();
     await copy(got.link, `Created ${got.label}` + (got.name ? `, greeted as ${got.name}.` : "."));
   } catch (e) { say("Couldn't create: " + e.message); }

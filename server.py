@@ -208,7 +208,8 @@ class Pipeline:
 
     def _card(self, root: Path) -> None:
         """The chapter card (title, overview, summary) at t = 0, in a thread: faststart/card.py, when there.
-        Only for the live page's chapters, the one place a card is shown."""
+        Only for the live page's chapters. The page no longer shows it while the chapter is made (Ian,
+        2026-11-16); the debrief brief, the admin page and the library's overview read it."""
         if importlib.util.find_spec("faststart.card") is None:
             return
         from faststart import card

@@ -126,10 +126,12 @@
             color: var(--fg); border-top: 1px solid var(--line); }
   @media (prefers-color-scheme: dark) { #player { --card: #1c1c1a; } }
   #player[hidden] { display: none; }
-  #player .pin { max-width: 38em; margin: 0 auto; padding: 8px 16px; display: flex; align-items: center; gap: 12px; }
+  #player .pin { max-width: 38em; margin: 0 auto; padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+                 display: flex; align-items: center; gap: 12px; }   /* clear of a phone's home indicator */
   #player .mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
   #play-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   body.live-bar #lib-player { display: none; }                         /* never two bars */
+  body.live-bar { --lib-player-h: 0px; }                               /* ... so the hidden one takes no room from #screen */
   body.live-bar #library { padding-bottom: calc(48px + var(--live-bar-h, 0px)); }  /* nothing hides behind it (library.js pads for its own bar the same way) */
   #play { flex: none; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%;
           background: var(--accent); color: #fff; cursor: pointer; display: grid; place-items: center; }

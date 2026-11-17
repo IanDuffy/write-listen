@@ -98,6 +98,9 @@ PAGE_DEFAULTS = {
     "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
     "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
     "handover_quiet_ms": 900,         # the handover's last words: the next voice comes in once both sides are this quiet
+    # The page acts on the handover's words only once the tester has spoken and the intro is this old: the
+    # words can never end the intro in its opening (the tool, and the clock at intro_max_minutes, still can).
+    "handover_min_ms": 15000,
     "reply_wait_ms": 6000,            # they finished this long ago and it has said nothing but a backchannel: `waiting`
     "reply_words": 3,                 # a line of the voice's with fewer words than this is a backchannel, not a reply
     # Only the final "I'll hand you over now.": the intro also explains that a handover is coming ("before I
@@ -198,10 +201,15 @@ def _a_name(found: str | None) -> str | None:
     return " ".join(out) or None
 
 
+def _who_check(known: str) -> re.Pattern:
+    return re.compile(r"(?i:\byour name\b|\bis this\s+" + re.escape(known.strip()) + r"\b)")
+
+
 def confirmed_name(lines: list[dict], known: str | None = None) -> str | None:
     """The name from an intro's transcript lines ({who, text}): the interviewer's last confirmation, else the
     tester's answer right after it asked their name or checked who they are, else (with no name known) their
-    own introduction anywhere. None when none is there: a known name then stays, and with none the guide asks,
+    own introduction anywhere. With a name known, a tester's line counts only as the answer to the who-check
+    itself ("is this <known>", "your name"); anything later must come through the interviewer's confirmation. None when none is there: a known name then stays, and with none the guide asks,
     as it always could. `known` is the name given with the link: it is never replaced by a weaker guess (a
     line that opens with a yes, or an "it's ..." somewhere later in the talk)."""
     said = [(x.get("who"), norm_quotes(x.get("text"))) for x in lines]
@@ -215,7 +223,9 @@ def confirmed_name(lines: list[dict], known: str | None = None) -> str | None:
     asked = False
     for who, text in said:
         if who == "interviewer":
-            asked = bool(NAME_ASKED_RE.search(text))
+            # With a name known, only the who-check itself asks ("Hi, is this Rolando?", "your name"): the
+            # intro's "you'll be talking with someone else" once let "It's Ian who sent me" replace the name.
+            asked = bool(_who_check(known).search(text) if known else NAME_ASKED_RE.search(text))
         elif who == "listener" and asked:
             asked = False  # only the answer right after the question
             if known and YES_RE.match(text):

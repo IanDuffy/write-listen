@@ -89,6 +89,12 @@ def test_create_list_and_the_links_origin(dcfg, tmp_path, no_admin_env, monkeypa
     assert named["name"] == "Rolando" and testers.record("t-pilot-3")["name"] == "Rolando"
     rows = {r["lid"]: r for r in c.get("/api/admin/testers").json()["testers"]}
     assert rows["t-pilot-3"]["name"] == "Rolando" and rows["t-pilot-1"]["name"] is None
+    # what the interviewer would greet a new tester as, before anything is made
+    greet = lambda **body: c.post("/api/admin/greeting", json=body).json()["name"]  # noqa: E731
+    assert greet(label="Rolando") == "Rolando" and greet(label="Design Team") is None and greet(label="Mom") is None
+    assert greet(label="Design Team", name="Purnima") == "Purnima" and greet(label="Pilot 9") is None
+    assert len(c.get("/api/admin/testers").json()["testers"]) == 2  # asking made no tester
+    assert c.post("/api/admin/greeting", json={"label": "Rolando"}, headers={"X-Forwarded-Proto": "https"}).status_code == 403
 
 
 def test_a_full_run_shows_stage_minutes_questions_debrief_and_cost(dcfg, tmp_path, no_admin_env):
@@ -182,8 +188,15 @@ def test_the_admin_page_lists_creates_and_acts_with_confirms(dcfg, site):
     assert page.inner_text("#total").startswith("Total $2.07")
     assert page.get_attribute("tr[data-lid='t-pilot-1'] a[href$='debrief_summary.md']", "href")
 
+    # Beside the form: what the interviewer will greet them as, or that it will ask.
+    page.fill("#label", "Design Team")
+    page.wait_for_function("document.getElementById('greet').textContent.includes('will ask their name')")
+    page.fill("#label", "Rolando")
+    page.wait_for_function("document.getElementById('greet').textContent.includes('Hi, is this Rolando?')")
     page.fill("#label", "Pilot 2")
+    page.wait_for_function("document.getElementById('greet').textContent.includes('will ask their name')")
     page.fill("#name", "Rolando")
+    page.wait_for_function("document.getElementById('greet').textContent.includes('Hi, is this Rolando?')")
     page.click("#new button")
     page.wait_for_selector("tr[data-lid='t-pilot-2']")
     assert testers.record("t-pilot-2")["name"] == "Rolando" and page.input_value("#name") == ""
@@ -194,6 +207,7 @@ def test_the_admin_page_lists_creates_and_acts_with_confirms(dcfg, site):
     assert page.input_value("#linkbox").endswith("/t/" + testers.record("t-pilot-2")["token"])
     assert "Created Pilot 2, greeted as Rolando." in page.inner_text("#msg") and "Couldn't" not in page.inner_text("#msg")
     assert not any("Copy the link" in m for m in dialogs)
+    assert page.inner_text("#greet") == ""
 
     page.click("tr[data-lid='t-pilot-2'] button[data-do='revoke']")
     page.wait_for_function("document.querySelector(\"tr[data-lid='t-pilot-2']\").innerText.includes('revoked')")

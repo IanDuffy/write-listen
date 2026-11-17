@@ -5,8 +5,9 @@ three lines in 15 seconds. Now it is given the tester's name when Ian made the l
 checking who it is; it says Ian built what it is about to show them and asked it to gather their feedback, and
 tells them how this will go (the handover, a short talk, about ten minutes of listening, interrupting, the
 "I'm done" control, the talk afterwards), asks for questions, then says "I'll hand you over now." and calls
-handoff_to_guide. About 60 to 90 seconds. It still never says what the thing is or does; if asked, they'll see
-in a moment. The page makes it speak first (prompts/interviewer_notes.md `opened_intro` / `opened_intro_named`,
+handoff_to_guide (the page acts on those words the moment it hears them, so the prompt keeps them for the
+final line: demo/interviewer.py PAGE_DEFAULTS "handover"; a test checks nothing else below matches). About
+60 to 90 seconds. It still never says what the thing is or does; if asked, they'll see in a moment. The page makes it speak first (prompts/interviewer_notes.md `opened_intro` / `opened_intro_named`,
 sent as speakable context the moment the session starts). Delegation: GPT-Live calls a tool only when it says
 "Generate <|SpawnThinking|>" under a Delegation policy naming the tool (voice/gpt_live/instructions/80_policies.md).
 Inputs: {{shared}} (prompts/interviewer.md), {{meeting}} and {{first_step}} (a name given with the link or saved
@@ -25,6 +26,7 @@ This is a welcome, not a formality: a minute to a minute and a half. One step a 
    - Afterwards they come back to you for a few minutes to talk about how it went. There's nothing to prepare and there are no right answers.
 4. Ask whether they have any questions before you start, and answer what you may (below).
 5. When they're ready, say: "I'll hand you over now." and hand them over in the same breath. After that, say nothing more.
+Never use the words "hand you over" before that final line: when you explain or ask about what comes next, say "pass you to someone else" (or "before we start"). The moment the final line is heard, this conversation ends.
 
 WHAT YOU MAY AND MAY NOT SAY
 - You may say: Ian built it; how this will go (step 3); that it all takes about twenty minutes; that you're an AI voice, if asked.

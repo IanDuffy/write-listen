@@ -108,14 +108,41 @@ def test_the_intro_checks_who_it_is_says_ian_built_it_and_how_this_will_go(cfg, 
     # The page hands over on the words when no tool call comes: only on the handover itself, not on the
     # explanation that someone else comes next.
     hand = re.compile(IV.page_settings(cfg, "intro")["handover"], re.I)
-    assert hand.search("I'll hand you over now.") and hand.search("Okay, handing you over.")
-    assert hand.search("I'll hand you over to them now.")
+    assert hand.search("I'll hand you over now.") and hand.search("Okay, handing you over now.")
     assert not hand.search("In a moment I'll hand you over to someone else, and you'll talk a little.")
 
     nameless = IV.intro_values(tmp_path / "nobody")
     text = IV.instructions("intro", nameless)
     assert "ask their name" in text and "Rolando" not in text and "{" not in text.replace("{{", "")
     assert IV.page_notes("intro", nameless)["opened"] == "Begin now: say hello warmly and ask their name. Nothing else yet."
+
+
+def test_only_the_final_line_is_the_handover(cfg):
+    """The page acts on the handover's words the moment it hears them (page/interview.js), and the intro now
+    explains what comes next and asks for questions: only "hand you over now" counts, config.yaml doesn't
+    put an older, looser pattern back, and the prompt keeps the words for its final line."""
+    assert "handover" not in (cfg["demo"]["interviewer"].get("page") or {})
+    S = IV.page_settings(cfg, "intro")
+    assert S["handover"] == IV.PAGE_DEFAULTS["handover"] and 0 < S["handover_min_ms"] <= 30000
+    hand = re.compile(S["handover"], re.I)
+    for line in ("Any questions before I hand you over?", "Before I hand you over, any questions?",
+                 "In a moment I'll hand you over.", "I'll hand you over whenever you're ready.",
+                 "After I hand you over, you can interrupt whenever you like."):
+        assert not hand.search(line), line
+    assert hand.search("I'll hand you over now.")
+    # The intro's instructions, apart from the lines that give the final line itself, never match: the model
+    # repeats its prompt's wording. They tell it to say "pass you to someone else" until then.
+    final = '"I\'ll hand you over now."'
+    for name in ("Rolando", None):
+        text = IV.instructions("intro", IV.intro_values_for(name))
+        rest = [x for x in text.splitlines() if final not in x]
+        assert len(rest) < len(text.splitlines())
+        assert not [x for x in rest if hand.search(x)]
+        rule = next(x for x in rest if 'Never use the words "hand you over" before that final line' in x)
+        assert "pass you to someone else" in rule
+        assert [x for x in rest if "hand you over" in x.lower()] == [rule]  # and nowhere else, in any form
+    notes = IV.page_notes("intro", IV.intro_values_for("Rolando"))
+    assert [k for k, v in notes.items() if hand.search(v)] == ["handover_now"]
 
 
 def test_debrief_session_is_a_conversation_around_ians_topics_with_their_real_moment(cfg, tmp_path, monkeypatch):
@@ -605,6 +632,30 @@ def test_a_name_given_with_the_link_is_kept_unless_the_transcript_clearly_correc
              said("listener", "Oh, it's Ian's thing? I'm Curious now.")]
     assert confirmed_name(later, known="Rolando") is None
     assert confirmed_name([said("listener", "It's Ian's thing?")]) is None
+
+
+def test_with_a_name_known_only_the_answer_to_the_who_check_can_replace_it():
+    """The intro says "you'll be speaking with someone else next", which once counted as asking who they are:
+    "It's Ian who sent me" then replaced Rolando. With a name known, a tester's line is a name only as the
+    answer to the who-check itself; later it must come through the interviewer's confirmation."""
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    hi, yes = said("interviewer", "Hi, is this Rolando?"), said("listener", "Yes.")
+    later = said("interviewer", "Any questions? You'll be speaking with someone else next.")
+    for line in ("Is this Ian's thing? It's Ian who sent me.", "I'm Canadian, does that matter?", "It's Ian.",
+                 "This is Maria, by the way."):
+        assert confirmed_name([hi, yes, later, said("listener", line)], known="Rolando") is None, line
+    talking = said("interviewer", "Is this a good time? You'll be talking with someone else in a moment.")
+    assert confirmed_name([hi, yes, talking, said("listener", "I'm Canadian.")], known="Rolando") is None
+    # the who-check's own answer still corrects it, also when it is asked again
+    assert confirmed_name([hi, said("listener", "It's Rolo, actually.")], known="Rolando") == "Rolo"
+    again = said("interviewer", "Sorry, what's your name?")
+    assert confirmed_name([hi, said("listener", "Sorry?"), again, said("listener", "It's Maria.")], known="Rolando") == "Maria"
+    # and a later correction comes through the interviewer saying it back
+    assert confirmed_name([hi, yes, later, said("listener", "Call me Rolo."),
+                           said("interviewer", "Rolo. Did I get that right?")], known="Rolando") == "Rolo"
+    # with no name known the looser reading stays (they may introduce themselves anywhere)
+    assert confirmed_name([later, said("listener", "It's Maria.")]) == "Maria"
 
 
 def test_the_handover_saves_a_correction_and_keeps_a_confirmed_name(world):

@@ -21,6 +21,7 @@ import pytest
 import server
 from fakes import FakeAnthropic, Responder
 from stages import llm, memory
+from stages.common import ROOT
 from voice.gpt_live import session as S
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -1436,6 +1437,22 @@ def test_the_pitch_nudge_waits_for_the_answer_to_the_guides_question_but_not_for
     assert w.notes["pitch_nudge"] in instructions(p)
 
 
+def test_the_pitch_nudge_waits_for_a_lull_rather_than_going_while_they_talk(world):
+    """Review: the question hold is timed from the guide's question, so an answer longer than it was still
+    nudged mid-answer. Within max_secs of due the nudge goes only in a lull; past that, as before."""
+    w = world
+    p = connect(w, start=False)
+    cue(p, "pitch_hold", {"explained_secs": 0, "question_secs": 0, "max_secs": 1000})
+    cue(p, "pitch_nudge_secs", [0.5, 1000])
+    p.page.wait_for_timeout(1700)
+    for _ in range(5):  # a long answer: they are talking, and the nudge is due
+        p.hear("and another thing about the shed")
+        p.page.wait_for_timeout(400)
+    assert w.notes["pitch_nudge"] not in instructions(p)
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['pitch_nudge'])})", timeout=8000)  # the lull
+    assert p.L("Date.now() - L.heardAt") >= 4000
+
+
 def test_the_second_pitch_nudge_keeps_its_gap_after_a_late_first(world):
     w = world
     p = connect(w, start=False)
@@ -1557,17 +1574,25 @@ def test_the_guides_lead_in_starts_the_offered_chapter(world):
     assert p.marks("lead-in")
 
 
-def test_an_offer_in_conversation_is_spoken_and_shows_no_play_button_until_the_mic_is_off(world):
-    """Ian's third test: in conversation the ready chapter is said by the guide and no play button shows;
-    with the mic off (a tap on the circle) the bar's play button appears and starts it."""
+def test_an_offer_in_conversation_is_spoken_and_the_bars_play_button_shows_in_talk_and_resting(world):
+    """In conversation the ready chapter is said by the guide. The bar with its play button shows whenever this
+    conversation's chapter is ready and not yet started, in talk as well as with the mic off: since the circle
+    no longer plays (Ian, 2026-11-16) the bar is the one way to start it by hand, so it must not go away when
+    they tap the circle to talk. (Ian's third test had no play button in talk, when the circle still played.)"""
     w = world
     p = connect(w)
+    assert p.js("document.getElementById('player').hidden") is True  # nothing ready yet
     offered(p, w)
-    assert p.js("document.getElementById('player').hidden") is True and "offer" not in p.js("document.body.className")
-    assert "is ready" in p.page.text_content("#line")
+    p.page.wait_for_selector("#player:not([hidden])")
+    assert p.phase() == "talk" and "offer" in p.js("document.body.className")
+    assert p.page.is_visible("#play") and p.page.is_enabled("#play")
     p.page.click("#orb")  # the mic off
     p.wait("L.phase === 'resting'")
     assert p.js("document.getElementById('player').hidden") is False and "offer" in p.js("document.body.className")
+    p.page.click("#orb")  # and back to talk: the bar stays
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    p.page.wait_for_timeout(400)
+    assert p.js("document.getElementById('player').hidden") is False and p.page.is_enabled("#play")
     p.page.click("#play")
     p.wait("L.phase === 'reading' && L.feed.cur && L.feed.cur.sentAt", timeout=4000)
     mic_rules(p, w.notes)
@@ -2632,6 +2657,103 @@ def test_the_chapters_player_is_a_bar_fixed_to_the_bottom_and_the_librarys_gives
     p.page.wait_for_timeout(700)
     assert not p.page.is_visible("#player") and "live-bar" not in p.js("document.body.className")
     assert p.js("getComputedStyle(document.documentElement).getPropertyValue('--live-bar-h').trim()") == "0px"
+
+
+def test_a_tap_back_that_the_guide_meets_with_silence_is_asked_once_to_speak(world):
+    """Review of the tap fix: the session now stays open after a tap, but its "they tapped to talk" note is only
+    the new session's startup message, which alone may not make GPT-Live speak (a first connect has a fallback
+    for exactly that). Nothing said by either side after greet_fallback_ms: once more, as an instruction."""
+    w = world
+    p = connect(w)
+    p.wait("Date.now() - L.spokeAt > 900")
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "tap"
+    p.page.wait_for_timeout(700)
+    assert w.notes["wake"] not in instructions(p)  # not before greet_fallback_ms (1.5 s here)
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['wake'])})", timeout=3000)
+    p.page.wait_for_timeout(2000)
+    assert instructions(p).count(w.notes["wake"]) == 1 and p.phase() == "talk"
+    mic_rules(p, w.notes)
+
+
+def test_a_tap_back_the_guide_answers_gets_no_second_ask(world):
+    w = world
+    p = connect(w)
+    p.wait("Date.now() - L.spokeAt > 900")
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    p.say("I'm here.")
+    p.page.wait_for_timeout(2200)
+    assert w.notes["wake"] not in instructions(p)
+    # ... nor when the listener has begun to speak first
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_3'", timeout=6000)
+    p.hear("So I was wondering")
+    p.page.wait_for_timeout(2200)
+    assert w.notes["wake"] not in instructions(p)
+
+
+def test_a_tap_after_a_drop_that_the_guide_meets_with_silence_is_asked_once_to_speak(world):
+    w = world
+    p = connect(w)
+    p.wait("Date.now() - L.spokeAt > 900")
+    dropped(p)
+    p.wait("L.phase === 'resting' && !L.pc")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "dropped"
+    back = "[" + w.notes["returned"] + "]"
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(back)})", timeout=4000)
+    p.page.wait_for_timeout(1800)
+    assert instructions(p).count(back) == 1
+
+
+def test_the_parts_show_once_the_opening_is_written_before_the_offer_is_made(world):
+    """Review: between the opening being written and the offer (which waits for a pause, or for an answer to the
+    guide's question) neither the steps nor the parts showed. The parts show from the run's first audio."""
+    w = world
+    p = connect(w)
+    w.status(steps=STEPS)
+    p.page.wait_for_selector("#steps:not([hidden])", timeout=5000)
+    p.say("So what's the garden like this time of year?")  # a question: the offer waits for its answer
+    p.wait("/\\?\\s*$/.test(L.lastGuideLine || '')")
+    w.lock(1)
+    p.page.wait_for_selector("#sections button", timeout=2000)
+    assert not p.L("L.offer") and not p.page.is_visible("#steps") and p.phase() == "talk"
+    assert p.js("[...document.querySelectorAll('#sections button')].map((b) => b.dataset.state)") == [
+        "ready" if n == 1 else "being_written" for n in TEXTS]
+    p.page.wait_for_selector("#player:not([hidden])")  # and the bar: it is ready, and play starts it by hand
+    assert p.page.is_enabled("#play")
+    p.wait("L.offer", timeout=9000)
+    assert p.js("document.getElementById('player').hidden") is False
+
+
+def test_the_live_bar_leaves_no_room_for_the_librarys_and_clears_the_home_indicator(world):
+    """Review: with a library chapter loaded first, #screen's height subtracted both bars though only the live
+    one shows; and the bar had no safe-area padding (a phone's home indicator sits over its bottom edge)."""
+    w = world
+    p = connect(w)
+    offered(p, w)
+    p.page.wait_for_selector("#player:not([hidden])")
+    p.js("() => document.documentElement.style.setProperty('--lib-player-h', '64px')")  # as library.js sets it
+    got = p.js("""() => ({ lib: getComputedStyle(document.body).getPropertyValue('--lib-player-h').trim(),
+                           bar: document.getElementById('player').offsetHeight,
+                           min: parseFloat(getComputedStyle(document.getElementById('screen')).minHeight), vh: innerHeight })""")
+    assert got["lib"] == "0px" and abs(got["min"] - (got["vh"] - got["bar"])) < 1
+    css = (ROOT / "page" / "live.html").read_text(encoding="utf-8")
+    pin = css[css.index("#player .pin {"):]
+    assert "env(safe-area-inset-bottom" in pin[:pin.index("}")]
+    p.js("() => { window.Live.endConversation(); }")
+    p.wait("L.phase === 'idle'")
+    p.page.wait_for_timeout(500)
+    assert p.js("getComputedStyle(document.body).getPropertyValue('--lib-player-h').trim()") == "64px"  # the library's own again
 
 
 STEPS = [{"key": "scout", "label": "Looking into it", "state": "done"},

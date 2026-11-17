@@ -172,7 +172,7 @@
         // The handover's words, as they are said: the page calls the tool itself at once (the voice rarely
         // does), so the next part is being got ready while the sentence ends. Waiting for the line to end and
         // then for a tool call that never came was 4.4 s of silence (Ian's run).
-        if (I.mode === "intro" && !I.act && !I.wordsAt && I.startedAt && (rx("handover") || { test: () => false }).test(I.out.replace(/[‘’]/g, "'"))) {
+        if (I.mode === "intro" && !I.act && !I.wordsAt && mayHandOver() && (rx("handover") || { test: () => false }).test(I.out.replace(/[‘’]/g, "'"))) {
           I.wordsAt = now();
           selfCall("handover");
         }
@@ -242,6 +242,14 @@
     I.pending = { fn, since: now(), quiet: quiet || I.S.close_quiet_ms || 1400, min: I.S.close_min_ms || 800, max: I.S.close_max_ms || 9000 };
   }
 
+  // The page acts on the handover's words only once the tester has spoken and the intro is handover_min_ms
+  // old: never in its opening, where "hand you over" may come up while it says how this will go. The tool
+  // and the clock at intro_max_minutes are not held by this.
+  function mayHandOver() {
+    const min = I.S.handover_min_ms == null ? 15000 : I.S.handover_min_ms;
+    return !!I.startedAt && !!I.heardAt && now() - I.startedAt >= min;
+  }
+
   const rx = (k) => { try { return I.S[k] ? new RegExp(I.S[k], "i") : null; } catch (e) { return null; } };
 
   function lineSaid(raw, t) {  // a line of the voice's, finished
@@ -249,7 +257,7 @@
     if (String(raw || "").split(/\s+/).filter(Boolean).length >= (I.S.reply_words || 3)) I.repliedAt = I.outAt;  // more than "Mm-hmm."
     const text = String(raw || "").replace(/[‘’]/g, "'");  // transcripts may write didn’t: the patterns use '
     const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks");
-    if (I.mode === "intro" && hand && hand.test(text) && !I.act) { I.graceAt = t; I.graceAct = "handover"; }
+    if (I.mode === "intro" && hand && hand.test(text) && !I.act && mayHandOver()) { I.graceAt = t; I.graceAct = "handover"; }
     if (I.mode === "debrief" && ask && ask.test(text)) I.closingAsked = t;
     if (I.mode === "debrief" && thanks && thanks.test(text) && I.closingAsked && I.lastThemAt > I.closingAsked && !I.act) {
       I.graceAt = t; I.graceAct = "close";
@@ -337,11 +345,11 @@
   }
 
   async function finish(how) {
-    const opts = I.opts, h = I.handover, stream = I.stream, name = I.name, acted = I.act;
+    const opts = I.opts, h = I.handover, stream = I.stream, name = I.name, acted = I.act;  // I.name: the latest saved
     const closed = close(how);  // the session is let go of at once; its last lines, cost and end are posted on the side
     // A session that drops after the handover or the thanks was decided still counts as that.
     if ((how === "handover" || acted === "handover") && opts.onHandoff) {
-      opts.onHandoff({ name: (h && h.name) || name || null, stream, scripts: (h && h.scripts) || [], entry: h && h.entry });
+      opts.onHandoff({ name: name || (h && h.name) || null, stream, scripts: (h && h.scripts) || [], entry: h && h.entry });
       return closed;
     }
     await closed;

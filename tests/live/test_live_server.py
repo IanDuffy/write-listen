@@ -700,6 +700,16 @@ def test_the_pitch_waits_for_real_interest(app, cfg):
     assert "don't guess again" in notes["pitch_nudge_again"]
     assert "never at a passing mention" in pitch and "If they say no to a pitch, don't guess again" in pitch
     assert "Want to hear what I do?" in pitch  # the offer he liked stays
+    # Review follow-ups: no "what would you love to understand better" (20_meeting.md rules that kind of
+    # question out: asked cold, people go blank), and after a no the ask has edges and is not made twice
+    # ("Never ask an open 'what would you like?' twice" stood two lines below "ask what they'd rather hear about").
+    for text in (notes["pitch_nudge"], notes["pitch_nudge_again"], pitch):
+        assert "understand better" not in text and "ask what they'd rather hear about" not in text
+    assert "which of the things they've mentioned they'd want to hear more about" in notes["pitch_nudge"]
+    after_no = next(x for x in pitch.splitlines() if x.startswith("- If they say no to a pitch"))
+    assert "which of the other things they mentioned" in after_no and "two possibilities" in after_no and "surprise them" in after_no
+    assert "which of the other things they mentioned" in notes["pitch_nudge_again"] and "surprise them" in notes["pitch_nudge_again"]
+    assert 'Never ask an open "what would you like?" twice' in pitch and "what they want to learn" in pitch
     page = cfg["live"]["page"]
     hold = page["pitch_hold"]
     assert hold["explained_secs"] >= 45 and hold["question_secs"] >= 15 and hold["max_secs"] <= 90
