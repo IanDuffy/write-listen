@@ -561,8 +561,8 @@ demo:
   interviewer:                  # part C: demo/interviewer.py, page/interview.js, prompts/interviewer*.md
     voice: cedar                # its own GPT-Live voice (the guide's is live.voice); model and backend are live's
     store: true                 # OpenAI keeps the session's audio 30 days; fetched into study/<live_id>.mp3
-    intro_max_minutes: 3        # the page asks for the handover 30 s before, and hands over itself at this
-    debrief_target_minutes: 8   # the page tells it to skip to question five and close
+    intro_max_minutes: 4        # the intro aims at 60-90 s; the page asks for the handover 30 s before this, and hands over itself at it
+    debrief_target_minutes: 8   # the page tells it to ask its closing question
     debrief_max_minutes: 9      # then to thank them and end; a minute later the page closes it
     stale_minutes: 15           # a session the page never ended is closed after this long without a line
     audio_tries: 6              # the recording: after live.archive_wait_seconds, every live.archive_retry_seconds
@@ -575,7 +575,8 @@ demo:
       close_max_ms: 9000
       handover_quiet_ms: 900    # the handover's words heard: the guide comes in once both sides are this quiet
       act_grace_ms: 3500        # said "I'll hand you over" (or thanked them after the last question) with no tool call: the page acts
+      reply_wait_ms: 6000       # they finished this long ago and it has said nothing but "mm": the page tells it they're waiting (again at 3x)
     checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests
-      intro_minutes: 2.5        # a simulated intro's connected time at most
+      intro_minutes: 3          # a simulated intro's connected time at most
       debrief_minutes: 8        # a debrief's (live.checks.run_cap_usd also bounds it: $0.40 is 8 minutes)
       time_note_minutes: 6.5    # the debrief's time note, on a compressed clock (the page's is debrief_target_minutes)

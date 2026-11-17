@@ -1,7 +1,10 @@
 """`wl study ...`: the Tester Demo from the terminal (docs/tester-demo.md).
 
     wl study testers          every tester: stage, chapter, questions, debrief, cost
-    wl study create <label>   a new tester; prints the link (origin from WL_BASE_URL or demo.base_url)
+    wl study create <label> [--name Rolando]
+                              a new tester; prints the link (origin from WL_BASE_URL or demo.base_url). The
+                              interviewer greets them by the name (a label that reads as a first name is used
+                              when none is given)
     wl study report [--yes]   study/report.md from every tester's debrief (one Claude call; --yes passes
                               the cost guard)
 """
@@ -41,6 +44,7 @@ def main(argv: list[str]) -> int:
     sub.add_parser("testers", help="list the testers")
     c = sub.add_parser("create", help="a new tester's link")
     c.add_argument("label", nargs="+")
+    c.add_argument("--name", help="the name the interviewer greets them by")
     r = sub.add_parser("report", help="write study/report.md")
     r.add_argument("--yes", action="store_true", help="pass the cost guard")
     args = ap.parse_args(argv)
@@ -53,8 +57,9 @@ def main(argv: list[str]) -> int:
         if args.cmd == "testers":
             _testers(cfg)
         elif args.cmd == "create":
-            got = testers.create(cfg, " ".join(args.label))
-            print(f"  {got['label']} ({got['lid']}): {got['link']}")
+            got = testers.create(cfg, " ".join(args.label), name=args.name)
+            who = f", greeted as {got['name']}" if got.get("name") else ", no name: the interviewer asks"
+            print(f"  {got['label']} ({got['lid']}{who}): {got['link']}")
         elif args.cmd == "report":
             out = report.build(cfg, yes=args.yes)
             print(f"  Wrote {out}")

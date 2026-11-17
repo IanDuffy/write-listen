@@ -534,11 +534,9 @@
 {"t": "2026-11-16T00:10:43", "what": "tts listener line", "seconds": 8.85, "backend_tokens": null, "usd": 0.002212}
 {"t": "2026-11-16T00:11:04", "what": "gpt-live persona joker", "seconds": 280.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 22549, "output": 147, "cached": 14712}, "usd": 0.242641}
 {"t": "2026-11-16T09:04:16", "what": "voice probe (9 session starts, said nothing)", "usd": 0.01}
-<<<<<<< HEAD
 {"t": "2026-11-16T20:35:29", "what": "pagecheck:20261116-203514-handoff", "usd": 0.0125, "seconds": 15.0, "sessions": 1}
 {"t": "2026-11-16T20:35:56", "what": "tts", "usd": 0.0007, "chars": 21}
 {"t": "2026-11-16T20:36:03", "what": "pagecheck:20261116-203544-handoff", "usd": 0.0125, "seconds": 15.0, "sessions": 1}
-=======
 {"t": "2026-11-16T20:22:04", "what": "claude live_listener sam-1", "seconds": null, "backend_tokens": null, "usd": 0.00155}
 {"t": "2026-11-16T20:22:06", "what": "tts listener line", "seconds": 5.65, "backend_tokens": null, "usd": 0.001413}
 {"t": "2026-11-16T20:22:28", "what": "claude live_listener sam-1", "seconds": null, "backend_tokens": null, "usd": 0.001838}
@@ -565,4 +563,3 @@
 {"t": "2026-11-16T20:27:00", "what": "claude live_listener sam-2", "seconds": null, "backend_tokens": null, "usd": 0.002896}
 {"t": "2026-11-16T20:27:02", "what": "tts listener line", "seconds": 12.55, "backend_tokens": null, "usd": 0.003138}
 {"t": "2026-11-16T20:27:30", "what": "gpt-live persona sam-2", "seconds": 152.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 7458, "output": 22, "cached": 0}, "usd": 0.134235}
->>>>>>> b879b24

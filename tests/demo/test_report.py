@@ -47,7 +47,7 @@ def three(cfg):
     """Three seeded runs: one through the debrief, one gone mid-chapter, one gone after the intro; and one
     link never opened."""
     seed(cfg, "Purnima", "done", name="Purnima",
-         summary="1. What it was like: \"It felt like a radio show made for me\" (0:40)\n")
+         summary="## What stood out\n\"It felt like a radio show made for me\" [0:40]\n")
     seed(cfg, "Pilot 1", "chapter", name="Sam", quiet_for=3 * 3600)
     seed(cfg, "Pilot 2", "intro", name="Lee", quiet_for=3 * 3600)
     seed(cfg, "Pilot 3", "not opened")
@@ -71,6 +71,11 @@ def test_the_report_from_three_seeded_runs(dcfg, writer, tmp_path):
                  "- chapter: 1 (Pilot 1 (left early))", "- done: 1 (Purnima)"):
         assert want in p, want
     assert "{{" not in p
+    # Ian's notes (2026-11-16): by topic, not by five fixed questions
+    for want in ("## By topic", "`### What stood out`", "`### Would they use it, and when`", "`### The voice`",
+                 "`### Asking questions`", "## Moments in the chapter", "## Bugs and confusions", "## Worth a follow-up call"):
+        assert want in p, want
+    assert "five core questions" not in p and "## The five questions" not in p
     log = [json.loads(x) for x in (tmp_path / "study" / "log.jsonl").read_text().splitlines()]
     assert log[0]["stage"] == "study_report" and log[0]["provider"] == "anthropic" and log[0]["cost_usd"] > 0
 
@@ -113,7 +118,9 @@ def test_wl_study_create_and_testers(dcfg, monkeypatch, capsys):
     assert cli.main(["study", "create", "Pilot", "1"]) == 0
     out = capsys.readouterr().out
     token = testers.record("t-pilot-1")["token"]
-    assert f"https://listen.example.com/t/{token}" in out
+    assert f"https://listen.example.com/t/{token}" in out and "no name: the interviewer asks" in out
+    assert cli.main(["study", "create", "Pilot", "2", "--name", "Rolando"]) == 0
+    assert "greeted as Rolando" in capsys.readouterr().out and testers.record("t-pilot-2")["name"] == "Rolando"
     seed(dcfg, "Purnima", "done", name="Purnima")
     assert cli.main(["study", "testers"]) == 0
     out = capsys.readouterr().out

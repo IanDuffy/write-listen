@@ -9,7 +9,7 @@
     POST /api/demo/consent          the gate's tap
     GET  /admin                     page/admin.html
     GET  /api/admin/testers         every tester's record and state, and the cost totals
-    POST /api/admin/testers         {label}: a new link
+    POST /api/admin/testers         {label, name?}: a new link (name: what the interviewer greets them by)
     POST /api/admin/testers/{lid}/revoke | reset | delete
     POST /api/admin/testers/{lid}/card    {value: auto|on|off}
     GET  /api/admin/testers/{lid}/study/{name}   the debrief summary, or a transcript as plain text
@@ -47,6 +47,7 @@ NO_STORE = {"Cache-Control": "no-store"}
 
 class NewTester(BaseModel):
     label: str
+    name: str | None = None   # what the interviewer greets them by (optional)
 
 
 class Card(BaseModel):
@@ -224,7 +225,7 @@ def mount(app: FastAPI, cfg: dict) -> None:
     def admin_create(req: NewTester, request: Request) -> dict:
         guard(request)
         try:
-            return testers.create(cfg, req.label, base=base_of(request))
+            return testers.create(cfg, req.label, base=base_of(request), name=req.name)
         except StageError as e:
             raise HTTPException(400, str(e)) from None
 

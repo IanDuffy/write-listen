@@ -84,6 +84,11 @@ def test_create_list_and_the_links_origin(dcfg, tmp_path, no_admin_env, monkeypa
     rows = c.get("/api/admin/testers").json()["testers"]
     assert rows[0]["link"] == f"https://listen.example.com/t/{got['token']}" and rows[0]["stage"] == "not opened"
     assert c.post("/api/admin/testers", json={"label": "  "}).status_code == 400
+    # Ian's notes (2026-11-16): a name for the interviewer to greet them by, optional
+    named = c.post("/api/admin/testers", json={"label": "Pilot 3", "name": "Rolando"}).json()
+    assert named["name"] == "Rolando" and testers.record("t-pilot-3")["name"] == "Rolando"
+    rows = {r["lid"]: r for r in c.get("/api/admin/testers").json()["testers"]}
+    assert rows["t-pilot-3"]["name"] == "Rolando" and rows["t-pilot-1"]["name"] is None
 
 
 def test_a_full_run_shows_stage_minutes_questions_debrief_and_cost(dcfg, tmp_path, no_admin_env):
@@ -123,7 +128,7 @@ def test_the_study_files_summary_and_a_readable_transcript(dcfg, tmp_path, no_ad
     c = client(dcfg, tmp_path)
     assert "Like someone talking just to me" in c.get(f"/api/admin/testers/{lid}/study/debrief_summary.md").text
     t = c.get(f"/api/admin/testers/{lid}/study/debrief-s2.jsonl").text
-    assert "[10:20:00] interviewer: Take me through what that was like" in t and "{" not in t
+    assert "[10:20:00] interviewer: What's one thing that stood out to you?" in t and "{" not in t
     assert c.get(f"/api/admin/testers/{lid}/study/missing.md").status_code == 404
     assert c.get(f"/api/admin/testers/{lid}/study/..debrief.json").status_code == 404
     assert c.get(f"/api/admin/testers/{lid}/study/%2e%2e%2ftester.json").status_code == 404
@@ -178,14 +183,16 @@ def test_the_admin_page_lists_creates_and_acts_with_confirms(dcfg, site):
     assert page.get_attribute("tr[data-lid='t-pilot-1'] a[href$='debrief_summary.md']", "href")
 
     page.fill("#label", "Pilot 2")
+    page.fill("#name", "Rolando")
     page.click("#new button")
     page.wait_for_selector("tr[data-lid='t-pilot-2']")
-    assert testers.record("t-pilot-2")
+    assert testers.record("t-pilot-2")["name"] == "Rolando" and page.input_value("#name") == ""
+    assert "Rolando" in page.inner_text("tr[data-lid='t-pilot-2']")
     # The new link shows in a box on the page, never in a prompt() (refused by some browsers: it said
     # "Couldn't create" though the tester was made).
     page.wait_for_selector("#linkbox")
     assert page.input_value("#linkbox").endswith("/t/" + testers.record("t-pilot-2")["token"])
-    assert "Created Pilot 2." in page.inner_text("#msg") and "Couldn't" not in page.inner_text("#msg")
+    assert "Created Pilot 2, greeted as Rolando." in page.inner_text("#msg") and "Couldn't" not in page.inner_text("#msg")
     assert not any("Copy the link" in m for m in dialogs)
 
     page.click("tr[data-lid='t-pilot-2'] button[data-do='revoke']")

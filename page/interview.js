@@ -246,6 +246,7 @@
 
   function lineSaid(raw, t) {  // a line of the voice's, finished
     I.said++;
+    if (String(raw || "").split(/\s+/).filter(Boolean).length >= (I.S.reply_words || 3)) I.repliedAt = I.outAt;  // more than "Mm-hmm."
     const text = String(raw || "").replace(/[‘’]/g, "'");  // transcripts may write didn’t: the patterns use '
     const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks");
     if (I.mode === "intro" && hand && hand.test(text) && !I.act) { I.graceAt = t; I.graceAct = "handover"; }
@@ -275,10 +276,25 @@
       if ((calm && t - p.since >= p.min) || t - p.since > p.max) { I.pending = null; p.fn(); return; }
     }
     if (I.graceAct && !I.act && t - I.graceAt > (S.act_grace_ms || 3500)) { const w = I.graceAct; I.graceAct = null; selfCall(w); }
+    waiting(t, speaking);
     clock(t);
   }, 100);
 
   function cue(key, text) { if (!I.cues[key] && text) { I.cues[key] = true; instruct(text); } }
+
+  // They finished and the voice has said nothing since but a word or two ("Mm-hmm.", "Hmm."), or nothing at
+  // all: it is told they are waiting, after reply_wait_ms and once more after three times that. The voice
+  // decides for itself when to speak, and once sat through 77 seconds of someone waiting for an answer.
+  function waiting(t, speaking) {
+    if (I.waitSid !== I.sid) { I.waitSid = I.sid; I.repliedAt = 0; I.waitFor = 0; I.waitSent = 0; }  // a new session
+    if (!I.heardAt || I.repliedAt > I.heardAt || I.act || I.pending || speaking || I.inp || I.out) return;
+    const wait = I.S.reply_wait_ms || 6000, again = I.waitFor === I.heardAt;
+    if (again && I.waitSent > 1) return;
+    if (t - Math.max(I.heardAt, I.spokeAt) > (again ? wait * 3 : wait)) {
+      I.waitSent = again ? 2 : 1; I.waitFor = I.heardAt;
+      instruct(I.notes.waiting);
+    }
+  }
 
   function clock(t) {
     const mins = (t - I.startedAt) / 60000, S = I.S;

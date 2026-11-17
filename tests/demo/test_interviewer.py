@@ -88,7 +88,39 @@ def test_intro_knows_a_name_given_before(cfg, tmp_path):
     assert "Purnima" in IV.session_config(cfg, "intro", IV.intro_values(tmp_path))["instructions"]
 
 
-def test_debrief_session_has_the_five_questions_and_their_real_moment(cfg, tmp_path, monkeypatch):
+def test_the_intro_checks_who_it_is_says_ian_built_it_and_how_this_will_go(cfg, tmp_path):
+    """Ian's notes (2026-11-16): his intro was three lines in 15 seconds. It is given the name, opens "Hi, is
+    this Rolando?", says Ian built it and how the session goes, takes questions, and only then hands over."""
+    (tmp_path / "tester.json").write_text(json.dumps({"name": "Rolando"}))
+    v = IV.intro_values(tmp_path)
+    text = IV.instructions("intro", v)
+    order = ['"Hi, is this Rolando?"', "Ian built what you're about to show them", "pass them to someone else",
+             "about ten minutes", "interrupt and ask questions whenever they like", '"I\'m done" button',
+             "come back to you for a few minutes", "no right answers", "any questions before you start",
+             '"I\'ll hand you over now."']
+    at = [text.index(x) for x in order]
+    assert at == sorted(at)
+    assert "a minute to a minute and a half" in text and "You'll see in a moment." in text
+    notes = IV.page_notes("intro", v)
+    assert notes["opened"] == 'Begin now: say hello warmly and check who it is: "Hi, is this Rolando?" Nothing else yet.'
+    assert "waiting for you" in notes["waiting"] and "handover_now" in notes
+    assert IV.icfg(cfg)["intro_max_minutes"] >= 3  # room for 60-90 seconds and a question or two
+    # The page hands over on the words when no tool call comes: only on the handover itself, not on the
+    # explanation that someone else comes next.
+    hand = re.compile(IV.page_settings(cfg, "intro")["handover"], re.I)
+    assert hand.search("I'll hand you over now.") and hand.search("Okay, handing you over.")
+    assert hand.search("I'll hand you over to them now.")
+    assert not hand.search("In a moment I'll hand you over to someone else, and you'll talk a little.")
+
+    nameless = IV.intro_values(tmp_path / "nobody")
+    text = IV.instructions("intro", nameless)
+    assert "ask their name" in text and "Rolando" not in text and "{" not in text.replace("{{", "")
+    assert IV.page_notes("intro", nameless)["opened"] == "Begin now: say hello warmly and ask their name. Nothing else yet."
+
+
+def test_debrief_session_is_a_conversation_around_ians_topics_with_their_real_moment(cfg, tmp_path, monkeypatch):
+    """Ian's notes (2026-11-16): the five fixed questions are gone. An easy first question, a reply to every
+    answer, direct questions answered, his topics in any order, the same closing question."""
     from demo import debrief
     (tmp_path / "tester.json").write_text(json.dumps({"name": "Sam"}))
     monkeypatch.setattr(debrief, "chapter_context", lambda d, c=None: {
@@ -100,17 +132,31 @@ def test_debrief_session_has_the_five_questions_and_their_real_moment(cfg, tmp_p
     sc = IV.session_config(cfg, "debrief", v)
     text = sc["instructions"]
     assert [t["name"] for t in sc["delegation"]["responses"]["tools"]] == ["end_debrief"]
-    order = ["Take me through what that was like, from the start.",
-             "Was there a moment you were most into it?",
-             'About 3 minutes in, you asked "What\'s a parameter?". How did that go?',
-             "How would you describe it to a friend?",
-             "If another one were waiting for you tomorrow morning, would you listen?",
-             "Is there anything I didn't ask that I should have?"]
-    at = [text.index(x) for x in order]
-    assert at == sorted(at)
+    for gone in ("Take me through what that was like", "to a friend", "tomorrow morning", "in this order"):
+        assert gone not in text, gone
+    for want in ("What's one thing that stood out to you?", "respond before you ask", "Always answer a direct question",
+                 "something they would use, and when", "Where they imagine this going", "The voice:",
+                 'About 3 minutes in, they asked "What\'s a parameter?". Ask how that went',
+                 "Anything confusing, or that got in the way", "gather their feedback for Ian",
+                 "Is there anything I didn't ask that I should have?", "Thank you, Sam."):
+        assert want in text, want
     assert "The List" in text and "Why nine levers matter." in text and "about 6 of its 10 minutes" in text
-    assert "Was she right?" in text and "Thank you, Sam." in text
+    assert "Was she right?" in text
     assert "Generate <|SpawnThinking|> when:" in text.split("Delegation policy:")[1]
+    assert re.search(IV.PAGE_DEFAULTS["closing_question"], text)  # the page's close keys on the closing question
+
+
+def test_the_interviewer_is_told_to_reply_never_to_sit_in_silence(cfg, tmp_path):
+    """Ian's debrief: "Mm-hmm", "Mm.", "Hmm.", no answer to a direct question, then 77 seconds of nothing. The
+    old text said to leave pauses, not to fill a silence, and allowed an "mm"."""
+    for mode, v in (("intro", IV.intro_values(tmp_path)), ("debrief", IV.debrief_values(cfg, tmp_path))):
+        text = IV.instructions(mode, v)
+        assert "don't fill the silence" not in text and "Leave pauses" not in text
+        assert "It never stands in for a reply" in text and "When they ask you something, answer it." in text
+        assert "A silence longer than a few seconds after they've spoken is always yours to end." in text
+        note = IV.page_notes(mode, v)["waiting"]
+        assert note.startswith("[") and "Speak now" in note
+    assert IV.page_settings(cfg, "debrief")["reply_wait_ms"] == 6000
 
 
 def test_debrief_without_moments_asks_whether_anything_made_them_want_to_stop(cfg, tmp_path, monkeypatch):
@@ -119,19 +165,28 @@ def test_debrief_without_moments_asks_whether_anything_made_them_want_to_stop(cf
         "run": None, "title": None, "summary": None, "minutes_heard": 0, "minutes": None})
     monkeypatch.setattr(debrief, "moments", lambda d, c=None: [])
     text = IV.session_config(cfg, "debrief", IV.debrief_values(cfg, tmp_path))["instructions"]
-    assert "Did anything make you want to stop it and ask something?" in text
+    assert "They didn't stop it to ask anything. Ask whether anything made them want to." in text
     assert "less than a minute" in text and "{" not in text.replace("{{", "")
 
 
-def test_questions_asked_in_order_and_out_of_order():
-    said = ["Take me through what that was like, from the start.", "Say more about that.",
-            "Was there a moment you were most into it?", "At 3:20 you asked about levers. How did that go?",
-            "How would you describe it to a friend?", "If another one were waiting tomorrow morning, would you?",
-            "Is there anything I didn't ask that I should have?"]
-    got = IV.questions_asked([{"who": "interviewer", "text": x} for x in said] + [{"who": "listener", "text": "a friend"}])
-    assert got == {"asked": [1, 2, 3, 4, 5], "in_order": True, "closing": True}
-    swapped = IV.questions_asked([{"who": "interviewer", "text": said[4]}, {"who": "interviewer", "text": said[0]}])
-    assert swapped == {"asked": [4, 1], "in_order": False, "closing": False}
+def test_covered_topics_in_the_order_they_came_up_and_the_close():
+    said = [("interviewer", "Welcome back. What's one thing that stood out to you?"), ("listener", "The voice."),
+            ("interviewer", "The voice, okay. How was the voice for you?"), ("listener", "Calm."),
+            ("interviewer", "About 3 minutes in, you asked about levers. How did that go?"), ("listener", "Fine."),
+            ("interviewer", "Is this something you'd use?"), ("listener", "On my commute."),
+            ("interviewer", "Where could you imagine this going?"), ("listener", "Languages."),
+            ("interviewer", "Was anything confusing?"), ("listener", "The button."),
+            ("interviewer", "Is there anything I didn't ask that I should have?")]
+    lines = [{"who": w, "text": t} for w, t in said]
+    got = IV.covered(lines)
+    assert got == {"topics": ["stood_out", "voice", "asking", "use", "future", "confusing"], "closing": True,
+                   "answered": False, "thanked": False}
+    lines += [{"who": "interviewer", "text": "Thank you."}]  # thanks before they answered the closing question
+    assert not IV.covered(lines)["thanked"]
+    lines += [{"who": "listener", "text": "No."}, {"who": "interviewer", "text": "Thank you, Sam. That really helps."}]
+    assert IV.covered(lines) == {**got, "answered": True, "thanked": True}
+    assert IV.covered(lines[:2]) == {"topics": ["stood_out"], "closing": False, "answered": False, "thanked": False}
+    assert set(IV.TOPICS) == {"stood_out", "use", "future", "voice", "asking", "confusing"}
 
 
 # --- the routes -----------------------------------------------------------------------------------
@@ -225,20 +280,19 @@ def test_handover_happens_even_if_the_tester_record_cannot_be_written(world):
 def debrief_session(world, said):
     c = world.client
     got = c.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()
-    assert got["notes"]["opened"].startswith("Begin now") and {"time_up", "wrap_now"} <= set(got["notes"])
+    assert got["notes"]["opened"].startswith("Begin now") and {"time_up", "wrap_now", "waiting"} <= set(got["notes"])
     assert got["settings"]["debrief_target_minutes"] == 8
     for who, text in said:
         c.post("/api/interview/line", json={"sid": got["sid"], "who": who, "text": text})
     return got["sid"]
 
 
-FULL = [("out", "Welcome back. Take me through what that was like, from the start."), ("in", "It was calm."),
-        ("out", "Was there a moment you were most into it? And a moment you drifted?"), ("in", "The list part."),
-        ("out", "Did anything make you want to stop it and ask something?"), ("in", "No."),
-        ("out", "How would you describe it to a friend?"), ("in", "A radio show for me."),
-        ("out", "If another one were waiting for you tomorrow morning, would you listen?"), ("in", "Yes."),
+FULL = [("out", "Welcome back, Sam. What's one thing that stood out to you?"), ("in", "It was calm."),
+        ("out", "Calm, okay. How was the voice for you?"), ("in", "Easy to listen to."),
+        ("out", "Is this something you'd use?"), ("in", "On a walk, yes."),
         ("out", "Is there anything I didn't ask that I should have?"), ("in", "No."),
         ("out", "Thank you, Sam. That really helps.")]
+TOPICS = ["stood_out", "voice", "use"]
 
 
 def test_end_debrief_marks_it_done_and_starts_the_summary(world):
@@ -246,21 +300,33 @@ def test_end_debrief_marks_it_done_and_starts_the_summary(world):
     got = world.client.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief"}).json()
     assert got == {"ended": True, "act": "close"}
     state = json.loads((world.dir / "study" / "debrief.json").read_text())
-    assert state["done"] and state["finished_at"] and state["questions_asked"] == [1, 2, 3, 4, 5] and state["session"] == sid
+    assert state["done"] and state["finished_at"] and state["topics"] == TOPICS and state["session"] == sid
     end = world.client.post("/api/interview/end", json={"sid": sid, "how": "done"}).json()
-    assert end["done"] and end["questions_asked"] == [1, 2, 3, 4, 5]
+    assert end["done"] and end["topics"] == TOPICS
     assert world.after == [(world.dir / "study", sid, "debrief")]
     assert (world.dir / "study" / f"debrief-{sid}.jsonl").exists()
 
 
 def test_a_complete_debrief_without_the_tool_counts_as_done_and_a_partial_one_does_not(world):
+    """Done without end_debrief: the closing question asked and answered, then thanks. No fixed set of
+    questions is needed any more (Ian's notes, 2026-11-16)."""
     sid = debrief_session(world, FULL)
     assert world.client.post("/api/interview/end", json={"sid": sid, "how": "dropped"}).json()["done"]
-    (world.dir / "study" / "debrief.json").unlink()
-    sid = debrief_session(world, FULL[:4])
-    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "pagehide"}).json()["done"] is False
+    for partial in (FULL[:4], FULL[:7], FULL[:8], FULL[:7] + FULL[8:]):  # no close; unanswered; no thanks; thanks unanswered
+        (world.dir / "study" / "debrief.json").unlink()
+        sid = debrief_session(world, partial)
+        assert world.client.post("/api/interview/end", json={"sid": sid, "how": "pagehide"}).json()["done"] is False
     state = json.loads((world.dir / "study" / "debrief.json").read_text())
-    assert state == {**state, "done": False, "questions_asked": [1, 2]}
+    assert state == {**state, "done": False, "topics": TOPICS, "closing": True}
+
+
+def test_ians_own_debrief_is_not_done(world):
+    said = [("out", "So take me through what that was like, from the start."), ("in", "Yeah, I mean it was pretty good. I"),
+            ("out", "Mm-hmm."), ("in", "give me a different sort of question that you should start with"), ("out", "Hmm."),
+            ("in", "What's a different question")]
+    sid = debrief_session(world, said)
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "pagehide"}).json() == {
+        "ended": True, "topics": [], "done": False}
 
 
 def test_a_stale_session_is_closed_on_the_next_start(world, monkeypatch, cfg):
@@ -325,7 +391,7 @@ def write_debrief(study: Path, sid: str, said, *, done: bool):
         (study / "debrief.json").write_text(json.dumps({"done": True, "session": sid}))
 
 
-def summary_client(monkeypatch, text="# Debrief: Sam\n\n## 1. What it was like, from the start\nCalm."):
+def summary_client(monkeypatch, text="# Debrief: Sam\n\n## What stood out\nCalm."):
     seen = []
 
     def respond(kw):
@@ -344,7 +410,11 @@ def test_summary_is_one_claude_call_costed_in_study(cfg, tmp_path, monkeypatch):
                                           "heard": "They heard all of it.", "moments": "none"})
     assert out.read_text().startswith("# Debrief: Sam")
     prompt = seen[0]["messages"][0]["content"]
-    assert "[1:15] them: It was calm." in prompt and "[1:10] interviewer: Welcome back." in prompt
+    assert "[1:15] them: It was calm." in prompt and "[1:10] interviewer: Welcome back, Sam." in prompt
+    for heading in ("## What stood out", "## Would they use it, and when", "## Where they imagine it going", "## The voice",
+                    "## Asking questions", "## Confusing, or got in the way", "## Anything else they raised", "## Notable quotes"):
+        assert heading in prompt, heading
+    assert "## 1." not in prompt and "{{" not in prompt
     assert "[0:03] them: I'm Sam." in prompt and "The List" in prompt
     assert seen[0]["model"] == cfg["models"]["researcher"]
     log = lines(study / "log.jsonl")
@@ -354,7 +424,7 @@ def test_summary_is_one_claude_call_costed_in_study(cfg, tmp_path, monkeypatch):
 def test_summary_skips_a_silent_debrief_and_never_overwrites_a_finished_one(cfg, tmp_path, monkeypatch):
     seen = summary_client(monkeypatch)
     study = tmp_path / "study"
-    write_debrief(study, "quiet", [("out", "Take me through what that was like, from the start.")], done=False)
+    write_debrief(study, "quiet", [("out", "What's one thing that stood out to you?")], done=False)
     assert IV.summarize(cfg, study, "quiet", {}) is None and not seen
     write_debrief(study, "full", FULL, done=True)
     assert IV.summarize(cfg, study, "full", {"person": "Sam"})
@@ -418,7 +488,7 @@ def test_a_short_answer_to_the_name_question_is_the_name():
 
 def test_curly_apostrophes_count_server_side():
     """Review: GPT-Live writes didn’t, so the closing question and I’m never matched."""
-    got = IV.questions_asked([{"who": "interviewer", "text": "Is there anything I didn’t ask that I should have?"}])
+    got = IV.covered([{"who": "interviewer", "text": "Is there anything I didn’t ask that I should have?"}])
     assert got["closing"]
     assert IV.confirmed_name([{"who": "listener", "text": "Hi, I’m Siobhan"}]) == "Siobhan"
     assert re.search(IV.PAGE_DEFAULTS["closing_question"], "Anything I didn’t ask?", re.I)
@@ -514,6 +584,46 @@ def test_a_stop_word_before_the_name_is_dropped_and_yes_words_are_never_names():
     for yes in ("Absolutely.", "Definitely!", "Please.", "Certainly", "Of course."):
         assert confirmed_name([ask, said("listener", yes)]) is None, yes
     assert confirmed_name([said("listener", "It's Tuesday, I'm tired")]) is None
+
+
+def test_a_name_given_with_the_link_is_kept_unless_the_transcript_clearly_corrects_it():
+    """Ian's notes (2026-11-16): the interviewer greets them by the name Ian gave ("Hi, is this Rolando?"). A
+    correction is saved; a yes, a mishearing after a yes, or a capitalised word later on never replaces it."""
+    from demo.interviewer import confirmed_name
+    said = lambda who, text: {"who": who, "text": text}  # noqa: E731
+    hi = said("interviewer", "Hi, is this Rolando?")
+    for yes in ("Yes.", "Yeah, that's me.", "Yes, it's Orlando.", "Speaking.", "It is."):
+        assert confirmed_name([hi, said("listener", yes)], known="Rolando") is None, yes
+    assert confirmed_name([hi, said("listener", "No, it's Roland.")], known="Rolando") == "Roland"
+    assert confirmed_name([hi, said("listener", "This is Maria, actually")], known="Rolando") == "Maria"
+    assert confirmed_name([hi, said("listener", "Roland.")], known="Rolando") == "Roland"
+    # said back and confirmed by the interviewer: that wins, whatever else was said
+    assert confirmed_name([hi, said("listener", "Yes, but it's Roland"), said("interviewer", "Roland. Did I get that right?"),
+                           said("listener", "Yes.")], known="Rolando") == "Roland"
+    # later talk is not a name: Ian's is in the conversation now
+    later = [hi, said("listener", "Yes."), said("interviewer", "Ian built what I'm about to show you."),
+             said("listener", "Oh, it's Ian's thing? I'm Curious now.")]
+    assert confirmed_name(later, known="Rolando") is None
+    assert confirmed_name([said("listener", "It's Ian's thing?")]) is None
+
+
+def test_the_handover_saves_a_correction_and_keeps_a_confirmed_name(world):
+    c = world.client
+    (world.dir / "tester.json").write_text(json.dumps({"name": "Rolando"}))
+    got = c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"}).json()
+    assert got["notes"]["opened"] == 'Begin now: say hello warmly and check who it is: "Hi, is this Rolando?" Nothing else yet.'
+    sid = got["sid"]
+    c.post("/api/interview/line", json={"sid": sid, "who": "out", "text": "Hi, is this Rolando?"})
+    c.post("/api/interview/line", json={"sid": sid, "who": "in", "text": "Yes, it's Orlando."})
+    hand = c.post("/api/interview/tool", json={"sid": sid, "name": "handoff_to_guide", "by": "page"}).json()
+    assert hand["name"] == "Rolando" and "name_from" not in hand and world.testers.names == []
+    c.post("/api/interview/end", json={"sid": sid, "how": "handover"})
+
+    sid = c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"}).json()["sid"]
+    c.post("/api/interview/line", json={"sid": sid, "who": "out", "text": "Hi, is this Rolando?"})
+    c.post("/api/interview/line", json={"sid": sid, "who": "in", "text": "No, it's Roland."})
+    hand = c.post("/api/interview/tool", json={"sid": sid, "name": "handoff_to_guide", "by": "page"}).json()
+    assert hand["name"] == "Roland" and hand["name_from"] == "transcript" and world.testers.names == [("t-sam", "Roland")]
 
 
 def test_the_study_cli_never_loads_the_repos_dot_env():

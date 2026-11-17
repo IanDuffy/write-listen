@@ -1,8 +1,13 @@
 """Testers: the link is the tester (docs/tester-demo.md, "Tester links and consent").
 
-    shared/testers.json            {"tokens": {token: {"lid", "label", "created"}}}: the only way in
-    listeners/<lid>/tester.json    {label, lid, token, created, opened_at, consent_at, name,
+    shared/testers.json            {"tokens": {token: {"lid", "label", "created", "given_name"}}}: the only way in
+    listeners/<lid>/tester.json    {label, lid, token, created, opened_at, consent_at, name, given_name,
                                     debrief_card: "auto"|"on"|"off", stage_hint, intro_done, ...}
+
+A tester may be made with a name (Ian's notes, 2026-11-16): the interviewer greets them by it ("Hi, is this
+Rolando?"). With none given, a label that looks like a first name is used (first_name). It is saved as
+set_name saves one, so the guide has it whatever the intro does, and kept as given_name so a reset or a
+remade folder starts with it again; a correction in the intro replaces name, never given_name.
     listeners/<lid>/settings.json  the demo settings (chapter.minutes from demo.chapter_minutes, overnight off)
 
 A tester's lid is t-<slug of the label>. The folder is made when the link is created and made again on
@@ -33,6 +38,8 @@ COOKIE = "wl_tester"   # demo.cookie; routes.mount sets it from config
 CARD_VALUES = ("auto", "on", "off")
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
 NAME_LINE = "Their name is {name} (they told the interviewer just now)."
+_WORD = r"[A-Z](?=[A-Za-z'’-]*[a-z])[A-Za-z'’-]+"
+FIRST_NAME = re.compile(_WORD + "(?: " + _WORD + ")?")  # "Rolando", "Mary Ann"; not "Pilot 1", "Ian test", "QA"
 
 _LOCK = threading.RLock()
 _cache: dict = {"key": None, "data": None}
@@ -108,12 +115,20 @@ def _new_lid(label: str) -> str:
     return lid
 
 
+def first_name(label: str) -> str | None:
+    """The label, when it reads as a name: one or two capitalised words without digits."""
+    return label if FIRST_NAME.fullmatch(label or "") else None
+
+
 def _make_folder(cfg: dict, rec: dict) -> Path:
-    """The listener folder with the demo settings and tester.json."""
+    """The listener folder with the demo settings and tester.json; a name given with the link is saved as
+    set_name saves one (tester.json and the profile's line for the guide)."""
     d = profiles.create(rec["lid"])
     minutes = (cfg.get("demo") or {}).get("chapter_minutes", 10)
     profiles.save_settings(cfg, {"chapter": {"minutes": minutes}, "overnight": {"enabled": False}}, listener=d)
     _write_record(rec["lid"], rec)
+    if rec.get("given_name"):
+        set_name(rec["lid"], rec["given_name"])
     return d
 
 
@@ -126,22 +141,24 @@ def link(cfg: dict, token: str, base: str | None = None) -> str:
     return f"{(base or base_url(cfg)).rstrip('/')}/t/{token}"
 
 
-def create(cfg: dict, label: str, base: str | None = None) -> dict:
-    """A new tester: a token, its registry entry and its folder. {token, lid, label, link}."""
+def create(cfg: dict, label: str, base: str | None = None, name: str | None = None) -> dict:
+    """A new tester: a token, its registry entry and its folder. {token, lid, label, name, link}. `name` is
+    what the interviewer greets them by; without one, a label that reads as a first name is used."""
     label = " ".join(str(label or "").split())
     if not label:
         raise StageError("A tester needs a label.")
+    given = " ".join(str(name or "").split())[:60] or first_name(label)
     with _LOCK:
         lid = _new_lid(label)
         token = secrets.token_urlsafe(24)  # 32 characters
         created = now()
         rec = {"label": label, "lid": lid, "token": token, "created": created, "opened_at": None,
-               "consent_at": None, "name": None, "debrief_card": "auto", "stage_hint": None}
+               "consent_at": None, "name": None, "given_name": given, "debrief_card": "auto", "stage_hint": None}
         _make_folder(cfg, rec)
         reg = _registry()
-        tokens = {**reg["tokens"], token: {"lid": lid, "label": label, "created": created}}
+        tokens = {**reg["tokens"], token: {"lid": lid, "label": label, "created": created, "given_name": given}}
         _save_registry({**reg, "tokens": tokens})
-    return {"token": token, "lid": lid, "label": label, "link": link(cfg, token, base)}
+    return {"token": token, "lid": lid, "label": label, "name": given, "link": link(cfg, token, base)}
 
 
 def lookup(token: str | None) -> dict | None:
@@ -162,8 +179,8 @@ def open_link(cfg: dict, token: str) -> dict | None:
             return None
         if not folder(rec["lid"]).exists():
             _make_folder(cfg, {"label": rec["label"], "lid": rec["lid"], "token": token, "created": rec["created"],
-                               "opened_at": None, "consent_at": None, "name": None, "debrief_card": "auto",
-                               "stage_hint": None})
+                               "opened_at": None, "consent_at": None, "name": None,
+                               "given_name": rec.get("given_name"), "debrief_card": "auto", "stage_hint": None})
         return mark_opened(rec["lid"])
 
 
@@ -247,6 +264,7 @@ def reset(lid: str, cfg: dict | None = None) -> Path:
         shutil.move(str(folder(lid)), str(dest))
         _make_folder(cfg, {"label": rec["label"], "lid": lid, "token": rec.get("token"), "created": rec["created"],
                            "opened_at": None, "consent_at": None, "name": None,
+                           "given_name": rec.get("given_name"),
                            "debrief_card": rec.get("debrief_card") or "auto", "stage_hint": None,
                            **({"revoked_at": rec["revoked_at"]} if rec.get("revoked_at") else {}),
                            "reset_at": now()})
@@ -272,7 +290,8 @@ def update(lid: str, **fields) -> dict:
 
 
 def set_name(lid: str, name: str) -> dict:
-    """The name the interviewer heard: in tester.json, and one line in profile.md for the guide."""
+    """The tester's name (given with the link, or heard by the interviewer): in tester.json, and one line in
+    profile.md for the guide."""
     name = " ".join(str(name or "").split())
     if not name:
         raise StageError("No name given.")
