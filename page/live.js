@@ -86,7 +86,6 @@
     debriefing: false,      // the interviewer's debrief is on (the screen cooled)
     debriefDone: false,     // /api/live/start's `debrief_done`: no handback again (a later chapter just ends)
     micRefused: false,      // a tester's mic was refused: the line asks for it, a tap or Try again asks again
-    card: null,             // this conversation's chapter card (/api/live/card)
   };
   if (L.tester) L.skin.add("tester");
   window.Live = { L, S, state: () => L.phase };  // S: tests turn the clock-driven cues on
@@ -316,7 +315,7 @@
     L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
     L.heardLines = 0; L.recentWords = []; L.stepBackAt = 0;
-    L.handoffOpen = null; L.card = null; L.handingBack = null;
+    L.handoffOpen = null; L.handingBack = null;
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
   }
@@ -553,6 +552,10 @@
       mark("rest-said", "after start, unsaid");
       rest();
     }
+    // When this stretch of talk began (a new session after a rest, a tap, a sound): the long-silence rest counts
+    // from here. Without it a tap after 90 s of rest rested again within a second, the last words being that old
+    // (Ian's tester run, 2026-11-16: "Tap to talk doesn't work once turned off").
+    if (L.phase !== L.wasPhase) { if (L.phase === "talk") L.talkAt = t; L.wasPhase = L.phase; }
     if (L.dc && L.dc.readyState === "open") conversationCues(t);
     if (L.phase === "paused" && L.pc && !L.closing) closeLive();  // never open while paused (a session that came up meanwhile)
     if (L.phase === "ended" && t - L.endedAt > S.end_hold_secs * 1000) endConversation();
@@ -594,7 +597,7 @@
     }
     // Nobody has said anything for a long while: the mic goes off (tap to talk), as if they'd asked for quiet.
     if (S.talk_rest_secs && !L.inp && !L.out && t - L.spokeAt > S.talk_rest_secs * 1000 && t - L.heardAt > S.talk_rest_secs * 1000
-        && t - (L.convAt || 0) > S.talk_rest_secs * 1000) {
+        && t - Math.max(L.convAt || 0, L.talkAt || 0) > S.talk_rest_secs * 1000) {
       mark("silence-rest");
       return rest();
     }
@@ -720,8 +723,8 @@
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "page", text });
   }
 
-  // The ready chapter's play button and the circle's play mark: only with the mic off (Ian's third test), or
-  // just woken by a sound with nothing said yet (they may be reaching for play).
+  // The ready chapter's play button (the bar's; the circle has no play mark: Ian, 2026-11-16): only with the mic
+  // off (Ian's third test), or just woken by a sound with nothing said yet (they may be reaching for play).
   function offerShown() {
     return !!(L.offer && !L.readStarted && (L.phase === "resting" || (L.phase === "talk" && L.wokeAt && !(L.heardAt > L.wokeAt))));
   }
@@ -1485,20 +1488,6 @@
     setTimeout(() => { ["handoff", "warm", "revealed"].forEach((c) => skin(c, false)); render(); }, 2000);
   }
 
-  // The chapter card (faststart/card.py): asked for while this conversation has a chapter, until it carries the
-  // outline's title.
-  async function pollCard() {
-    try {
-      const run = L.own;
-      if (run && !(L.card && L.card.run === run && L.card.outlined) && !["idle", "done"].includes(L.phase)) {
-        const res = await fetch(`/api/live/card/${encodeURIComponent(run)}`);
-        if (res.ok && run === L.own) { L.card = await res.json(); renderCard(); }
-      }
-    } catch (e) { /* the next poll tries again */ }
-    setTimeout(pollCard, S.card_poll_ms || 3000);
-  }
-  setTimeout(pollCard, 500);
-
   // --- a tap mid-chapter: a question, in the same session -----------------------------------------------
   // `paused`: a tap while paused asks from the paused place (nothing is being read to stop).
   async function ask(paused = null) {
@@ -1888,7 +1877,7 @@
     switch (L.phase) {
       case "connecting": return "Connecting…";
       case "resting":
-        if (L.offer) return `${title} is ready · tap to play`;
+        if (L.offer) return `${title} is ready`;
         if (mine_(s) && ["problem", "stopped"].includes(L.status.state)) return L.status.message || "Your chapter stopped.";
         return "Tap to talk";
       case "leadin": return title;
@@ -1919,28 +1908,33 @@
       L.micRefused ? "mic-refused" : "",
       ...L.skin].filter(Boolean).join(" ");
     $("line").textContent = lineText();
-    renderCard();
-    const voiceWake = L.phase === "resting" && L.mic && !W.off && !W.tapOnly, ready = L.offer && !L.readStarted;
-    $("how").textContent = voiceWake ? (ready ? "Say something, or tap to play" : "Say something, or tap, to talk") : (ready ? "Tap to play" : "Tap to talk");
+    renderSteps();
+    const voiceWake = L.phase === "resting" && L.mic && !W.off && !W.tapOnly;
+    $("how").textContent = voiceWake ? "Say something, or tap, to talk" : "Tap to talk";  // the circle talks; play is in the bar
     renderRing();
     renderPlayer();
     renderMarkers();
   }
   setInterval(render, 500);
 
-  // The card under the orb once this conversation's chapter has one; compact (title and overview) once the
-  // reading has begun, when the player and the parts sit under it too.
-  function renderCard() {
-    const box = $("card");
-    if (!box) return;
-    const c = L.card;
-    const on = !!(c && c.run === L.own && !["idle", "done"].includes(L.phase));
-    box.hidden = !on;
-    if (!on) return;
-    $("card-title").textContent = c.title || "";
-    $("card-overview").textContent = c.overview || "";
-    $("card-summary").textContent = c.summary || "";
-    box.classList.toggle("compact", !!L.readStarted);
+  // While this conversation's chapter is made, before its opening is written: the steps to it (status.steps:
+  // done ticked, the current one pulsing), as the fast-start page showed them (page/fast.js). No card: what the
+  // chapter will be is the library's to show, once it is written (Ian, after his tester run, 2026-11-16).
+  const STEP_SR = { done: ", done", doing: ", now", todo: "" };
+  function renderSteps() {
+    const list = $("steps"), s = L.status;
+    const steps = mine_(s) && s.state === "making" && !L.readStarted && !L.offer && !s.first_audio
+      && !["idle", "done", "handback"].includes(L.phase) && Array.isArray(s.steps) ? s.steps : [];
+    list.hidden = !steps.length;
+    while (list.children.length > steps.length) list.lastChild.remove();
+    steps.forEach((x, k) => {
+      let li = list.children[k];
+      if (!li) { li = document.createElement("li"); li.innerHTML = '<span class="mark" aria-hidden="true"></span><span></span>'; list.appendChild(li); }
+      if (li.dataset.state !== x.state) li.dataset.state = x.state;
+      if (li.lastChild.textContent !== x.label) li.lastChild.textContent = x.label;
+      li.setAttribute("aria-label", x.label + (STEP_SR[x.state] || ""));
+      if (x.state === "doing") li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+    });
   }
 
   // The ring: before the opening is ready, how close it is (from the run's start and its countdown, or a
@@ -1983,7 +1977,10 @@
     const on = !!(tl && tl.paras.length && !["idle", "done"].includes(L.phase) && (L.phase !== "connecting" || L.readStarted)
                   && (L.readStarted || offerShown()));
     box.hidden = !on;
+    document.body.classList.toggle("live-bar", on);  // the library's bar gives way, and the page ends above this one
+    document.documentElement.style.setProperty("--live-bar-h", on ? `${box.offsetHeight}px` : "0px");
     if (!on) { L.dragging = false; return; }
+    $("play-title").textContent = L.chapter.title || "Your chapter";
     const open = L.phase !== "connecting";
     const between = ["talk", "resting"].includes(L.phase) && L.readStarted && !!L.pc;  // stopped, or after the end: play reads on
     const playing = ["reading", "seeking", "pausing"].includes(L.phase);
@@ -2016,7 +2013,8 @@
   const STATE_WORD = { played: "played", playing: "playing", ready: "ready", being_written: "being written" };
   function renderMarkers() {
     const list = $("sections");
-    if (!L.chapter || !L.readStarted) { list.style.display = "none"; return; }
+    // Once the opening is written (ready, offered) and while it is read: every part and where it stands.
+    if (!L.chapter || L.run !== L.own || !(L.readStarted || L.offer) || ["idle", "done"].includes(L.phase)) { list.style.display = "none"; return; }
     list.style.display = "";
     while (list.children.length > L.chapter.sections.length) list.lastChild.remove();
     L.chapter.sections.forEach((sec, k) => {
@@ -2098,9 +2096,9 @@
       case "done":  // a new conversation (connect forgets the finished chapter: it is never read again by itself)
         if (!(await connect()) && !L.tester) { L.typing = true; render(); typedChat(null); }  // testers can't type
         return;
-      case "talk": return offerShown() ? startFromOffer("tap") : rest();  // the mic off (tap to talk again)
+      // The circle is for talking, never for play (Ian, 2026-11-16): a ready chapter starts from the bar's play button.
+      case "talk": return rest();  // the mic off (tap to talk again)
       case "resting":
-        if (L.offer && !L.readStarted) return playOffer("tap");  // "… is ready · tap to play"
         if (!L.pc) { W.sounds = 0; W.total = 0; W.off = false; return connect(L.restFrom === "drop" ? "dropped" : "tap"); }
         return wake();
       case "reading": return ask();
@@ -2181,7 +2179,7 @@
     if (L.session) navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: L.session })], { type: "application/json" }));
   });
 
-  Object.assign(window.Live, { handoff, handback, debrief, renderCard,
+  Object.assign(window.Live, { handoff, handback, debrief,
                                onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
                                pauseReading, play, seek, timeline, placeAt, playedSecs: () => { const tl = timeline(); return tl ? playedSecs(tl) : null; } });
 })();

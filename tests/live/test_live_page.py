@@ -855,7 +855,7 @@ def test_a_lead_back_and_the_tool_together_start_one_restart(world):
 
 def test_a_chapter_ready_while_resting_is_announced_and_waits_for_play(world):
     """Ian's third test: the play button only when the mic is off. Resting, the guide says it's ready in one
-    line, the mic stays off, nothing is read, and the circle or the play button starts it."""
+    line, the mic stays off, nothing is read, and the play button starts it."""
     w = world
     p = connect(w)
     p.wait("Date.now() - L.spokeAt > 900")
@@ -868,7 +868,7 @@ def test_a_chapter_ready_while_resting_is_announced_and_waits_for_play(world):
     p.page.wait_for_timeout(1500)
     assert p.phase() == "resting" and p.L("L.muted") and not p.reads(w.notes)
     assert p.js("document.getElementById('player').hidden") is False and "offer" in p.js("document.body.className")
-    p.page.click("#orb")
+    p.page.click("#play")
     p.wait("L.phase === 'reading' && L.feed.cur && L.feed.cur.sentAt", timeout=4000)
     mic_rules(p, w.notes)
 
@@ -927,7 +927,7 @@ def test_stop_during_a_section_boundary_reopen_does_not_read_on(world):
     assert not [m for m in p.marks("dropped")]  # a Stop, not a drop
 
 
-def test_a_chapter_ready_while_the_guide_is_away_is_announced_then_a_tap_plays_it(world):
+def test_a_chapter_ready_while_the_guide_is_away_is_announced_then_play_plays_it(world):
     """Resting closes GPT-Live (Ian's fifth note). The opening written meanwhile: a session opens just to say it's
     ready (the mic off), then closes; a tap opens one more, told to say nothing, and reads with the mic off.
     (Earlier regressions kept: nothing is read into a closed connection, and the mic track comes back on in a
@@ -944,8 +944,8 @@ def test_a_chapter_ready_while_the_guide_is_away_is_announced_then_a_tap_plays_i
     assert p.sent("session.commentary.append")[-1]["content"] == line and p.L("L.muted") is True
     p.say("Your chapter's ready whenever you are. Tap play when you'd like it.")
     p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=8000)  # closed again
-    assert not p.reads(w.notes) and "tap to play" in p.page.text_content("#line")
-    p.page.click("#orb")
+    assert not p.reads(w.notes) and p.page.text_content("#line") == "The List is ready"
+    p.page.click("#play")
     p.wait("L.phase === 'reading' && L.liveId === 'live_3' && L.feed.cur && L.feed.cur.sentAt", timeout=8000)
     assert p.post_bodies("api/live/resume")[-1]["reason"] == "play"
     assert all(e["ch"] == 2 for e in p.sent("session.commentary.append") if e["content"].startswith(w.notes["read"]))
@@ -1502,10 +1502,9 @@ def test_the_guides_lead_in_starts_the_offered_chapter(world):
     assert p.marks("lead-in")
 
 
-@pytest.mark.parametrize("control", ["#orb", "#play"])
-def test_an_offer_in_conversation_is_spoken_and_shows_no_play_button_until_the_mic_is_off(world, control):
+def test_an_offer_in_conversation_is_spoken_and_shows_no_play_button_until_the_mic_is_off(world):
     """Ian's third test: in conversation the ready chapter is said by the guide and no play button shows;
-    with the mic off (a tap on the circle) the play button and the circle's play mark appear and start it."""
+    with the mic off (a tap on the circle) the bar's play button appears and starts it."""
     w = world
     p = connect(w)
     offered(p, w)
@@ -1514,7 +1513,7 @@ def test_an_offer_in_conversation_is_spoken_and_shows_no_play_button_until_the_m
     p.page.click("#orb")  # the mic off
     p.wait("L.phase === 'resting'")
     assert p.js("document.getElementById('player').hidden") is False and "offer" in p.js("document.body.className")
-    p.page.click(control)
+    p.page.click("#play")
     p.wait("L.phase === 'reading' && L.feed.cur && L.feed.cur.sentAt", timeout=4000)
     mic_rules(p, w.notes)
 
@@ -2110,7 +2109,7 @@ def test_a_ready_chapter_after_a_drop_plays_on_one_tap_without_a_second_offer(wo
     dropped(p)
     p.wait("!L.pc && L.phase === 'resting'")
     says, before = len(p.marks("say")), p.L("L.liveId")
-    p.page.click("#orb")  # tap to play: reconnect and read
+    p.page.click("#play")  # reconnect and read
     p.wait(f"L.phase === 'reading' && L.liveId !== {json.dumps(before)} && L.feed.cur && L.feed.cur.sentAt", timeout=8000)
     assert len(p.marks("say")) == says  # no second "want to hear it?"
 
@@ -2147,7 +2146,7 @@ def test_a_sound_wake_with_a_ready_chapter_keeps_the_play_button(world):
     p.wait("L.phase === 'talk' && L.wokeAt", timeout=5000)
     tone(p, False)
     assert p.js("document.getElementById('player').hidden") is False and "offer" in p.js("document.body.className")
-    p.page.click("#orb")
+    p.page.click("#play")
     p.wait("L.phase === 'reading' && L.feed.cur && L.feed.cur.sentAt", timeout=5000)
 
 
@@ -2512,3 +2511,159 @@ def test_a_sound_while_a_library_chapter_plays_never_wakes_the_guide_and_listeni
     tone(p)
     p.wait("L.phase === 'talk'", timeout=6000)
     tone(p, False)
+
+
+# --- Ian's notes after his tester run (2026-11-16) -------------------------------------------------------
+
+def resting_with_a_ready_chapter(w):
+    p = connect(w)
+    p.wait("Date.now() - L.spokeAt > 900")
+    p.page.click("#orb")  # talk -> resting
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    w.lock(1)
+    p.wait("L.offer && L.liveId === 'live_2'", timeout=6000)
+    p.say("Your chapter's ready whenever you are. Tap play when you'd like it.")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=8000)
+    return p
+
+
+def test_the_circle_never_shows_play_and_never_plays_the_bars_button_does(world):
+    """Ian: "The play button ... on the dot ... is a little odd, we should just use the play button near the
+    playback slider." A ready chapter, the page resting: no play mark on the circle, the bar's play button is
+    visible and enabled, and a tap on the circle talks (it never starts the reading)."""
+    w = world
+    p = resting_with_a_ready_chapter(w)
+    assert p.js("getComputedStyle(document.querySelector('#orb .icon.play')).opacity") == "0"
+    assert p.page.is_visible("#play") and p.page.is_enabled("#play")
+    assert "play" not in p.page.text_content("#hint").lower() and "tap to play" not in p.page.text_content("#line")
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_3'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "tap"
+    p.page.wait_for_timeout(1200)
+    assert p.phase() == "talk" and not p.reads(w.notes) and not p.L("L.readStarted")
+    p.say("I'm here.")
+    p.wait("L.offer && L.phase === 'talk' && window.Live.L.log.filter((m) => m[1] === 'offer').length >= 2", timeout=8000)
+    assert not p.reads(w.notes)  # offered again by voice in the new session, still not read
+
+
+def test_the_chapters_player_is_a_bar_fixed_to_the_bottom_and_the_librarys_gives_way(world):
+    """Ian: "What happened to the fixed playbar?" The live chapter's play, slider and time are a bar fixed to the
+    bottom of the screen (the library's #lib-player look); while it shows the library's bar doesn't, and the
+    page ends above it."""
+    w = world
+    p = connect(w)
+    assert not p.page.is_visible("#player") and "live-bar" not in p.js("document.body.className")
+    p.js("() => { const b = document.getElementById('lib-player'); if (b) b.hidden = false; }")  # a library chapter loaded
+    offered(p, w)
+    say_yes(p)
+    p.page.wait_for_selector("#player:not([hidden])")
+    box = p.js("""() => { const el = document.getElementById('player'), r = el.getBoundingClientRect(), lib = document.getElementById('lib-player');
+                         return { pos: getComputedStyle(el).position, bottom: Math.round(r.bottom), left: Math.round(r.left),
+                                  width: Math.round(r.width), h: el.offsetHeight, vh: innerHeight, vw: document.documentElement.clientWidth,
+                                  bar: getComputedStyle(document.documentElement).getPropertyValue('--live-bar-h').trim(),
+                                  lib: lib ? getComputedStyle(lib).display : 'none',
+                                  pad: parseFloat(getComputedStyle(document.getElementById('library')).paddingBottom) }; }""")
+    assert box["pos"] == "fixed" and box["bottom"] == box["vh"] and box["left"] == 0 and box["width"] == box["vw"]
+    assert box["h"] > 40 and box["bar"] == f"{box['h']}px" and box["pad"] == 48 + box["h"] and box["lib"] == "none"
+    assert "live-bar" in p.js("document.body.className")
+    assert p.page.text_content("#play-title") == "The List"
+    for sel in ("#play", "#seek", "#time"):
+        assert p.js("(sel) => !!document.querySelector('#player ' + sel)", sel) and p.page.is_visible(sel)
+    p.js("() => window.scrollTo(0, document.documentElement.scrollHeight)")  # the page's end is above the bar
+    assert p.js("document.getElementById('library').getBoundingClientRect().bottom - parseFloat(getComputedStyle(document.getElementById('library')).paddingBottom)"
+                " <= document.getElementById('player').getBoundingClientRect().top + 1")
+    p.js("() => { window.Live.endConversation(); }")
+    p.wait("L.phase === 'idle'")
+    p.page.wait_for_timeout(700)
+    assert not p.page.is_visible("#player") and "live-bar" not in p.js("document.body.className")
+    assert p.js("getComputedStyle(document.documentElement).getPropertyValue('--live-bar-h').trim()") == "0px"
+
+
+STEPS = [{"key": "scout", "label": "Looking into it", "state": "done"},
+         {"key": "outline", "label": "Planning the chapter", "state": "doing"},
+         {"key": "opening", "label": "Writing the opening", "state": "todo"}]
+
+
+def test_while_the_chapter_is_made_the_steps_show_then_its_parts_and_never_a_card(world):
+    """Ian: "we had just a simple progress indicator which was an overview of the different sections ... I didn't
+    like seeing so much info about what would be built." While the opening is made: the steps to it (as the
+    fast-start page showed them); once it is written: the chapter's parts and where each stands. No card with a
+    title, overview and summary, and the page never asks for one."""
+    w = world
+    write(w.root / "fast" / "card.json", {"run": RUN, "title": "A card", "overview": "An overview.", "summary": "A summary."})
+    p = connect(w)
+    assert not p.page.is_visible("#steps") and not p.page.is_visible("#sections")
+    w.status(steps=STEPS)
+    p.page.wait_for_selector("#steps:not([hidden])", timeout=5000)
+    assert p.js("[...document.querySelectorAll('#steps li')].map((li) => [li.textContent, li.dataset.state])") == [
+        [x["label"], x["state"]] for x in STEPS]
+    assert not p.page.is_visible("#sections")
+    p.page.wait_for_timeout(1200)
+    assert p.js("document.getElementById('card')") is None
+    assert "An overview." not in p.page.text_content("main") and "A summary." not in p.page.text_content("main")
+    offered(p, w, 1)
+    p.page.wait_for_selector("#sections button", timeout=5000)
+    assert not p.page.is_visible("#steps")
+    assert p.js("[...document.querySelectorAll('#sections button')].map((b) => [b.querySelector('.title').textContent, b.dataset.state])") == [
+        [TITLES[n], "ready" if n == 1 else "being_written"] for n in TEXTS]
+    say_yes(p)
+    p.say(" ".join(TEXTS[1].split()[:4]))
+    p.page.wait_for_selector("#sections button[data-state='playing']", timeout=5000)
+    assert p.page.text_content("#sections button[data-state='playing'] .state") == "playing"
+    assert not [u for u in p.js("performance.getEntriesByType('resource').map((e) => e.name)") if "/api/live/card" in u]
+
+
+def long_rest(p, secs=2):
+    """Resting (the session closed) for longer than talk_rest_secs, as Ian's 2.5 minutes against its 90 s."""
+    cue(p, "talk_rest_secs", secs)
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.wait_for_timeout(secs * 1000 + 600)
+
+
+def test_a_tap_after_a_long_rest_brings_the_guide_back_and_it_stays(world):
+    """Ian: "Tap to talk doesn't work once turned off." His transcript: stepped back at 19:56:10, "[A new voice
+    session: tap.]" at 19:58:46 and "[The guide stepped back.]" one second later. The long-silence rest
+    (talk_rest_secs) measured from the last words before the rest, 156 s old, so the new session rested at once.
+    Now it counts from when the guide came back: the guide stays, and rests only after that long in silence."""
+    w = world
+    p = connect(w)  # the chapter started, not yet ready: Ian's case
+    p.wait("Date.now() - L.spokeAt > 900")
+    long_rest(p)
+    rests = len(p.marks("silence-rest"))
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_2'", timeout=6000)
+    assert p.post_bodies("api/live/resume")[-1]["reason"] == "tap"
+    p.page.wait_for_timeout(1200)
+    assert p.phase() == "talk" and p.L("!!L.pc") and len(p.marks("silence-rest")) == rests
+    p.say("I'm here.")
+    p.wait("L.phase === 'resting'", timeout=8000)  # the normal rest, after talk_rest_secs of silence
+    assert len(p.marks("silence-rest")) == rests + 1
+
+
+def test_a_tap_after_a_long_rest_with_the_chapter_ready_brings_the_guide_back_too(world):
+    w = world
+    p = resting_with_a_ready_chapter(w)
+    cue(p, "talk_rest_secs", 3)
+    p.page.wait_for_timeout(3600)
+    p.page.click("#orb")
+    p.wait("L.phase === 'talk' && L.liveId === 'live_3'", timeout=6000)
+    p.page.wait_for_timeout(2400)  # past the wait for the guide's line, which holds every cue back
+    assert p.phase() == "talk" and p.L("!!L.pc") and not p.marks("silence-rest")
+
+
+def test_a_sound_after_a_long_rest_wakes_the_guide_for_the_listening_time(world):
+    """The same for a wake on sound: it listens for wake_listen_secs, not for no time at all."""
+    w = world
+    p = connect(w, start=False)
+    cue(p, "wake_listen_secs", 3)
+    cue(p, "talk_rest_secs", 2)
+    room(p)
+    p.page.click("#orb")
+    p.wait("L.phase === 'resting' && window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=6000)
+    p.page.wait_for_timeout(2600)
+    tone(p)
+    p.wait("L.phase === 'talk' && L.wokeAt", timeout=6000)
+    tone(p, False)
+    p.page.wait_for_timeout(1200)
+    assert p.phase() == "talk" and not p.marks("silence-rest")

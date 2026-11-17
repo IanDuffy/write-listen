@@ -93,7 +93,8 @@ def test_history_lists_every_finished_chapter_newest_first(app):
     runs = [x["run"] for x in s["history"]]
     assert runs == [seed.name, older.name]  # newest first by when it finished; the unfinished one is not listed
     first, second = s["history"]
-    assert set(first) == {"run", "title", "overview", "date", "minutes", "audio", "episode", "intro", "asks"}
+    assert set(first) == {"run", "title", "overview", "summary", "date", "minutes", "audio", "episode", "intro", "asks"}
+    assert first["summary"] == second["summary"] == ""  # only a chapter made in conversation has one (fast/card.json)
     assert first["date"] == "2026-11-18" and first["episode"] is None and first["intro"] is False
     assert second["title"] == "Why Herons Wait" and second["date"] == "2026-11-17" and second["minutes"]
     assert second["episode"] == f"#/chapter/{older.name}"  # the chapter view in the page, not the old episode page

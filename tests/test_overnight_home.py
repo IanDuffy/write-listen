@@ -505,14 +505,15 @@ def test_the_orb_leaves_past_chapters_to_the_library(site, browser):
 def test_on_the_live_page_the_player_bar_pauses_and_plays_again(site, browser):
     """After the merge (Ian, 2026-11-15): on the live page the library's bar paused the chapter but never
     played it again, and the live page's own player sat pinned to the bottom left. Both pages had #player
-    and #play; the library's are #lib-player and #lib-play now."""
+    and #play; the library's are #lib-player and #lib-play now. (Since 2026-11-16 the live page's player is a
+    bottom bar by its own style, shown only while its own chapter is read: never beside the library's.)"""
     site.cfg["live"]["provider"] = "gpt_live"  # what main serves at /; tests/conftest.py pins the old page
     pg = open_page(site, browser).p
     assert pg.evaluate("!!window.Live")
     assert pg.evaluate("document.querySelectorAll('#player').length + document.querySelectorAll('#play').length") == 2
-    assert pg.evaluate("getComputedStyle(document.getElementById('player')).position") != "fixed"
     pg.click("#skip")
     pg.wait_for_function("!document.getElementById('chapter-audio').paused")
+    assert pg.is_visible("#lib-player") and not pg.is_visible("#player")  # one bar: the library's, for its chapter
     pg.click("#player-toggle")
     pg.wait_for_function("document.getElementById('chapter-audio').paused")
     t = pg.evaluate("document.getElementById('chapter-audio').currentTime")

@@ -29,18 +29,23 @@ LIBRARY_JS = ROOT / "page" / "library.js"
 
 def _chapter_info(root: Path) -> dict:
     """A chapter as the library shows it: title, overview, date, length, its audio and its chapter view
-    (`#/chapter/<run>`, the page's in-page read-along, when it has an episode.json)."""
+    (`#/chapter/<run>`, the page's in-page read-along, when it has an episode.json). A chapter made in
+    conversation (a fast run) has a card of its own (faststart/card.py, fast/card.json): its overview and
+    summary are shown here, on the finished chapter, never while it is being made (Ian, 2026-11-16); its
+    title is the outline's."""
     card = profiles.read_json(root / "00_source" / "up_next.json", {}) or {}
+    fast = profiles.read_json(root / "fast" / "card.json", {}) or {}
+    outline = (profiles.read_json(root / "05_outline.json", {}) or {}) if fast else {}
     ep = profiles.read_json(root / "11_episode" / "episode.json", {}) or {}
     timing = profiles.read_json(root / "11_episode" / "timing.json", {}) or {}
-    title = card.get("title") or ep.get("title") or root.name
-    overview = card.get("overview") or ep.get("angle") or ""
+    title = card.get("title") or ep.get("title") or outline.get("title") or fast.get("title") or root.name
+    overview = card.get("overview") or fast.get("overview") or ep.get("angle") or ""
     day = root.name[:10] if len(root.name) > 10 and root.name[4] == "-" else None
     if day is None:  # a seed or fast run (<slug>-YYYYMMDD): the day it finished
         t = profiles.finished_at(root)
         day = datetime.fromtimestamp(t).strftime("%Y-%m-%d") if t else None
     secs = ep.get("duration") or timing.get("duration")
-    return {"run": root.name, "title": title, "overview": overview, "date": day,
+    return {"run": root.name, "title": title, "overview": overview, "summary": fast.get("summary") or "", "date": day,
             "minutes": round(secs / 60) if secs else None,
             "audio": f"/api/chapters/{root.name}/audio",
             "episode": f"#/chapter/{root.name}" if (root / "11_episode" / "episode.json").exists() else None,

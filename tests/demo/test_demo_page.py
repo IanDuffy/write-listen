@@ -1,5 +1,6 @@
 """Tester Demo, part D, the product page in headless Chromium: the handoff from the interviewer into the guide
-(the handoff note, no greeting of the page's own, the reveal), the chapter card under the orb, tester mode, the
+(the handoff note, no greeting of the page's own, the reveal), no chapter card while the chapter is made (the
+library shows it on the finished chapter), tester mode, the
 handback to the interviewer (I'm done, and the chapter's end), and the library's debrief card.
 
 The live page's own harness (tests/live/test_live_page.py) runs the real server over a scratch run with GPT-Live
@@ -59,7 +60,6 @@ class DemoPage(Page):
             self.page.route(base_url + "/", as_tester)
         self.page.goto(base_url + "/")
         self.page.wait_for_function("window.Live && window.Align")
-        self.js("() => { Live.S.card_poll_ms = 200; }")
         self.ms = 0
 
     def body(self):
@@ -144,38 +144,66 @@ def test_a_silent_guide_is_asked_once_more_with_the_handoff_note_never_the_greet
     assert not [e for e in p.sent("session.commentary.append") if e["content"] == w.notes["opened"]]
 
 
-# --- 2. the chapter card -----------------------------------------------------------------------------
+# --- 2. the chapter card: never while the chapter is made; on the finished chapter in the library ----------
+# (Ian, after his tester run, 2026-11-16: "I didn't like seeing so much info about what would be built. That
+# card ... only is shown after the chapter is written.")
 
-def test_the_card_shows_under_the_orb_once_the_chapter_has_one_and_goes_compact_in_the_reading(demo):
+def test_no_card_shows_while_the_chapter_is_made_or_read_only_the_steps_and_the_parts(demo):
     w = demo
-    p = w.open_demo(tester=False)
+    base.write_json(w.root / "fast" / "card.json", {**CARD, "run": RUN})
+    p = w.open_demo()
     p.page.click("#orb")
     p.wait("L.started && L.phase === 'talk'")
     p.say("Hi there.")
-    p.page.wait_for_timeout(500)
-    assert not p.shown("#card")
     start_chapter(p)
-    base.write_json(w.root / "fast" / "card.json", {**CARD, "run": RUN})
-    p.page.wait_for_selector("#card:not([hidden])", timeout=5000)
-    # the World's outline is written already: its title replaces the card's
-    assert p.page.text_content("#card-title") == "The List"
-    assert p.page.text_content("#card-summary") == CARD["summary"]
-    assert p.page.text_content("#card-overview") == CARD["overview"]
-    assert p.page.is_visible("#card-summary")
+    w.status(steps=[{"key": "scout", "label": "Looking into it", "state": "doing"},
+                    {"key": "outline", "label": "Planning the chapter", "state": "todo"}])
+    p.page.wait_for_selector("#steps:not([hidden])", timeout=5000)
+    assert p.page.text_content("#steps li[data-state='doing']") == "Looking into it"
+    p.page.wait_for_timeout(1000)
+    shown = p.page.text_content("#screen")
+    assert p.js("document.getElementById('card')") is None
+    assert CARD["overview"] not in shown and CARD["summary"] not in shown and CARD["title"] not in shown
     offered(p, w, 1)
     say_yes(p)
-    p.page.wait_for_selector("#card.compact", timeout=3000)
-    assert p.page.is_visible("#card-title") and not p.page.is_visible("#card-summary")
+    p.page.wait_for_selector("#sections button", timeout=5000)
+    shown = p.page.text_content("#screen") + p.page.text_content("#player")
+    assert CARD["overview"] not in shown and CARD["summary"] not in shown
+    assert not [u for u in p.js("performance.getEntriesByType('resource').map((e) => e.name)") if "/api/live/card" in u]
 
 
-def test_another_runs_card_is_never_shown(demo):
+def test_the_finished_chapter_in_the_library_carries_the_cards_overview_and_summary(demo):
+    """A chapter made in conversation has no Up next card; its own card (faststart/card.py) is what the library
+    shows for it once it is written, under the outline's title."""
+    from overnight import routes as library_routes
     w = demo
+    assert library_routes._chapter_info(w.root)["summary"] == ""  # no card: as before
     base.write_json(w.root / "fast" / "card.json", {**CARD, "run": RUN})
+    info = library_routes._chapter_info(w.root)
+    assert info["title"] == "The List"  # the outline's
+    assert info["overview"] == CARD["overview"] and info["summary"] == CARD["summary"]
+    def with_latest(route):  # the library's state with this chapter as its latest (it has no recording here)
+        res = route.fetch()
+        route.fulfill(response=res, body=json.dumps({**res.json(), "latest": info}))
     p = w.open_demo(tester=False)
-    p.page.click("#orb")
-    p.wait("L.started && L.phase === 'talk'")
-    p.page.wait_for_timeout(800)
-    assert not p.shown("#card")  # no start_chapter in this conversation: the run isn't its
+    p.page.route("**/api/library", with_latest)
+    p.js("() => window.Library.reload()")
+    p.page.wait_for_selector("#latest-summary:not([hidden])", timeout=5000)
+    assert p.page.text_content("#latest-summary") == CARD["summary"]
+    assert p.page.text_content("#latest-overview") == CARD["overview"] and p.page.text_content("#latest-title") == "The List"
+
+
+def test_im_done_stays_reachable_above_the_fixed_player_bar(demo):
+    """The chapter's play, slider and time are a bar fixed to the bottom; I'm done is never under it."""
+    p = start_tester_reading(demo)
+    p.page.wait_for_selector("#player:not([hidden])")
+    assert p.js("getComputedStyle(document.getElementById('player')).position") == "fixed"
+    p.page.locator("#done").scroll_into_view_if_needed()
+    assert p.js("""() => { const d = document.getElementById('done').getBoundingClientRect(), b = document.getElementById('player').getBoundingClientRect();
+                          const hit = document.elementFromPoint(d.left + d.width / 2, d.top + d.height / 2);
+                          return d.bottom <= b.top && hit === document.getElementById('done'); }""")
+    p.page.click("#done")
+    p.wait("L.handingBack === 'done'")
 
 
 # --- 4. tester mode ----------------------------------------------------------------------------------
