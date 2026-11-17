@@ -555,7 +555,48 @@ def player(h: Harness) -> None:
     h.page.wait_for_timeout(4000)
 
 
-SCENARIOS = {"smoke": smoke, "read": read, "asks": asks, "fast": fast, "returning": returning, "player": player}
+def handoff(h: Harness) -> None:
+    """Tester Demo, Ian's notes (2026-11-16): the guide's session opened ahead of the handover (Live.handoff
+    with hold), held a few seconds as the interviewer's last words would hold it, then let go with the name.
+    Timed: how long it took to open, whether it stayed silent while held, and from the handover to the guide's
+    first sound and first word. About 20 connected seconds."""
+    p = h.page
+    p.evaluate("""async () => {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      window.__s = s;
+      window.__t = { open: Date.now(), loud: [] };
+      const ctx = new AudioContext(); let a = null;
+      setInterval(() => {  // the guide's voice as it is heard: an analyser on the page's own audio element
+        const src = document.getElementById("remote").srcObject;
+        if (src && !a) { a = ctx.createAnalyser(); a.fftSize = 512; ctx.createMediaStreamSource(src).connect(a); }
+        if (!a) return;
+        const d = new Float32Array(a.fftSize); a.getFloatTimeDomainData(d);
+        if (Math.sqrt(d.reduce((x, v) => x + v * v, 0) / d.length) > 0.01) window.__t.loud.push(Date.now());
+      }, 40);
+      Live.handoff({ stream: s, hold: true });
+    }""")
+    h.wait("L.log.some((x) => x[1] === 'held')", 15, "the held session to open")
+    p.wait_for_timeout(4000)
+    p.evaluate("() => { window.__t.go = Date.now(); Live.handoff({ name: 'Rolando', stream: window.__s }); }")
+    h.wait("L.sessionWord", 15, "the guide's first word")
+    h.quiet(1.5, 15)
+    h.say("Hi! Good to meet you.")  # the mic, kept from the held session until the handover, is heard after it
+    heard = h.wait("L.heardAt > window.__t.go", 15, "the listener to be heard after the handover")
+    h.quiet(1.5, 15)
+    t = p.evaluate("""(() => { const L = Live.L, t = window.__t, at = (k) => (L.log.find((x) => x[1] === k) || [0])[0];
+      const after = t.loud.filter((x) => x >= t.go);
+      return { open_ms: at("held") - t.open, sound_while_held: t.loud.filter((x) => x < t.go).length,
+               word_while_held: L.log.some((x) => x[1] === "revealed" && x[0] < t.go),
+               note_ms: at("handoff-note") - t.go, first_sound_ms: after.length ? after[0] - t.go : null,
+               first_word_ms: L.sessionWord ? L.sessionWord - t.go : null, said: L.lastGuideLine,
+               asked_again: L.log.filter((x) => x[1] === "instruct").length }; })()""")
+    t["heard_after"] = heard
+    h.events.append({"t": h.now(), "handoff": t})
+    print("  handoff:", json.dumps(t), flush=True)
+
+
+SCENARIOS = {"smoke": smoke, "read": read, "asks": asks, "fast": fast, "returning": returning, "player": player,
+             "handoff": handoff}
 
 
 def main(argv=None):
@@ -568,7 +609,7 @@ def main(argv=None):
     cfg = load_config()
     if a.scenario in ("smoke", "returning", "player"):
         a.paragraphs, a.sections = a.paragraphs or 3, a.sections or 2
-    h = Harness(a.scenario, None if a.scenario == "fast" else Path(a.source), a.paragraphs, a.sections,
+    h = Harness(a.scenario, None if a.scenario in ("fast", "handoff") else Path(a.source), a.paragraphs, a.sections,
                 cfg["live"]["build_cap_usd"])
     h.serve()
     h.open()

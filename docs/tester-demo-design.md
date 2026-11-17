@@ -130,16 +130,24 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
 - Page: `page/gate.html` (served by B's `/`): the dot, "Tap to begin", the consent line, and
   `<script src="/interview.js">`. **No product words anywhere in gate.html or interview.js** (chapter, library,
   guide, listen, story, audio-lesson...): use neutral words (session, handover, welcome).
-- `window.Interview = { start(mode, {stream, onHandoff, onDone}), end(), busy() }`. On `handoff_to_guide` it waits
-  for the interviewer's last words, closes, and calls `onHandoff({name, stream})`. On the gate the handler fetches
-  `GET /app` (the product page's body markup, cookie-gated, served by B/D) and injects it, then loads
-  /align.js, /live.js, /library.js in order, then calls `Live.handoff({name, stream})` (D).
+- `window.Interview = { start(mode, {stream, onNear, onHandoff, onDone}), end(), busy() }`. During the intro the
+  gate fetches `GET /app` (the product page's body markup, cookie-gated, served by B/D) and the scripts
+  /api/interview/start named (`next`) into memory, never into the document. When the handover's words are heard
+  the page calls `handoff_to_guide` itself (the voice rarely does) and `onNear` fires: the gate injects the
+  markup under itself, runs the scripts, calls `Live.handoff({stream, hold: true})` (D: the guide's session
+  opens, silent and deaf) and grows its dot into `Live.spot()`. Once both sides are quiet (`handover_quiet_ms`)
+  the interviewer's session closes and `onHandoff({name, stream})` calls `Live.handoff({name, stream})`.
+  (Ian's notes, 2026-11-16: it was about 20 s from the interviewer's last words to the guide's first; now about 2.)
 
 ### Demo chapter (D provides)
 
-- `Live.handoff({name, stream})` in live.js: reuses the stream, connects the guide with `/api/live/start {sdp,
-  handoff: {name}}`; the server opens it with the notes key `handoff` ("This session picks up from the person
-  who welcomed them, who learned their name is {name}...") instead of `opened`, and records no `opened` line.
+- `Live.handoff({name, stream, hold})` in live.js: reuses the stream, connects the guide with `/api/live/start
+  {sdp, handoff: {...}}`; the server sends and records no opening for it. With `hold` the session is opened
+  ahead (mic not sent, muted, nothing said to it) until the call without `hold`; then the page sends the notes
+  key `handoff` ("This session picks up from the person who welcomed them; they just told them their name is
+  {name}...") as speakable context, with the name as known then, and records it (/api/live/line). A held
+  session never let go of (`hold_max_ms`) is closed and its conversation ended: with no line of the listener's
+  it is not a meeting. `Live.spot()`: the circle's place, size and colour, for the gate's dot.
   The reveal: the neutral dot warms to the coral circle while connecting; the screen fades in at the guide's
   first word.
 - Chapter card: at `start_chapter` (server side, part A's start_seed hook calls `faststart.card.start(run_root,

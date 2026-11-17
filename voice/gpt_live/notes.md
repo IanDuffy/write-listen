@@ -24,9 +24,9 @@ paused (pause closes the session); `continue` is play's.
 After Ian's fifth note (2026-11-15): when the chapter starts the guide steps back by default (`started_step_back`) or, if
 the listener has been chatting easily, offers to keep them company (`started_company`). Stepping back closes the session,
 so a rest ends in a new one: `back_from_rest` (a tap), `listening_again` (a voice), `ready_back` (the chapter ready).
-Tester Demo (2026-11-16): `handoff` is the first (developer) message of a tester's first session, opened
-straight after the interviewer has welcomed them, instead of `opened` ({name}: what they told it); the page
-asks once more with it if the guide is silent. `handback_end` when the chapter ends (instead of the end
+Tester Demo (2026-11-16): `handoff` is what the page sends, as speakable context, the moment the interviewer
+has handed a tester over (the guide's session is already open by then), instead of `opened` ({name}: what they
+told it); the page asks once more with it if the guide is silent. `handback_end` when the chapter ends (instead of the end
 hold) and `handback_done` when they tap I'm done: the guide closes, then the interviewer's debrief follows.
 Placeholders in single braces ({title}, {text}) are filled by the page.
 ---

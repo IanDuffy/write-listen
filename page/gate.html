@@ -7,9 +7,12 @@
 <!--
   The welcome screen (docs/tester-demo.md, "Screens"): a dot, three words and the recording notice, nothing
   else. The tap unlocks sound, asks for the microphone (phones need both from a tap), records consent and
-  starts the welcome talk (/interview.js). At the handover the dot warms over about two seconds, the next
-  screen's markup comes from /app into this same document (so the tap's sound and microphone stay unlocked),
-  the scripts the server named are loaded in order, and the session is handed on with the name and the mic.
+  starts the welcome talk (/interview.js). During the talk the next screen's markup (/app) and the scripts
+  the server named are fetched into memory, never into this document. When the handover is decided (its last
+  words are being said) they come into this same document under this screen (so the tap's sound and
+  microphone stay unlocked), the next part opens its own voice session, held silent, and the dot grows over
+  about two seconds into exactly the next screen's circle (its place, size and colour). At the handover the
+  session is let go with the name and the mic, and this screen fades away over the same circle.
   Ids are prefixed w- so they never meet the next screen's.
 -->
 <style id="w-base">
@@ -35,11 +38,10 @@
   body.w-speaking #w-dot { animation: w-pulse 2.4s ease-in-out infinite; }
   body.w-refused #w-tap { display: none; }
   body.w-refused #w-mic { display: block; }
-  body.w-warm #w-dot { background: #d9822b; width: 140px; height: 140px; animation: w-breathe 3.2s ease-in-out infinite;
-                       transition: background-color 2s ease, width 2s ease, height 2s ease; }  /* about two seconds */
+  body.w-warm #w-dot { background: #d9822b; animation: none;  /* about two seconds, to the place and size set in warm() */
+                       transition: background-color 2s ease, left 2s ease, top 2s ease, width 2s ease, height 2s ease; }
   body.w-warm #w-note { opacity: 0; }
   @keyframes w-pulse { 50% { transform: scale(1.18); opacity: .8; } }
-  @keyframes w-breathe { 50% { opacity: .75; } }
 </style>
 </head>
 <body>
@@ -55,7 +57,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const body = document.body;
-  const W = { busy: false, ctx: null, stream: null };
+  const W = { busy: false, ctx: null, stream: null, pre: null, ready: null, warmAt: 0 };
   window.Welcome = W;  // for tests
 
   function begin(e) {
@@ -89,10 +91,21 @@
     const ok = await Interview.start("intro", {
       stream,
       onState: (s) => body.classList.toggle("w-speaking", s === "speaking"),
+      onNear: near,
       onHandoff: handOn,
       onDone: again,
     });
-    if (!ok && !W.handed) again();
+    if (!ok && !W.handed) return again();
+    preload(Interview.I.next);
+  }
+
+  // During the talk: the next screen and its scripts are fetched into memory (this document stays as it is
+  // until the handover), so the handover waits on no download.
+  function preload(next) {
+    if (W.pre || !next) return;
+    const text = (src) => fetch(src).then((r) => (r.ok ? r.text() : null)).catch(() => null);
+    W.pre = { app: fetch("/app").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+              scripts: (next.scripts || []).map((src) => ({ src, text: text(src) })) };
   }
 
   // The talk ended before any handover (it couldn't start, or dropped): back to the dot and three words.
@@ -102,14 +115,16 @@
     body.classList.remove("w-on", "w-speaking");
   }
 
-  async function handOn(h) {
-    if (W.handed) return;
-    W.handed = true;
-    body.classList.remove("w-speaking");
-    body.classList.add("w-warm");
-    const next = fetch("/app").then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    await new Promise((r) => setTimeout(r, 2000));
-    const got = await next;
+  // The handover is decided, its last words still being said: the next screen comes in under this one, its
+  // scripts run, it opens its own voice session (held: silent, hearing nothing) and the dot starts to grow.
+  function near(h) {
+    if (!W.ready) W.ready = bring(h);
+    return W.ready;
+  }
+
+  async function bring(h) {
+    preload(h);
+    const got = W.pre ? await W.pre.app : null;
     if (got) {
       const style = document.createElement("style");
       style.textContent = got.style || "";
@@ -119,11 +134,49 @@
       $("w-gate").insertAdjacentHTML("beforebegin", got.body || "");
       body.classList.add("tester");
     }
-    for (const src of h.scripts || []) await load(src);
-    const target = h.entry && window[h.entry];
+    for (const src of h.scripts || []) {
+      const pre = W.pre && W.pre.scripts.find((x) => x.src === src);
+      const code = pre ? await pre.text : null;
+      if (code) run(code, src); else await load(src);
+    }
+    const target = (h.entry && window[h.entry]) || null;
+    if (target && typeof target.handoff === "function") target.handoff({ stream: W.stream, hold: true });
+    let to = null;
+    try { to = target && typeof target.spot === "function" ? target.spot() : null; } catch (x) { to = null; }
+    warm(to);
+    return target;
+  }
+
+  // The dot grows from where it is into the next screen's circle (`to`: {x, y, w, h, color}), so nothing
+  // jumps when this screen fades; without one, into a circle in the middle.
+  function warm(to) {
+    const dot = $("w-dot"), r = dot.getBoundingClientRect(), d = dot.offsetWidth;
+    const end = to && to.w ? to : { x: innerWidth / 2 - 70, y: innerHeight / 2 - 70, w: 140, h: 140 };
+    Object.assign(dot.style, { position: "fixed", left: (r.left + r.width / 2 - d / 2) + "px",
+                               top: (r.top + r.height / 2 - d / 2) + "px", width: d + "px", height: d + "px" });
+    dot.getBoundingClientRect();  // it starts from where it is
+    body.classList.add("w-warm");
+    Object.assign(dot.style, { left: end.x + "px", top: end.y + "px", width: end.w + "px", height: end.h + "px" });
+    if (end.color) dot.style.backgroundColor = end.color;
+    W.warmAt = Date.now();
+  }
+
+  async function handOn(h) {
+    if (W.handed) return;
+    W.handed = true;
+    body.classList.remove("w-speaking");
+    const target = await near(h);
     if (target && typeof target.handoff === "function") target.handoff({ name: h.name, stream: h.stream || W.stream });
+    const left = W.warmAt + 2000 - Date.now();  // the dot has finished growing
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
     $("w-gate").classList.add("gone");
     setTimeout(() => { const g = $("w-gate"); if (g) g.remove(); }, 900);
+  }
+
+  function run(code, src) {  // a script fetched during the talk
+    const s = document.createElement("script");
+    s.textContent = code + "\n//# sourceURL=" + src;
+    document.body.appendChild(s);
   }
 
   function load(src) {

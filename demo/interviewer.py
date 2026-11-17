@@ -88,6 +88,7 @@ PAGE_DEFAULTS = {
     "start_timeout_ms": 10000,
     "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
     "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
+    "handover_quiet_ms": 900,         # the handover's last words: the next voice comes in once both sides are this quiet
     "handover": r"\bhand(ing)? you over\b",
     "closing_question": r"\banything I didn['’]?t ask\b",  # the page also straightens curly quotes first
     "thanks": r"\bthank(s| you)\b",
@@ -663,8 +664,12 @@ def mount(app, cfg: dict) -> None:
                   "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
                   "tools": [t["name"] for t in sc["delegation"]["responses"]["tools"]],
                   **({"moments": values["_moments"], "chapter": values["_context"]} if req.mode == "debrief" else {})})
-        return {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
-                "settings": page_settings(cfg, req.mode)}
+        out = {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
+               "settings": page_settings(cfg, req.mode)}
+        if req.mode == "intro":  # what the page fetches into memory during the intro, ready for the handover
+            I = icfg(cfg)
+            out["next"] = {"scripts": list(I["scripts"]), "entry": I["entry"]}
+        return out
 
     def name_from_transcript(s: dict) -> str | None:
         """The name, when set_listener_name never came (live check 2026-11-16: the voice delegated in none of

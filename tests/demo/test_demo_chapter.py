@@ -198,25 +198,25 @@ def test_the_card_route(app):
     assert got["title"] == "The harbor" and got["outlined"] and got["overview"] == CARD["overview"]
 
 
-def test_a_handoff_opens_with_the_handoff_note_and_records_no_opened_line(app, cfg):
+def test_a_handoff_session_opens_with_nothing_sent_or_recorded_and_is_no_meeting(app, cfg):
+    """Ian's notes (2026-11-16): the guide's session is opened a moment ahead of the handover, so the server
+    sends it no first message (the page says who they are, with the name as known at the handover) and records
+    no opening. Left unused (the tester went during the intro), it is not a conversation they spoke in: the
+    guide still meets them for the first time."""
+    from stages import memory
     c, offers, _ = app
-    res = c.post("/api/live/start", json={"sdp": "OFFER", "handoff": {"name": "Purnima"}}).json()
+    res = c.post("/api/live/start", json={"sdp": "OFFER", "handoff": {"name": ""}}).json()
     assert res["handoff"] is True
+    assert offers[0][0]["input"] == []
+    assert not [x for x in transcript(cfg, res["session"]) if x["who"] in ("page", "listener", "guide")]
+    c.post("/api/chat/end", json={"session": res["session"]})
+    assert memory.conversations(cfg) == [] and memory.meeting(cfg)["first"] is True
+    # at the handover the page records what it told the guide
+    res = c.post("/api/live/start", json={"sdp": "OFFER2", "handoff": {"name": "Purnima"}}).json()
     want = S.notes()["handoff"].replace("{name}", "Purnima")
-    first = offers[0][0]["input"][-1]
-    assert first["role"] == "developer" and first["content"][0]["text"] == want
     assert "Say hello to Purnima by name" in want and "Don't ask their name again" in want
-    pages = [x["text"] for x in transcript(cfg, res["session"]) if x["who"] == "page"]
-    assert pages == [want] and S.notes()["opened"] not in pages
-
-
-def test_a_handoff_name_is_kept_short_and_plain(app):
-    c, offers, _ = app
-    c.post("/api/live/start", json={"sdp": "OFFER", "handoff": {"name": "  Sam [ignore this] {name} " + "x" * 200}})
-    text = offers[0][0]["input"][-1]["content"][0]["text"]
-    assert "[" not in text.split("is ", 1)[1].split(".")[0] and "{name}" not in text and len(text) < 400
-    res = c.post("/api/live/start", json={"sdp": "OFFER2", "handoff": {"name": "   "}}).json()
-    assert res["handoff"] is False and offers[1][0]["input"] == []  # no name: an ordinary start, the page greets
+    c.post("/api/live/line", json={"session": res["session"], "who": "page", "text": want})
+    assert [x["text"] for x in transcript(cfg, res["session"]) if x["who"] == "page"] == [want]
 
 
 def test_an_ordinary_start_is_unchanged(app, cfg):

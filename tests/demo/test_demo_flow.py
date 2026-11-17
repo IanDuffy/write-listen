@@ -133,12 +133,19 @@ def test_a_tester_goes_from_the_link_through_the_intro_to_the_guide_and_the_debr
     # The product page arrives in the same document and the guide opens with the handoff and the name.
     page.wait("window.Live && window.Live.L && window.Live.L.started", timeout=10000)
     assert page.js("document.body.classList.contains('tester')")
-    start = page.posted("api/live/start")[-1]
-    assert start.get("handoff", {}).get("name") == "Sam"
+    assert "handoff" in page.posted("api/live/start")[-1]
     guide = site.offers[-1]
-    assert guide["audio"]["output"]["voice"] == "gleam"
-    first = guide["input"][-1]["content"][0]["text"]
-    assert "Sam" in first and "name" in first
+    assert guide["audio"]["output"]["voice"] == "gleam" and guide["input"] == []
+    page.wait("window.Live.L.phase === 'talk'")
+    first = [e["content"] for e in page.js("window.__sent") if e["type"] == "session.commentary.append"][-1]
+    assert "Sam" in first and "name" in first  # said by the page at the handover, as speakable context
+    assert len(page.posted("api/live/start")) == 1
+    # one screen grows into the next: the dot ends exactly where the circle is, then the first screen goes
+    page.wait("""(() => { const d = document.getElementById('w-dot'); if (!d) return false;
+      const r = d.getBoundingClientRect(), s = window.Live.spot();
+      return Math.abs(r.left - s.x) < 2 && Math.abs(r.top - s.y) < 2 && Math.abs(r.width - s.w) < 2; })()""", timeout=5000)
+    assert page.js("getComputedStyle(document.body).backgroundColor") == "rgb(245, 242, 237)"  # the same ground beneath
+    page.wait("!document.getElementById('w-gate')", timeout=6000)
     assert json.loads((site.folder / "tester.json").read_text()).get("intro_done")
     # Nothing of the interviewer went into the guide's memory (it would think it had met them before).
     assert not list((site.folder / "sessions").glob("*.jsonl")) or all(

@@ -346,6 +346,7 @@ live:
     reopen_ratio: 0.8           # GPT-Live's context this full (it compacts at 0.9): a new session at the next section
     reopen_before_expiry_minutes: 10  # or this close to the session's time limit (about 2 hours from its start)
     greet_fallback_ms: 5000     # no word from the guide this long after the session started: ask it to greet again
+    hold_max_ms: 20000          # a session opened ahead of the interviewer's handover and never let go of: closed
     answer_wait_ms: 12000       # a chapter ready while the guide's question is unanswered: wait this long for the answer
     start_nudge_ms: 10000       # the guide said it would start the chapter but start_chapter hasn't come: remind it
     # After Ian's second test (2026-11-15):
@@ -567,6 +568,7 @@ demo:
     page:                       # page/interview.js (demo/interviewer.py PAGE_DEFAULTS has the rest)
       close_quiet_ms: 1400      # after the handover or the thanks: close once both sides are this quiet
       close_max_ms: 9000
+      handover_quiet_ms: 900    # the handover's words heard: the guide comes in once both sides are this quiet
       act_grace_ms: 3500        # said "I'll hand you over" (or thanked them after the last question) with no tool call: the page acts
     checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests
       intro_minutes: 2.5        # a simulated intro's connected time at most

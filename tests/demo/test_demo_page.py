@@ -117,7 +117,12 @@ def test_the_handoff_opens_with_the_handoff_note_and_no_greeting_of_the_pages_ow
     assert start["handoff"] == {"name": "Purnima"}
     note = w.notes["handoff"].replace("{name}", "Purnima")
     session = w.offers[-1][0]
-    assert session["input"][-1]["content"][0]["text"] == note  # the session's first message
+    # Said by the page as speakable context the moment the session starts (acted on at once); as the session's
+    # startup message alone the guide waited out greet_fallback_ms in silence (Ian's run, 2026-11-16).
+    assert session["input"] == []
+    assert [e["content"] for e in p.sent("session.commentary.append")] == [note]
+    p.page.wait_for_timeout(200)
+    assert note in [x["text"] for x in p.post_bodies("api/live/line") if x["who"] == "page"]
     assert p.js("window.__mics") == 1, "the gate's mic was asked for again"
     assert p.L("L.stream === window.__handStream")
     assert not [e for e in p.sent("session.commentary.append") if e["content"] == w.notes["opened"]]
@@ -142,6 +147,87 @@ def test_a_silent_guide_is_asked_once_more_with_the_handoff_note_never_the_greet
     assert [x for x in p.instructions() if x == "[" + w.notes["handoff"].replace("{name}", "Sam") + "]"]
     assert w.notes["opened"] not in p.instructions()
     assert not [e for e in p.sent("session.commentary.append") if e["content"] == w.notes["opened"]]
+
+
+def held(w):
+    """The handover is near: the gate calls Live.handoff with hold (the interviewer is saying its last words)."""
+    p = w.open_demo(tester=False)
+    p.js("""async () => {
+      const add = RTCPeerConnection.prototype.addTrack;
+      window.__replaced = [];
+      RTCPeerConnection.prototype.addTrack = function (t, s) {
+        add.call(this, t, s);
+        return { replaceTrack: async (x) => { window.__replaced.push(x ? "mic" : null); } };
+      };
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      window.__handStream = s;
+      Live.handoff({ stream: s, hold: true });
+    }""")
+    p.wait("L.started && L.log.some((x) => x[1] === 'held')")
+    return p
+
+
+def test_a_session_opened_ahead_of_the_handover_is_silent_and_deaf_until_it_is_let_go(demo):
+    """Ian's notes (2026-11-16): about 20 s passed between the interviewer's last words and the guide's first.
+    The guide's session now opens while the interviewer says its last words; at the handover only the note goes."""
+    w = demo
+    p = held(w)
+    [start] = p.post_bodies("api/live/start")
+    assert start["handoff"] == {"name": ""}
+    assert p.js("window.__replaced") == [None]  # the mic is still the interviewer's: nothing of it is sent here
+    assert p.sent("session.input_audio.mute") and not p.sent("session.input_audio.unmute")
+    assert not p.sent("session.commentary.append") and not p.sent("session.instructions.append")
+    assert p.L("L.phase") == "connecting" and "handoff" in p.body()
+    p.page.wait_for_timeout(600)
+    assert "revealed" not in p.body() and not p.sent("session.commentary.append")
+    assert p.js("(() => { const s = Live.spot(); return s.w > 100 && Math.abs(s.w - s.h) < 1 && !!s.color; })()")
+    # the handover: the name as known now (it may have been corrected during the intro), sent at once
+    p.js("() => { window.__t0 = Date.now(); Live.handoff({ name: ' Sam [x] ', stream: window.__handStream }); }")
+    p.wait("L.phase === 'talk'")
+    note = w.notes["handoff"].replace("{name}", "Sam x")
+    assert [e["content"] for e in p.sent("session.commentary.append")] == [note]
+    assert p.js("window.__replaced") == [None, "mic"] and p.sent("session.input_audio.unmute")
+    assert len(p.post_bodies("api/live/start")) == 1 and p.js("window.__mics") == 1
+    sent_at = next(x[0] for x in p.L("L.log") if x[1] == "handoff-note")
+    assert sent_at - p.js("window.__t0") < 300, "the note waited on something at the handover"
+    p.say("Hi Sam, I'm Wren.")
+    p.wait("!document.body.classList.contains('handoff')", timeout=5000)
+
+
+def test_a_held_session_never_let_go_is_closed_and_its_conversation_ended(demo):
+    w = demo
+    p = w.open_demo(tester=False)
+    p.js("() => { Live.S.hold_max_ms = 400; }")
+    p.js("""async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      window.__handStream = s; Live.handoff({ stream: s, hold: true }); }""")
+    p.wait("L.started")
+    p.wait("L.phase === 'idle' && !L.pc && !L.hold")
+    assert p.sent("session.close") and not p.sent("session.commentary.append")
+    p.page.wait_for_timeout(200)
+    assert p.post_bodies("api/chat/end")
+    assert p.js("window.__handStream.getAudioTracks()[0].readyState") == "live"  # the mic is not this page's to stop
+    # a handover after all starts again, from the start
+    p.js("() => { Live.handoff({ name: 'Sam', stream: window.__handStream }); }")
+    p.wait("L.started && L.phase === 'talk'")
+    assert len(p.post_bodies("api/live/start")) == 2
+    assert [e["content"] for e in p.sent("session.commentary.append")] == [w.notes["handoff"].replace("{name}", "Sam")]
+
+
+def test_the_debrief_starts_while_the_guides_session_closes(demo):
+    """Ian's notes: the handback waited for the guide's session to close (up to 3 s), its cost and its end
+    before the interviewer's session even began to connect."""
+    w = demo
+    p = start_tester_reading(w)
+    p.say(" ".join(w.paragraphs()["s1-p01"]["text"].split()[:4]))
+    p.wait("L.feed.cur && L.feed.cur.matched >= 3")
+    p.page.click("#done")
+    p.wait("L.phase === 'handback'")
+    p.page.wait_for_timeout(400)
+    p.say("Let's leave it there. I'm handing you back to the person who welcomed you now.")
+    p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
+    assert not p.post_bodies("api/chat/end"), "the debrief waited for the guide's conversation to end"
+    p.wait("!L.handingBack && L.phase === 'idle'", timeout=6000)
+    assert p.post_bodies("api/chat/end") and p.L("L.debriefing")
 
 
 # --- 2. the chapter card -----------------------------------------------------------------------------
@@ -226,6 +312,7 @@ def test_im_done_stops_the_reading_has_the_guide_hand_back_then_starts_the_debri
     p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
     assert p.js("window.__interview[0]") == {"mode": "debrief", "stream": True, "live": True}  # the mic handed on, not stopped
     assert "debrief" in p.body() and p.L("L.debriefing")
+    p.wait("!L.handingBack", timeout=6000)  # the guide's session closes on the side (the debrief doesn't wait for it)
     assert p.post_bodies("api/chat/end") and p.post_bodies("api/live/usage")
     assert not p.post_bodies("api/live/archive")  # not heard to the end
     p.page.click("#orb", force=True)
@@ -261,6 +348,7 @@ def test_the_chapters_end_hands_back_instead_of_the_end_hold(demo):
     p.say("That's the story of the list. I'm passing you back to the person who welcomed you.")
     p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
     assert p.js("window.__interview[0].mode") == "debrief"
+    p.wait("!L.handingBack", timeout=6000)
     assert p.post_bodies("api/live/archive")  # heard to the end: archived as ever
     assert "debrief" in p.body()
 
