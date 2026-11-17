@@ -28,6 +28,9 @@ Tester Demo (2026-11-16): `handoff` is the first (developer) message of a tester
 straight after the interviewer has welcomed them, instead of `opened` ({name}: what they told it); the page
 asks once more with it if the guide is silent. `handback_end` when the chapter ends (instead of the end
 hold) and `handback_done` when they tap I'm done: the guide closes, then the interviewer's debrief follows.
+After Ian's tester run (2026-11-16): the pitch nudges wait for real interest (the first had come 12 s after the
+guide's first open question, and it pitched the first thing he said, which he'd called "not that compelling");
+the page also holds them after the guide's explanation and its latest question (live.page.pitch_hold).
 Placeholders in single braces ({title}, {text}) are filled by the page.
 ---
 opened: Say hello now: only a warm hello of two to four words, in your own words, different every time. Nothing else yet: no name, no question. Then wait for them.
@@ -55,8 +58,8 @@ chapter_failed: [Their chapter couldn't be made: it stopped before the opening w
 chapter_halted_early: [The listener stopped their chapter before it began. Acknowledge it in a few words and keep them company.]
 ready_unheard: This session picks up a conversation already under way: the listener is back, and their chapter "{title}" is written but they haven't heard it yet. Say you're back in a few words, tell them it's ready and ask if they'd like to hear it now. Start it only when they say yes (start_reading).
 hello_silence: [They haven't said anything since your hello. A light word or two, like asking if they can hear you, then wait.]
-pitch_nudge: [You've been talking a few minutes. At the next natural pause, not mid-thought, move toward their chapter: if you haven't told them what you do, say it in a sentence first; then pitch an idea from what they've told you, or ask what they'd like to hear about.]
-pitch_nudge_again: [It's time to bring up their chapter, unless you just have: at the next pause, pitch one idea from what they've said.]
+pitch_nudge: [You've been talking a few minutes. At the next natural pause, not mid-thought, move toward their chapter. If you haven't told them what you do, say it in a sentence first. Then, if something has clearly interested them (they lit up, said a lot about it, or came back to it), pitch one idea from that. Never pitch from a passing mention, the first thing they happened to say, or something they waved off. If nothing has stood out yet, don't pitch: ask one easy question, like which of the things they've mentioned they'd want to hear more about, or what they'd love to understand better, and pitch from their answer.]
+pitch_nudge_again: [It's time to bring up their chapter, unless you just have. If they turned an idea down, don't guess again: ask what they'd rather hear about. Otherwise, at the next pause, pitch one idea from what has interested them most; if you can't tell what that is, ask.]
 moved: [The listener moved the chapter to another place. Stop now, even mid-sentence, and say nothing: the next passage comes straight away.]
 offer_line: Your chapter's ready: "{title}". Want to hear it now?
 ready_line_resting: Your chapter's ready whenever you are. Tap play when you'd like it.
