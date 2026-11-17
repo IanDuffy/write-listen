@@ -70,8 +70,17 @@ STUB = r"""
 })();
 """
 
-NEXT_JS = """window.Next = { handoff(h) { window.__handed = { name: h.name, same: h.stream === window.__stream,
-  live: h.stream.getAudioTracks()[0].readyState }; } };"""
+# The next part: `hold` when the handover is near (it gets ready), then the handover itself with the name.
+NEXT_JS = """window.Next = {
+  handoff(h) {
+    const rec = { name: h.name === undefined ? null : h.name, same: h.stream === window.__stream,
+                  live: h.stream.getAudioTracks()[0].readyState };
+    if (h.hold) window.__held = { ...rec, at: Date.now(), gate: !!document.getElementById("w-gate"),
+                                  open: !!(window.Interview.I.sid) };
+    else window.__handed = { ...rec, at: Date.now() };
+  },
+  spot() { return { x: 40, y: 60, w: 156, h: 156, color: "rgb(1, 2, 3)" }; },
+};"""
 
 
 @pytest.fixture
@@ -204,10 +213,12 @@ def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     page.emit({"type": "session.input_transcript.delta", "delta": "I'm Sam."})
     page.tool("set_listener_name", {"name": "Sam"})
     wait_for(lambda: site.testers.names == [("t-sam", "Sam")])
-    page.say("Sam, good. I'd like a few minutes with you afterwards. I'll hand you over now.")
+    page.say("Sam, good. I'd like a few minutes with you afterwards.")
     page.tool("handoff_to_guide")
+    page.say("I'll hand you over now.")
     page.wait("window.__handed", timeout=8000)
-    assert page.js("window.__handed") == {"name": "Sam", "same": True, "live": "live"}  # the mic goes on, unstopped
+    handed = page.js("window.__handed")
+    assert {k: handed[k] for k in ("name", "same", "live")} == {"name": "Sam", "same": True, "live": "live"}  # the mic goes on, unstopped
     outputs = [json.loads(e["item"]["output"]) for e in page.sent("response.item.create")]
     assert outputs[-1] == {"handed_over": True, "name": "Sam"}  # act, scripts, entry are the page's alone
     assert page.sent("session.close") and page.posted("api/interview/usage") and page.posted("api/interview/end")
@@ -216,6 +227,10 @@ def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     assert page.js("getComputedStyle(document.getElementById('next')).color") == "rgb(1, 2, 3)"
     assert page.js("document.body.classList.contains('tester') && document.body.classList.contains('w-warm')")
     assert page.js("!document.getElementById('w-base')")
+    # The dot grows into exactly the next screen's circle (place, size, colour), then the gate goes: no jump.
+    page.wait("""(() => { const r = document.getElementById('w-dot').getBoundingClientRect();
+      return Math.abs(r.left - 40) < 1 && Math.abs(r.top - 60) < 1 && Math.abs(r.width - 156) < 1; })()""", timeout=4000)
+    assert page.js("getComputedStyle(document.getElementById('w-dot')).backgroundColor") == "rgb(1, 2, 3)"
     page.wait("!document.getElementById('w-gate')", timeout=3000)
     assert site.testers.updates and site.testers.updates[0][0] == "t-sam"
     rec = [json.loads(x) for x in next(site.study.glob("intro-*.jsonl")).read_text().splitlines()]
@@ -245,6 +260,36 @@ def test_handover_said_without_the_tool_is_acted_on_by_the_page(site, page):
     tool = page.posted("api/interview/tool")
     assert tool == [{"sid": tool[0]["sid"], "name": "handoff_to_guide", "args": {}, "by": "page"}]
     assert page.js("window.__handed.name") is None  # no name was saved: the next part asks
+
+
+def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page):
+    """Ian's notes (2026-11-16): about 20 s from the interviewer's last words to the next voice. The page waited
+    for the line to end (0.9 s), then for a tool call that never came (3.5 s), then for quiet (1.4 s), then
+    2 s for the dot, then fetched the next screen and its scripts, and only then began to connect. Now the
+    next screen and scripts are in memory from the tap, the page calls the tool as the words are said, the
+    next part opens (held) at once, and the handover comes once both sides are quiet."""
+    page.js("() => { window.__fetched = []; const f = window.fetch; window.fetch = (u, o) => { window.__fetched.push(String(u)); return f(u, o); }; }")
+    started(page)
+    page.wait("window.__fetched.includes('/app') && window.__fetched.includes('/next.js')")  # during the talk
+    assert page.js("!window.Next && !document.getElementById('next')")  # in memory only: the document is as it was
+    assert not PRODUCT.search(page.page.content())
+    page.js("() => { Interview.I.S.act_grace_ms = 60000; Interview.I.S.close_quiet_ms = 60000; Interview.I.S.handover_quiet_ms = 300; }")
+    page.say("Good to meet you, Sam. I'll hand you over")
+    t0 = page.js("Date.now()")
+    page.wait("window.__held", timeout=3000)
+    held = page.js("window.__held")
+    assert held["at"] - t0 < 1000 and held["gate"] and held["open"]  # while the welcome's session is still open
+    assert held["same"] and held["live"] == "live" and not page.js("window.__handed")
+    assert page.js("document.body.classList.contains('w-warm') && !!document.getElementById('next')")
+    assert page.js("window.__fetched.filter((u) => u === '/app' || u === '/next.js').length") == 2  # not fetched again
+    assert not page.js("[...document.scripts].some((s) => (s.src || '').endsWith('/next.js'))")  # run from memory
+    page.say("now.")
+    page.wait("window.__handed", timeout=3000)
+    handed = page.js("window.__handed")
+    assert 250 < handed["at"] - held["at"] < 2500  # after the quiet, not after act_grace_ms or close_quiet_ms
+    tool = page.posted("api/interview/tool")
+    assert [(t["name"], t["by"]) for t in tool] == [("handoff_to_guide", "page")]
+    wait_for(lambda: page.posted("api/interview/end") and page.posted("api/interview/end")[-1]["how"] == "handover")
 
 
 def test_nothing_is_timed_before_the_session_has_started(site, page):

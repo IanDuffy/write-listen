@@ -2,7 +2,9 @@
 
     POST /api/live/start      {"sdp", "handoff"?}: a new conversation in one GPT-Live session; the page's WebRTC
                               offer goes to OpenAI with the guide's instructions and tools, the answer comes back.
-                              `handoff` {"name"}: a tester handed over by the interviewer (Tester Demo);
+                              `handoff` {...}: a tester handed over by the interviewer (Tester Demo): no
+                              opening is sent or recorded here (the page opens this session a moment ahead of
+                              the handover and sends the `handoff` note itself, with the name, at the handover);
                               the answer's `debrief_done`: their debrief is done, so no handback again
     POST /api/live/resume    {"session", "sdp"}: the same conversation in a new GPT-Live session (the old
                               one dropped, rested too long, or neared its time limit), told the conversation so far
@@ -27,7 +29,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import threading
 import time
 from datetime import datetime
@@ -170,17 +171,6 @@ def continuing(cfg: dict, pipe) -> dict | None:
             "id": f"s{section}-p{piece + 1:02d}", "sentence": 0, "waiting": player.get("state") == "waiting"}
 
 
-def handoff_note(handoff: dict | None) -> str | None:
-    """The `handoff` note with the name the tester gave the interviewer (Tester Demo), or None. The name goes
-    into the guide's first message, so it is kept to a name's length and loses brackets and braces."""
-    if not isinstance(handoff, dict):
-        return None
-    name = " ".join(re.sub(r'[\[\]{}<>"]', "", str(handoff.get("name") or "")).split())[:60].strip()
-    if not name:
-        return None
-    return live_session.notes()["handoff"].replace("{name}", name)
-
-
 def debrief_done(cfg: dict) -> bool:
     """Tester Demo: this tester's debrief is done (study/debrief.json, demo/interviewer.py), so the page never
     hands back to the interviewer again: a later chapter just ends, and I'm done isn't shown."""
@@ -259,19 +249,18 @@ def mount(app, cfg: dict, pipe, chat) -> None:
             cont = continuing(cfg, pipe)
             session = chat.new_session(live=True)
             opening = None
-            handoff = None if cont else handoff_note(req.handoff)
+            # Handed over by the interviewer: the page says who they are once the interviewer has finished (the
+            # session may be opened a moment ahead, and left unused if they go), so no opening is sent or
+            # recorded here. With no line of the listener's it is no meeting (memory.conversations).
+            handoff = not cont and isinstance(req.handoff, dict)
             if cont:
                 session.run = cont["run"]
                 note = live_session.notes()["reloaded" if cont["begun"] else "ready_unheard" if cont["ready"] else "reopened"]
                 opening = note.replace("{title}", cont["title"] or "their chapter")
-            elif handoff:  # the session's first message says who they are; the page sends no greeting of its own
-                opening = handoff
             got = open_session(session, req.sdp, session.values, opening)
             if cont:
                 session.record("page", text=f"[Picked up the chapter {cont['run']} at {cont['id']}.]", mode="live")
-            elif handoff:
-                session.record("page", text=handoff, mode="live")
-            else:  # what the page sends as the session starts (live.js connect)
+            elif not handoff:  # what the page sends as the session starts (live.js connect)
                 words = str(cfg["live"].get("opening") or "").strip()
                 notes = live_session.notes()
                 session.record("page", text=notes["opening_words"].replace("{words}", words) if words else notes["opened"],

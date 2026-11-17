@@ -81,7 +81,8 @@
     // interviewer on the gate page), the classes for the reveal and the cool-down, which render() keeps.
     tester: document.body.classList.contains("tester"), skin: new Set(),
     handoff: null,          // {name}: sent with the next /api/live/start (the interviewer handed them over)
-    handoffOpen: null,      // this conversation's session opened with the handoff note: the name in it
+    handoffOpen: null,      // this conversation's session opens with the handoff note: {name}, as known at the handover
+    hold: null,             // the session is opened ahead of the handover, silent and deaf: {who, go, released, done}
     handingBack: null,      // "end" | "done": the guide is closing, then the interviewer's debrief
     debriefing: false,      // the interviewer's debrief is on (the screen cooled)
     debriefDone: false,     // /api/live/start's `debrief_done`: no handback again (a later chapter just ends)
@@ -194,10 +195,19 @@
     if (mine !== L.epoch) { if (!L.pc && L.phase !== "connecting") notLive(null); return true; }
     const pc = new RTCPeerConnection();
     L.pc = pc;
-    pc.ontrack = (e) => { remote.srcObject = e.streams[0]; meters.output(e.streams[0]); };
+    pc.ontrack = (e) => {
+      remote.srcObject = e.streams[0];
+      const p = remote.play();  // playing from the moment the track arrives, not left to autoplay at the first word
+      if (p && p.catch) p.catch(() => {});
+      meters.output(e.streams[0]);
+    };
+    const hold = resume ? null : L.hold;
+    let sender = null;
     if (L.mic) {
       if (sayOnly) L.mic.enabled = false;
-      pc.addTrack(L.mic, L.stream);
+      sender = pc.addTrack(L.mic, L.stream);
+      // Opened ahead of the handover: the mic is the interviewer's until then, so nothing of it is sent here.
+      if (hold && sender && sender.replaceTrack) sender.replaceTrack(null).catch(() => {});
     } else pc.addTransceiver("audio", { direction: "sendrecv" });  // no mic at all: it only speaks
     const dc = pc.createDataChannel("oai-events");
     L.dc = dc;
@@ -225,7 +235,7 @@
                    : await post("/api/live/start", { sdp: pc.localDescription.sdp, ...(L.handoff ? { handoff: L.handoff } : {}) });
       if (mine !== L.epoch) { pc.close(); return true; }
       L.session = got.session; L.liveId = got.live_id;
-      if (!resume && got.handoff && L.handoff) { L.handoffOpen = L.handoff.name; L.handoff = null; }  // kept for a retry until it opens
+      if (!resume && got.handoff && L.handoff) { L.handoffOpen = L.handoff; L.handoff = null; }  // kept for a retry until it opens
       if (!resume) L.debriefDone = !!got.debrief_done;
       if (!resume && got.continue) {
         L.cont = { ...got.continue };
@@ -262,6 +272,30 @@
       render();
       return false;
     }
+    if (hold) {
+      // Opened ahead of the handover (Live.handoff, hold): connected and playing, but nothing is sent to it and
+      // it hears nothing until the interviewer has finished, so its first words come about as fast as it can
+      // answer. Never let go of: closed, the conversation ended (no line of the listener's: not a meeting).
+      send("session.input_audio.mute");
+      mark("held");
+      const went = await Promise.race([hold.released, new Promise((r) => setTimeout(() => r(false), S.hold_max_ms || 20000))]);
+      if (L.hold === hold) L.hold = null;
+      if (mine !== L.epoch) return true;
+      if (L.pc !== pc || !went) {  // dropped meanwhile (once let go: again, from the start), or never let go of
+        if (L.pc === pc) { send("session.close"); reportUsage(); hangUp(); }
+        if (went) { L.handoff = hold.who; return connect(); }
+        if (L.session) quietPost("/api/chat/end", { session: L.session });
+        L.session = null;
+        L.handoff = hold.who;  // a later handover starts again with it
+        L.phase = "idle";
+        render();
+        return false;
+      }
+      if (sender && sender.replaceTrack) await sender.replaceTrack(L.mic).catch(() => {});
+      send("session.input_audio.unmute");
+      L.startedAt = now();  // its clocks (the greeting's fallback, the reveal's) count from the handover
+      mark("released");
+    }
     if (!resume) L.convAt = now();
     L.wokeAt = 0; L.stepBackAt = 0; L.restFrom = null;
     L.phase = resume && resume.startsWith("paused") ? "paused" : resume === "ready" ? "resting" : L.chapter && L.readStarted && (!L.finished || L.replaying) ? "aside" : "talk";
@@ -278,9 +312,15 @@
     // session opened with its own first message (`reloaded`), and a resumed one with `continue`/`returned`.
     const silent = () => mine === L.epoch && !L.sessionWord && L.phase === "talk" && meters.level(meters.out) < 0.01
       && !(L.heardAt > (L.startedAt || 0)) && !L.inp;  // nothing said, and the listener hasn't begun either
-    if (!resume && L.handoffOpen) {  // handed over by the interviewer: the session's first message greets them by name
-      const first = N.handoff.replace(/\{name\}/g, L.handoffOpen);
-      setTimeout(() => { if (silent()) instruct(`[${first}]`); }, S.greet_fallback_ms);  // alone it may not make it speak
+    if (!resume && L.handoffOpen) {
+      // Handed over by the interviewer: who they are, as speakable context (acted on at once, as the greeting
+      // is). As the session's startup message alone it waited out greet_fallback_ms in silence (Ian's run).
+      const who = L.handoffOpen.name;
+      const first = who ? N.handoff.replace(/\{name\}/g, who) : N.opened;
+      speakable(first);
+      mark("handoff-note", who);
+      quietPost("/api/live/line", { session: L.session, who: "page", text: first });
+      setTimeout(() => { if (silent()) instruct(`[${first}]`); }, S.greet_fallback_ms);  // nothing yet: once more
     } else if (!resume && !L.cont) {
       speakable(S.opening ? N.opening_words.replace("{words}", S.opening) : N.opened);
       setTimeout(() => { if (silent()) instruct(N.opened); }, S.greet_fallback_ms);  // nothing yet: once more, the mic open
@@ -565,7 +605,7 @@
     if (L.phase === "resting" && L.restAt && t - L.restAt > S.rest_close_minutes * 60000) endConversation();
     // The handoff's reveal: the screen fades in at the guide's first word (or, if it never comes, a while after
     // the session started, so a tester is never left with a dot alone).
-    if (L.skin.has("handoff") && !L.skin.has("revealed")
+    if (L.skin.has("handoff") && !L.skin.has("revealed") && !L.hold
         && (L.sessionWord || (L.started && t - (L.startedAt || t) > (S.reveal_fallback_ms || 8000)))) reveal();
   }, 200);
 
@@ -1423,9 +1463,12 @@
     mark("handed-back", kind);
     const stream = L.stream;
     L.pending = null;
-    await endConversation(true);
-    L.handingBack = null;
+    // The interviewer's session opens while the guide's closes (its close, up to 3 s, and its cost report were
+    // waited for before the debrief even began to connect).
+    const ending = endConversation(true);
     debrief({ stream });
+    await ending;
+    L.handingBack = null;
   }
 
   // The interviewer's debrief (page/interview.js, window.Interview): the screen cools while it runs (the product
@@ -1467,17 +1510,39 @@
   // Handed over by the interviewer (page/interview.js on the gate, contract "Demo chapter"): the gate's mic stream
   // is reused (the tap's unlock), the guide's session opens with the handoff note, and the screen is revealed:
   // the neutral dot warms to the coral circle while it connects; the rest fades in at the guide's first word.
-  async function handoff({ name, stream } = {}) {
+  // `hold`: called when the handover is near (the interviewer is saying its last words): the session opens now,
+  // silent and deaf, and a second call without `hold`, with the name as known then, lets the guide greet them.
+  function handoff({ name, stream, hold } = {}) {
+    // The name goes into a note to the guide: a name's length, no brackets or braces.
+    const who = String(name || "").replace(/[\[\]{}<>"]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (L.hold) {
+      const held = L.hold;
+      held.who.name = who;
+      if (!hold) held.go(true);
+      return held.done;
+    }
     L.tester = true;
     skin("tester", true);
-    L.handoff = { name: String(name || "").trim() };
+    L.handoff = { name: who };
     if (stream) { L.stream = stream; L.mic = stream.getAudioTracks()[0] || null; meters.input(stream); }
     skin("handoff", true);
     render();
     requestAnimationFrame(() => requestAnimationFrame(() => { skin("warm", true); render(); }));  // after a frame: the fill's transition runs
-    const ok = await connect();
-    if (!ok) reveal();
-    return ok;
+    let held = null;
+    if (hold) { held = L.hold = { who: L.handoff }; held.released = new Promise((r) => { held.go = r; }); }
+    const done = connect().then((ok) => {
+      if (L.hold === held) L.hold = null;  // it couldn't open: the handover's own call starts again
+      if (!ok && !held) reveal();
+      return ok;
+    });
+    if (held) held.done = done;
+    return done;
+  }
+
+  // Where the circle is and its colour, for the screen before this one: its dot grows into exactly this.
+  function spot() {
+    const r = core.getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height, color: getComputedStyle(core).getPropertyValue("--accent").trim() };
   }
 
   function reveal() {
@@ -2179,7 +2244,7 @@
     if (L.session) navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: L.session })], { type: "application/json" }));
   });
 
-  Object.assign(window.Live, { handoff, handback, debrief,
+  Object.assign(window.Live, { handoff, spot, handback, debrief,
                                onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
                                pauseReading, play, seek, timeline, placeAt, playedSecs: () => { const tl = timeline(); return tl ? playedSecs(tl) : null; } });
 })();

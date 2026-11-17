@@ -519,6 +519,14 @@ Deploy: `DEPLOY.md`, `deploy/`.
   run's config.yaml by `start_seed`); a chapter card (`faststart/card.py`, `prompts/fast_card.md`,
   `/api/live/card/<run>`) shows within seconds of the start. "I'm done" and the chapter's end hand back
   (`handback_done`, `handback_end`), then `Live.debrief` starts the interviewer's debrief.
+- **The handover is prepared ahead** (Ian's notes, 2026-11-16: 20 s from the interviewer's last words to the
+  guide's first, a jumpy screen). The gate fetches /app and the scripts into memory during the intro; when the
+  handover's words are heard the page calls the tool itself, injects the page under the gate and opens the guide's
+  session held (`Live.handoff({hold: true})`: mic not sent, muted, nothing said to it), and the dot grows into
+  `Live.spot()`; after `handover_quiet_ms` of quiet `Live.handoff({name})` sends the `handoff` note as speakable
+  context (live: first sound about 1 s later). /api/live/start sends and records no opening for a handoff. The
+  handback starts the debrief while the guide's session closes. `python -m voice.gpt_live.pagecheck handoff`
+  times it live (about $0.02).
 - Interviewer checks (acceptance 4 and 8): `python -m demo.sim_interviewer intro|debrief --runs N [--grade]`
   (costs in `demo/build_costs.jsonl`, capped like the live checks).
 

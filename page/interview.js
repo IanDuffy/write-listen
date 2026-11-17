@@ -1,9 +1,11 @@
 // window.Interview: the welcome before, and the talk after, as one small voice session of its own.
 //
 //   Interview.unlock(ctx)   call inside the tap: lets the voice play on phones (and keeps ctx for the level meter)
-//   Interview.start(mode, {stream, onHandoff, onDone, onState}) -> Promise<bool>: true once the session started
+//   Interview.start(mode, {stream, onNear, onHandoff, onDone, onState}) -> Promise<bool>: true once the session started
 //                           mode "intro" or "debrief"; stream: the caller's mic (never stopped here, so the
 //                           next part of the page can reuse it); onState("connecting"|"speaking"|"quiet"|"closed")
+//                           onNear({scripts, entry}) when the handover is decided (its last words are being
+//                           said): the caller gets the next part ready; I.next names the same from the start;
 //                           onHandoff({name, stream, scripts, entry}) after the handover's last words;
 //                           onDone({ok, how}) when a session ends any other way (also when it failed to start)
 //   Interview.end()         close now; Interview.busy()
@@ -102,7 +104,7 @@
     Object.assign(I, { mode, opts, stream: opts.stream || null, connecting: true, started: false, startedAt: 0,
       out: "", outAt: 0, inp: "", inAt: 0, spokeAt: 0, heardAt: 0, spoken: false, seconds: 0,
       backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(), pending: null, name: null,
-      act: null, handover: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, said: 0,
+      act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, said: 0,
       graceAt: 0, graceAct: null, stateNow: null });
   }
 
@@ -135,7 +137,7 @@
       const got = await post("/api/interview/start", { mode, sdp: pc.localDescription.sdp });
       sid = got.sid;
       if (gone()) throw new Error(GONE);
-      Object.assign(I, { sid, liveId: got.live_id, notes: got.notes || {}, S: got.settings || {} });
+      Object.assign(I, { sid, liveId: got.live_id, notes: got.notes || {}, S: got.settings || {}, next: got.next || null });
       await pc.setRemoteDescription({ type: "answer", sdp: got.sdp });
       const ok = await until(() => I.started || gone(), I.S.start_timeout_ms || 10000);
       if (gone()) throw new Error(GONE);
@@ -167,6 +169,13 @@
         const d = (m.delta || "").replace(/\[[^\]]*\]\s*/g, "");
         I.spokeAt = now(); I.spoken = true;
         I.out += d; I.outAt = now();
+        // The handover's words, as they are said: the page calls the tool itself at once (the voice rarely
+        // does), so the next part is being got ready while the sentence ends. Waiting for the line to end and
+        // then for a tool call that never came was 4.4 s of silence (Ian's run).
+        if (I.mode === "intro" && !I.act && !I.wordsAt && I.startedAt && (rx("handover") || { test: () => false }).test(I.out.replace(/[‘’]/g, "'"))) {
+          I.wordsAt = now();
+          selfCall("handover");
+        }
         break;
       }
       case "session.input_transcript.delta": I.inp += m.delta || ""; I.inAt = I.heardAt = now(); break;
@@ -223,13 +232,14 @@
     I.act = got.act;
     if (got.act === "handover") {
       I.handover = { name: got.name || I.name || null, scripts: got.scripts || [], entry: got.entry || null };
-      afterSpeech(() => finish("handover"));
+      if (I.opts.onNear) try { I.opts.onNear({ scripts: I.handover.scripts, entry: I.handover.entry }); } catch (e) { /* the caller's */ }
+      afterSpeech(() => finish("handover"), I.S.handover_quiet_ms);
     } else if (got.act === "close") afterSpeech(() => finish("done"));
   }
 
   // Do fn once the voice has finished (its words stopped, nobody speaking, at least min ms), or after max ms.
-  function afterSpeech(fn) {
-    I.pending = { fn, since: now(), quiet: I.S.close_quiet_ms || 1400, min: I.S.close_min_ms || 800, max: I.S.close_max_ms || 9000 };
+  function afterSpeech(fn, quiet) {
+    I.pending = { fn, since: now(), quiet: quiet || I.S.close_quiet_ms || 1400, min: I.S.close_min_ms || 800, max: I.S.close_max_ms || 9000 };
   }
 
   const rx = (k) => { try { return I.S[k] ? new RegExp(I.S[k], "i") : null; } catch (e) { return null; } };
@@ -300,11 +310,11 @@
     if (!I.sid || I.closing) return;
     I.closing = true; I.pending = null;
     send("session.close");
-    const sid = I.sid, pc = I.pc, usage = usageBody(sid);
-    for (const x of heldLines()) await quiet("/api/interview/line", { sid, ...x });
+    const sid = I.sid, pc = I.pc, usage = usageBody(sid), held = heldLines();
     I.pc = null; I.dc = null; I.sid = null;
     setTimeout(() => { try { if (pc) pc.close(); } catch (e) { /* closed */ } }, 300);  // let the close reach it
     voice.srcObject = null;
+    for (const x of held) await quiet("/api/interview/line", { sid, ...x });
     await quiet("/api/interview/usage", usage);
     await quiet("/api/interview/end", { sid, how });
     state("closed");
@@ -312,11 +322,14 @@
 
   async function finish(how) {
     const opts = I.opts, h = I.handover, stream = I.stream, name = I.name, acted = I.act;
-    await close(how);
+    const closed = close(how);  // the session is let go of at once; its last lines, cost and end are posted on the side
     // A session that drops after the handover or the thanks was decided still counts as that.
     if ((how === "handover" || acted === "handover") && opts.onHandoff) {
       opts.onHandoff({ name: (h && h.name) || name || null, stream, scripts: (h && h.scripts) || [], entry: h && h.entry });
-    } else if (opts.onDone) opts.onDone({ ok: how === "done" || acted === "close", how });
+      return closed;
+    }
+    await closed;
+    if (opts.onDone) opts.onDone({ ok: how === "done" || acted === "close", how });
   }
 
   async function end() {
