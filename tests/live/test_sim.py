@@ -317,6 +317,26 @@ def test_personas_and_rules():
     people = P.personas()
     assert {"builder", "reserved", "teacher"} <= set(people)
     assert people["builder"]["now"] == "Friday evening" and "now:" not in people["builder"]["text"]
+    # the listener the 2026-11-18 guide changes were checked against (Ian's second tester run), kept for repeats
+    assert people["evening"]["now"] == "Wednesday evening" and "write ... wherever you pause" in people["evening"]["text"]
+
+
+def test_the_persona_check_can_open_as_the_tester_demo_does(cfg, monkeypatch, tmp_path, capsys):
+    """`persona --handoff NAME`: the tester handoff opening was reachable only from a scratch driver."""
+    from voice.gpt_live import __main__ as M
+    seen = []
+
+    async def converse(cfg_, persona, out, **kw):
+        seen.append((persona["name"], kw.get("handoff")))
+        return {}
+    monkeypatch.setattr(M, "load_config", lambda: cfg)
+    monkeypatch.setattr(P, "converse", converse)
+    monkeypatch.setattr(P, "new_out_dir", lambda: tmp_path)
+    monkeypatch.setattr(P, "claude_run", lambda: None)
+    monkeypatch.setattr(P, "summary", lambda name, t, g: name)
+    assert M.main(["persona", "--personas", "evening", "--handoff", "Ian"]) == 0
+    assert M.main(["persona", "--personas", "dad"]) == 0
+    assert seen == [("evening", "Ian"), ("dad", None)]
 
 
 def test_listener_reply_tokens(cfg, monkeypatch):
@@ -382,3 +402,87 @@ def test_a_checks_session_is_capped_by_its_own_budget(cfg):
     cfg["live"]["checks"] = {"run_cap_usd": 0.10}
     sim = S.Sim(cfg, {}, max_minutes=6)
     assert sim.max_minutes == pytest.approx(2.0)
+
+
+def scripted_guide(lines):
+    """A fake GPT-Live whose guide says the next of `lines` when context is appended at the start and each
+    time the listener finishes a line."""
+    lines, state = iter(lines), {"talking": False}
+
+    async def react(m, ws):
+        if m["type"] == "session.commentary.append":
+            ws.push({"type": "session.output_transcript.delta", "delta": next(lines)})
+        elif m["type"] == "session.input_audio.append":
+            if any(base64.b64decode(m["audio"])):
+                state["talking"] = True
+            elif state["talking"]:
+                state["talking"] = False
+                line = next(lines, None)
+                if line:
+                    ws.push({"type": "session.output_transcript.delta", "delta": line})
+    return FakeWS(react)
+
+
+FAST = {"quiet_secs": 0.15, "settle_secs": 0.1, "verbose": False, "tts_fn": lambda text, voice: loud(0.1)}
+DAN = {"name": "builder", "now": "Friday evening", "text": "Dan builds cabinets."}
+
+
+def test_a_tester_handed_over_is_greeted_by_name_not_with_the_hello(cfg, monkeypatch, tmp_path):
+    """The Tester Demo's opening (Ian's runs): the interviewer has their name, and the page's `handoff` note
+    opens the guide's conversation instead of the hello."""
+    ws = scripted_guide(["Hey, Ian! I'm Ailsa.", "Ha, a long day earns that."])
+    use_ws(monkeypatch, ws)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 2)
+    said = iter(["Hey Ailsa."])
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=1, reply_fn=lambda timeline, moment: next(said),
+                        sim_kwargs=FAST, handoff="Ian"))
+    spoken = [m["content"] for m in ws.sent if m["type"] == "session.commentary.append"]
+    assert spoken == [live.notes()["handoff"].replace("{name}", "Ian")] and "Ian by name" in spoken[0]
+    start = next(m for m in ws.sent if m["type"] == "session.start")
+    assert not [m for m in start["session"]["input"] if m.get("role") == "developer"]  # no hello asked for as well
+    assert [x["text"] for x in t["timeline"] if x["who"] == "guide"][0] == "Hey, Ian! I'm Ailsa."
+
+
+def test_a_guide_slow_to_say_what_it_does_is_cued_once_as_the_page_does(cfg, monkeypatch, tmp_path):
+    """Ian's second tester run (2026-11-18): the offer to say what it does came two minutes in. The page cues it
+    (live.page.offer_nudge); the persona check sends the same note, once, as the listener speaks, and never once
+    the guide has said it. A listener's line with "..." in it is spoken in pieces, a pause at each."""
+    cfg["live"]["page"]["offer_nudge"] = {"after_secs": 0, "max_secs": 0, "offered": "\\bwhat i do\\b"}
+    ws = scripted_guide(["Hi there!", "Ooh, cabinets.", "Mm.", "Plywood, of course.", "Ha. Brave.", "Right."])
+    use_ws(monkeypatch, ws)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 6)  # a slow machine must not look like a silent guide (which is cued)
+    said = iter(["Hi. Building cabinets.", "Well ... plywood ones.", "Yep."])
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=3, reply_fn=lambda timeline, moment: next(said),
+                        sim_kwargs=FAST, pause_secs=0.3))
+    notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+    assert notes.count(live.notes()["offer_nudge"]) == 1
+    order = [(x["who"], x.get("text")) for x in t["timeline"] if x["who"] in ("listener", "app")]
+    assert order.index(("listener", "Hi. Building cabinets.")) < order.index(("app", live.notes()["offer_nudge"])) \
+        < order.index(("listener", "Well"))  # not before they've said a word; then as they speak
+    assert ("listener", "plywood ones.") in order  # the line's second piece, after the pause
+    # A guide that has said what it does is not cued; nor one whose own offer is the line being answered.
+    for lines in (["Hi there!", "I make short audio chapters, just for you.", "Lovely."],
+                  ["Hi there!", "Want to hear what I do?", "Great."]):
+        ws = scripted_guide(lines)
+        use_ws(monkeypatch, ws)
+        said = iter(["Hi.", "Sure."])
+        arun(P.converse(cfg, DAN, tmp_path / "out2", max_turns=2, reply_fn=lambda timeline, moment: next(said),
+                        sim_kwargs=FAST))
+        assert live.notes()["offer_nudge"] not in [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+
+
+def test_pace_says_when_it_explained_pitched_and_how_much_it_asked():
+    """The measures Ian set (2026-11-18): what it does by about a minute, a pitch by two or three, few questions."""
+    tl = [{"t": 2.0, "who": "guide", "text": "Hey, Ian! I'm Ailsa."},
+          {"t": 9.0, "who": "guide", "text": "Mm."},  # a backchannel is not a turn
+          {"t": 20.0, "who": "guide", "text": "Ha, a carbonara night. Want to hear what I do?"},
+          {"t": 31.0, "who": "guide", "text": "I make short audio chapters, just for you. What have you been listening to lately?"},
+          {"t": 80.0, "who": "guide", "text": "Oh, that book sounds huge."},
+          {"t": 95.0, "who": "guide", "text": "I've got it: the three moments AI nearly died. Want that?"},
+          {"t": 101.0, "who": "tool", "name": "start_chapter", "args": {}, "result": {}},
+          {"t": 104.0, "who": "guide", "text": "It's under way. Want some quiet?"}]
+    t = {"timeline": tl, "stop": "chapter started", "calls": [{"name": "start_chapter"}],
+         "cost": {"seconds": 110, "usd": 0.1, "backend": {"input": 0, "output": 0}}}
+    assert P.pace(t) == {"explained": 31.0, "pitched": 95.0, "started": 101.0, "turns": 5, "questions": 3}
+    assert "said what it does at 0:31, pitched at 1:35, started at 1:41; 3 of its 5 turns" in P.summary("ian", t, None)
+    assert P.pace({"timeline": tl[:2]})["explained"] is None and P.pace({"timeline": tl[:2]})["pitched"] is None

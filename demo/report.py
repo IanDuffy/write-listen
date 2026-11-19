@@ -56,6 +56,35 @@ def moments(lid: str) -> list[str]:
                 for a in state.asks(state.newest_chapter(d))]
 
 
+def _ended(d: Path, lid: str) -> float | None:
+    """When the tester ended, as their records have it: their newest debrief's start, else their last own write
+    (file times: a folder copied without them, scp without -p, reads as ended now)."""
+    for p in sorted((d / "study").glob("debrief-*.jsonl"), reverse=True):
+        for rec in state.read_jsonl(p)[:1]:
+            t = state._ts(rec.get("t"))
+            if t:
+                return t
+    return state.last_active(d, testers.record(lid) or {})
+
+
+def did(cfg: dict, lid: str) -> list[str]:
+    """What the tester did (Ian's notes, 2026-11-18): the account their debrief was given, as recorded when it
+    started; for a tester with no recorded account, the same account from their records as of when they ended
+    (a chapter goes on being made after they leave: read as of now, every drop-off during the wait said "it was
+    ready, but they didn't start it"; review, 2026-11-18)."""
+    d = testers.folder(lid)
+    try:
+        from demo import debrief, interviewer
+        kept = interviewer.recorded_account(d / "study")
+        if kept:
+            return [x[2:] if x.startswith("- ") else x for x in kept.splitlines() if x.strip()]
+        got = interviewer.account(debrief.chapter_context(d, cfg), debrief.moments(d, cfg),
+                                  debrief.activity(d, cfg, now=_ended(d, lid)))
+        return [] if got == [interviewer.notes()["did_unknown"]] else got
+    except Exception:  # the report goes ahead with less
+        return []
+
+
 def transcript(p: Path) -> str:
     lines = []
     for rec in state.read_jsonl(p):
@@ -77,7 +106,8 @@ def tester_material(cfg: dict, s: dict) -> str:
            f"Stage reached: {stage}",
            f"Chapter: {s.get('title') or '(none)'}; heard {s['minutes_heard']} of {s['chapter_minutes']} minutes",
            "Chapter parts (approximate start): " + ("; ".join(parts) if parts else "(none)"),
-           "Questions asked mid-chapter: " + ("; ".join(asked) if asked else "none")]
+           "Questions asked mid-chapter: " + ("; ".join(asked) if asked else "none"),
+           "What they did: " + (" ".join(did(cfg, s["lid"])) or "(no record)")]
     summary = study / "debrief_summary.md"
     out += ["", "### Debrief summary", summary.read_text(encoding="utf-8").strip() if summary.exists() else "(none)"]
     for kind in ("intro", "debrief"):

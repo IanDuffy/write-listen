@@ -2,9 +2,9 @@
 
 A tester link from demo.testers.create; the browser opens /t/<token> (cookie, redirect), gets the gate, taps;
 the interviewer's intro saves the name and hands over; the gate injects the product page (/app) and its scripts,
-and Live.handoff opens the guide with the handoff note and the name; then Live.debrief opens the interviewer's
-debrief, whose end shows the library. GPT-Live is the stub from tests/demo/test_gate_page.py (nothing reaches
-OpenAI); create_webrtc is replaced; no Claude call is made.
+and Live.handoff opens the guide with the handoff note and the name; then End demo has the guide hand back and
+opens the interviewer's debrief, whose end shows the library. GPT-Live is the stub from
+tests/demo/test_gate_page.py (nothing reaches OpenAI); create_webrtc is replaced; no Claude call is made.
 """
 
 import json
@@ -151,18 +151,120 @@ def test_a_tester_goes_from_the_link_through_the_intro_to_the_guide_and_the_debr
     assert not list((site.folder / "sessions").glob("*.jsonl")) or all(
         "interviewer" not in p.read_text() for p in (site.folder / "sessions").glob("*.jsonl"))
     assert list((site.folder / "study").glob("intro-*.jsonl"))
-    # The debrief (as after the chapter's end or I'm done), then the library.
+    # End demo (upper right, there from the reveal): the guide closes and hands back, the debrief, then the library.
+    assert not page.page.is_visible("#end-demo")  # only the circle until the guide speaks
     page.say("Hi Sam! I'm Wren.")
+    page.page.wait_for_selector("#end-demo", state="visible", timeout=5000)
+    page.wait("!document.body.classList.contains('handoff')", timeout=6000)
     page.page.wait_for_timeout(500)
-    page.js("() => window.Live.debrief({ stream: window.Live.L.stream })")
+    page.page.click("#end-demo")
+    page.wait("window.Live.L.phase === 'handback'")
+    assert not page.page.is_visible("#end-demo")
+    page.page.wait_for_timeout(400)
+    page.say("Good to meet you, Sam. I'm handing you back to the person who welcomed you.")
     page.wait("window.Interview.I.mode === 'debrief' && window.Interview.I.started", timeout=10000)
     assert page.posted("api/interview/start")[-1]["mode"] == "debrief"
-    page.say("Thanks, Sam. That's everything. Take care.")
-    page.tool("end_debrief")
+    assert len([b for b in page.posted("api/interview/start") if b["mode"] == "debrief"]) == 1
+    assert not page.page.is_visible("#end-demo")  # not during the debrief
+    # what they pressed, for the debrief's account of the session (study/, never sessions/)
+    pressed = [json.loads(x) for x in (site.folder / "study" / "events.jsonl").read_text().splitlines()]
+    assert [(e["event"], e["phase"]) for e in pressed] == [("end_demo", "talk")]
+    # The debrief ends itself (Ian's note, 2026-11-18: "there was no clear exit"): its farewell is the end, with
+    # no closing question and no tool call; the page acts on the words.
+    # (A debrief the tester said nothing in is never done: they answer first.)
+    page.emit({"type": "session.input_transcript.delta", "delta": "The wait felt long, and the voice was warm."})
+    page.page.wait_for_timeout(500)
+    page.say("Thank you, Sam. That really helps Ian. That's everything from me.")
     page.wait("!window.Interview.busy()", timeout=10000)
     page.wait("!document.body.classList.contains('debrief')", timeout=10000)
     debrief = json.loads((site.folder / "study" / "debrief.json").read_text())
-    assert debrief.get("session")
+    assert debrief.get("session") and debrief["done"] and debrief["farewell"] and debrief["closing"] is False
+    ended = [b for b in page.posted("api/interview/tool") if b["name"] == "end_debrief"]
+    assert len(ended) == 1 and ended[0]["by"] == "page"
+    page.wait("window.Live.L.debriefDone", timeout=5000)
+    page.page.wait_for_timeout(600)
+    assert not page.page.is_visible("#end-demo")  # the debrief done: gone
+    assert page.js("document.getElementById('lib-debrief')") is None  # and no card in the library
+
+
+# What a person could read on the screen right now: [text, opacity, "gate" | "app"] for every piece of text
+# that is displayed, in the viewport and not fully transparent; the app's text doesn't count while the first
+# screen still covers it.
+ON_SCREEN = r"""() => {
+  const out = [];
+  const gate = document.getElementById('w-gate');
+  const gateOp = gate ? parseFloat(getComputedStyle(gate).opacity) : 0;
+  const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walk.nextNode())) {
+    const text = n.textContent.trim(), e = n.parentElement;
+    if (!text || ['SCRIPT', 'STYLE'].includes(e.tagName)) continue;
+    const r = e.getBoundingClientRect();
+    if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight) continue;
+    const inGate = !!(gate && gate.contains(e));
+    let op = 1, shown = true;
+    for (let x = e; x && x !== document.documentElement; x = x.parentElement) {
+      const cs = getComputedStyle(x);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || x.hidden) { shown = false; break; }
+      op *= parseFloat(cs.opacity);
+    }
+    if (!shown || op < 0.05 || (!inGate && gateOp > 0.95)) continue;
+    out.push([text, +op.toFixed(2), inGate ? 'gate' : 'app']);
+  }
+  return out;
+}"""
+
+
+def test_nothing_invites_a_tap_while_the_tester_is_handed_over(site, page):
+    """Ian's second run (2026-11-18): "The transition was better this time, but there was that tap to listen
+    button that was visible." It was the first screen's own "Tap to begin", back over the growing dot: the next
+    screen's script rewrote <body>'s classes as it drew, which was where the first screen kept its state, so the
+    three words faded back in (and the dot jumped to full size instead of growing). From the moment the next
+    screen is brought in until the guide speaks, the screen shows the circle and no words but the recording
+    notice fading out; nothing that reads as a button."""
+    page.page.set_viewport_size({"width": 420, "height": 800})
+    page.page.goto(site.base + "/t/" + site.tester["token"])
+    page.wait("window.Interview")
+    page.page.click("#w-gate")
+    page.wait("window.Interview.I.started && !window.Interview.I.connecting")
+    page.say("Hi, is this Sam?")
+    page.page.wait_for_timeout(400)
+    page.emit({"type": "session.input_transcript.delta", "delta": "Yes."})
+    page.tool("set_listener_name", {"name": "Sam"})
+    page.wait("getComputedStyle(document.getElementById('w-tap')).opacity === '0'")
+    page.say("Lovely to meet you, Sam. I'll hand you over now.")
+    page.tool("handoff_to_guide")
+    seen, sizes, t0 = [], [], time.monotonic()
+    spoke = None
+    while time.monotonic() - t0 < 8:
+        now = time.monotonic() - t0
+        live = page.js("!!(window.Live && window.Live.L)")
+        texts = page.js(ON_SCREEN)
+        seen.append((round(now, 2), spoke is not None, live, texts))
+        dot = page.js("(() => { const d = document.getElementById('w-dot'); return d ? d.getBoundingClientRect().width : null; })()")
+        if live and dot:
+            sizes.append(dot)
+        if spoke is None and live and page.js("window.Live.L.phase === 'talk' && !document.getElementById('w-gate')"):
+            assert texts == [], texts  # the first screen gone, the guide not yet heard: the circle and nothing else
+            assert not page.page.is_visible("#end-demo")
+            page.say("Hi Sam! I'm Wren.")
+            spoke = now
+        if spoke is not None and now - spoke > 2.5:
+            break
+        page.page.wait_for_timeout(60)
+    assert spoke is not None, "the handover never finished"
+    before = [x for x in seen if x[2] and not x[1]]  # the next screen brought in, the guide not yet speaking
+    assert len(before) >= 10
+    for at, _, _, texts in before:
+        words = " ".join(t for t, _, _ in texts)
+        assert "tap" not in words.lower(), (at, texts)
+        assert all(t.startswith("Your conversations are recorded") for t, _, _ in texts), (at, texts)
+    # ... and the dot grows into the circle (it jumped to full size when its class was wiped)
+    assert any(40 < w < 120 for w in sizes), sizes[:12]
+    # once the guide speaks the screen fades in: still nothing asking for a tap
+    for at, _, _, texts in [x for x in seen if x[1]]:
+        assert "tap" not in " ".join(t for t, _, _ in texts).lower(), (at, texts)
+    assert page.page.is_visible("#end-demo")
 
 
 def test_a_second_browser_without_the_link_sees_only_the_dot(site, page):

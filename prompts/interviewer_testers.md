@@ -4,8 +4,18 @@
 `known:` (intro: the name Ian gave with the link, which the interviewer greets them by; leave it out and the
 interviewer asks), `asks:` (yes: an intro run where they ask what this is; the check is that the interviewer
 says "you'll see in a moment" and nothing about it). For a debrief persona, `heard:`, `moments:` (one per line, `m:ss | words`)
-seed what the interviewer is told; the description says how it went for them. The rest is the description,
-given to the simulated tester (prompts/interviewer_tester.md). No placeholders.
+seed what the interviewer is told; the description says how it went for them. Since Ian's notes of 2026-11-18 a
+debrief persona may also carry the record of what they did, as demo/debrief.activity reads it from a real
+tester's folder: `talked:` (minutes with the voice before the piece was started), `quiet:` (times they asked
+for quiet while it was made), `taps:` (taps to talk), `status:` (times they asked how it was coming along),
+`ready:` (yes or no: was the piece ready when they ended), `pauses:`, `seeks:`, `end:` (the phase they pressed
+End demo in: talk, making, resting, reading, aside, paused, ended). `unheard` is Ian's own second run: he
+pressed the button before the piece was ready, and the debrief asked "Earlier, you chose not to cut in."
+`stops` and `trails` are for Ian's note on that debrief (2026-11-18: "there was no clear exit... the interviewer
+kept asking questions"; he said "let's end the conversation here" and was asked the closing question): one asks
+to end after two full answers, one says it all in the first answer and trails off. The check is `exit`
+(demo/sim_interviewer.py): no question after they've said they're done, then the farewell.
+The rest is the description, given to the simulated tester (prompts/interviewer_tester.md). No placeholders.
 ---
 ## curious
 mode: intro
@@ -51,6 +61,7 @@ Answers in a word or two. Doesn't ask anything. Says nothing at all unless asked
 mode: debrief
 name: Priya
 heard: 10 of 10
+talked: 3
 moments:
 3:20 | Wait, what's a leverage point?
 It went well for you. You liked the voice and that it felt made for you. Your favourite moment was the story about the meeting at the start. You drifted a little in the middle when it listed numbers. Asking your question worked: the answer was quick. You'd describe it as "a podcast that knows you". You'd listen tomorrow if the topic was one you picked.
@@ -59,8 +70,10 @@ It went well for you. You liked the voice and that it felt made for you. Your fa
 mode: debrief
 name: Marcus
 heard: 6 of 10
+talked: 2
+end: reading
 moments:
-You found the opening slow and drifted halfway; you left before the end. You never wanted to stop and ask anything. You'd tell a friend "it's like an audiobook, but about anything". Tomorrow? Maybe, if it were shorter. Be honest and a bit blunt.
+You found the opening slow and drifted halfway; you pressed End demo before the end. You never wanted to stop and ask anything. You'd tell a friend "it's like an audiobook, but about anything". Tomorrow? Maybe, if it were shorter. Be honest and a bit blunt.
 
 ## confused
 mode: debrief
@@ -86,6 +99,19 @@ heard: 10 of 10
 moments:
 You loved all of it and say so a lot, without many specifics unless asked. You'd listen every morning. You mention, unprompted, that the ending gave you goosebumps.
 
+## unheard
+mode: debrief
+name: Ian
+heard: 0 of 10
+talked: 5
+quiet: 2
+taps: 1
+status: 1
+ready: no
+end: resting
+moments:
+You never heard the piece: you talked with the voice for about five minutes, asked for quiet while it made the piece, tapped once to ask how it was coming along, and pressed End demo before it was ready. Your notes are about the conversation: it asked too many questions before saying what it does, and it sounded a bit flat, like it was doing a job; you wanted more eagerness. The wait was fine. You'd use it. Answer plainly, a sentence or two each. If you're asked about listening to the piece, how it was read or interrupting it, say you never heard it.
+
 ## fragments
 mode: debrief
 name: Ian
@@ -100,3 +126,20 @@ heard: 10 of 10
 moments:
 5:30 | How do you know that?
 You liked it but you're more curious about the interview. Early on, ask the interviewer straight out: "What kind of feedback is Ian looking for?" Later, tell it one of its questions is too general and ask for a different one. Once, ask what it thought of the piece. Answer its questions briefly and honestly: the voice was pleasant but a bit slow, the answer to your question was good, you'd use it on your commute, you could imagine it for learning a language.
+
+## stops
+mode: debrief
+name: Nora
+heard: 10 of 10
+talked: 3
+moments:
+You have clear notes and give them in full. Your first two answers are each three or four sentences with specific things in them, whatever the question: the voice sounded a little flat at the start, as if it was doing a job, and warmed up once the piece began; the piece itself was better than you expected, and the part about the 1990s meeting stayed with you; the wait while it was made felt long because nothing on the screen told you how far along it was. After your second answer you've said what you came to say: whatever the interviewer says next, reply "I think that's about it, let's end here." Ask nothing. If you're asked anything after that, say "No, that's all, thanks."
+
+## trails
+mode: debrief
+name: Owen
+heard: 7 of 10
+talked: 2
+end: reading
+moments:
+You answer the first question at length, thinking out loud, five or six sentences in one go with several specific comments: it asked a few too many questions before it said what it does; the voice was easy to listen to but could be livelier; you pressed End demo at about seven minutes only because you had somewhere to be, not because you were bored; you'd use it on walks. Then you trail off and end that same answer with "yeah... that's it really." After that you have nothing to add: if you're asked another question, answer in three or four words, flatly.

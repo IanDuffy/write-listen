@@ -3,19 +3,20 @@
 Inputs:
 - {{count}}: how many testers there are (opened or not)
 - {{stages}}: where each tester stopped, counted by code (not opened, intro, onboarding, chapter, debrief, done; "left early" marks those who went quiet before the end)
-- {{material}}: per tester: label, name, the stage reached, the chapter's title, its parts with their approximate start minute, minutes heard of the chapter's length, the questions they asked mid-chapter (time and their words), the debrief summary (Claude's, from the end of the debrief), and the intro and debrief transcripts
+- {{material}}: per tester: label, name, the stage reached, the chapter's title, its parts with their approximate start minute, minutes heard of the chapter's length, the questions they asked mid-chapter (time and their words), what they did (the account their debrief was given, from their own records: demo/debrief.activity), the debrief summary (Claude's, from the end of the debrief), and the intro and debrief transcripts
 - {{today}}: the date
 
 Output: Markdown, written whole to study/report.md. Spec: docs/tester-demo.md, "Admin page and study report":
 as changed by Ian's notes of 2026-11-16 (the debrief is a conversation around six topics, not five fixed
-questions): per topic the common answers with counts and two or three quotes; moments testers named, matched to
+questions) and of 2026-11-18 (the debrief is three or four questions, so each tester covers two or three
+topics, and the material says what each tester did): per topic the common answers with counts and two or three quotes; moments testers named, matched to
 chapter positions; drop-off by stage; bugs and confusions listed separately; three or four testers worth a
 follow-up call, with the reason for each. It quotes and counts; no scores, no ranking.
 Model: config.yaml models.writer (Opus 5.5).
 ---
 Ian ran a small study: {{count}} testers each opened a private link to his audio app, talked with an interviewer, then with the app's guide, heard a short chapter made from that conversation (asking questions by voice along the way), and were debriefed by the interviewer. Write the study report he will read to decide what to change. Today is {{today}}.
 
-The debrief was a conversation to gather product feedback, around these topics (not every tester was asked every one, and not in this order):
+The debrief was a short conversation to gather product feedback: three or four questions each, chosen from what that tester did, so each tester was asked about only two or three of these topics:
 - What stood out, or what they'd tell Ian first.
 - Whether this is something they would use, and when.
 - Where they imagine it going: what they'd want it to become.
@@ -46,7 +47,7 @@ Specific moments testers named (something that held them, lost them or felt off)
 
 ## Drop-off
 
-Where testers stopped, from the counts above: a short table (stage, count, labels). Then a sentence on any pattern in why, only from what the material shows.
+Where testers stopped, from the counts above: a short table (stage, count, labels). Then what the material's "What they did" lines show across testers, counted: how long they talked before a chapter was started, who asked for quiet while it was made, who pressed End demo and when (before the chapter was ready, part-way, after it), who heard none of it. Then a sentence on any pattern in why, only from what the material shows.
 
 ## Bugs and confusions
 
@@ -59,6 +60,7 @@ Three or four testers Ian should call, each with one or two sentences on why: so
 Rules:
 - Quote and count. Do not score, rate or rank testers or the product, and do not add recommendations of your own beyond the follow-up list.
 - Quotes are the testers' exact words from the transcripts or the summaries' quotes, short (under 25 words), in quotation marks. Never put words in a tester's mouth; paraphrase without quotation marks when you must.
+- What a tester did comes from their "What they did" lines alone, never from the interviewer's questions.
 - Only what the material shows. If a section has nothing (no one reached the debrief, no bugs mentioned), say so in one line.
 - The interviewer's and the guide's words are context, not findings.
 - Plain, direct sentences; no padding, no preamble about the method.

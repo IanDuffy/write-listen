@@ -115,20 +115,15 @@
   #player-time { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   #player-ask { flex: none; font-size: 14px; padding: 5px 14px; }
   html.lib-in-chapter #screen { display: none; }
-  /* Tester Demo: a tester's library has no Up next (overnight chapters are off for testers) and no Settings;
-     a tester whose debrief isn't done gets its card first. */
+  /* Tester Demo: a tester's library has no Up next (overnight chapters are off for testers) and no Settings.
+     (No debrief card either: the page's End demo button, page/live.js, is the way on to the debrief.) */
   body.tester #up, body.tester #settings-link, body.tester #settings { display: none !important; }
-  #lib-debrief .lib-overview { margin: 0; }
   `;
 
   const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const NAMES = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
   const MARKUP = `
   <div id="lib-home">
-    <section class="lib-card" id="lib-debrief" hidden>
-      <p class="lib-overview" id="debrief-line"></p>
-      <div class="lib-row"><button class="lib-pill solid" id="debrief-start">Start</button></div>
-    </section>
     <section class="lib-card" id="up" aria-live="polite">
       <p class="lib-kicker" id="up-kicker">Up next</p>
       <h2 id="up-title"></h2>
@@ -855,53 +850,8 @@
     }
     renderHistory(s.history || []);
     if (!host.classList.contains("lib-settings-open")) fillSettings(s.settings);
-    paintDebrief();
     paint();
   }
-
-  // --- the debrief card (Tester Demo, "If they leave early") -------------------------------------------
-  // For a tester whose debrief isn't done (/api/library's `debrief`). Not while a conversation is on (the
-  // guide's, or the interviewer's): then the debrief comes at its end anyway. A tester who comes back to it
-  // lands on the library.
-  let debriefOn = false, debriefScrolled = false;
-  function conversationOn() {
-    return debriefOn || !!(window.Live && Live.state && !["idle", "done"].includes(Live.state()))
-      || !!(window.Live && Live.L && Live.L.debriefing) || !!(window.Interview && Interview.busy && Interview.busy());
-  }
-  function paintDebrief() {
-    const d = state && state.debrief;
-    const on = !!(d && d.show && window.Interview) && !conversationOn();
-    show($("lib-debrief"), on);
-    if (!on) return;
-    $("debrief-line").textContent = d.line || "";
-    if (!debriefScrolled && document.body.classList.contains("tester") && host.scrollIntoView) {
-      debriefScrolled = true;
-      host.scrollIntoView({ block: "start" });
-    }
-  }
-  setInterval(paintDebrief, 1000);
-  async function startDebrief() {
-    if (debriefOn || !window.Interview) return;
-    debriefOn = true;
-    paintDebrief();
-    // The mic is asked for in the tap (a phone wants it there); any other voice ends first, one at a time.
-    const asked = navigator.mediaDevices && navigator.mediaDevices.getUserMedia
-      ? navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-          .catch(() => null)
-      : Promise.resolve(null);
-    if (!audio.paused) audio.pause();
-    await orbOff();
-    if (L.session || L.connecting) await endLive();
-    const stream = await asked;
-    scrollTo(0, 0);  // the circle above is the interviewer's dot while it talks
-    const done = () => { debriefOn = false; load(); };
-    if (window.Live && Live.debrief) return Live.debrief({ stream, onDone: done });  // the screen cools while it runs
-    try {
-      const p = Interview.start("debrief", { stream, onDone: () => { if (stream) stream.getTracks().forEach((t) => t.stop()); done(); } });
-      if (p && p.catch) p.catch(done);
-    } catch (e) { done(); }
-  }
-  $("debrief-start").addEventListener("click", startDebrief);
 
   let shownHistory = "";
   function renderHistory(items) {

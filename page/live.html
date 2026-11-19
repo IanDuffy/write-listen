@@ -149,12 +149,21 @@
   #time { flex: none; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   #disclose { font-size: 12px; color: var(--muted); text-align: center; margin-top: 10px; }
 
-  /* Tester Demo (docs/tester-demo.md). Tester mode: no Start fresh, no Stop making, no typing; I'm done during
-     the chapter. */
-  #done { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
-          border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+  /* Tester Demo (docs/tester-demo.md). Tester mode: no Start fresh, no Stop making, no typing; End demo in the
+     upper right. */
   body.tester #reset, body.tester #halt, body.tester #type, body.tester #form { display: none !important; }
-  body.tester.in-chapter #done { display: inline-block; }  /* live.js inChapter() */
+  /* End demo (Ian, 2026-11-18: "a more prominent button, maybe in the upper right ... visible while the
+     onboarding and chapter is being read, not only after"; it replaced I'm done and the library's debrief card).
+     Fixed to the screen's corner, clear of a phone's notch, over the library and above both player bars; shown
+     by live.js (endDemoShown) from the reveal until the debrief, fading in with the rest of the screen. */
+  #end-demo { display: none; position: fixed; z-index: 12; top: calc(12px + env(safe-area-inset-top, 0px));
+              right: calc(12px + env(safe-area-inset-right, 0px)); font: inherit; font-size: 14px; font-weight: 600;
+              color: var(--fg); background: var(--bg); border: 1px solid var(--muted); border-radius: 999px;
+              padding: 7px 16px; cursor: pointer; }
+  body.tester.end-demo #end-demo { display: inline-block; animation: end-demo-in 1.2s ease; }
+  #end-demo:hover { border-color: var(--fg); }
+  #end-demo:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @keyframes end-demo-in { from { opacity: 0; } }
   /* A tester's mic refused: the line asks for it (the gate's words) and Try again asks once more; no typing. */
   #mic-again { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
                border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
@@ -178,9 +187,13 @@
   body.handoff #orb .ring, body.handoff #orb .track, body.debrief #orb .ring, body.debrief #orb .track,
   body.debrief #orb .icon { opacity: 0; }
   body.handoff #orb, body.debrief #orb { cursor: default; }
+  /* End demo pressed from the library's chapter view (which hides this screen): the interviewer's dot is there
+     to look at during the debrief, not a blank page. */
+  html.lib-in-chapter body.debrief #screen { display: flex; }
 </style>
 </head>
 <body class="idle">
+<button id="end-demo" type="button">End demo</button>  <!-- a tester's way on to the debrief (live.js endDemo) -->
 <div id="screen">
 <main>
   <button id="orb" aria-label="Chapter">
@@ -197,7 +210,6 @@
   <div id="hint"><span id="how">Tap to talk</span> · <button id="stop">Stop listening</button></div>
   <button id="retry">Try again</button>
   <button id="halt">Stop making this chapter</button>
-  <button id="done">I'm done</button>
   <button id="mic-again" type="button">Try again</button>
   <button id="last"></button>
   <ul id="sections" aria-label="Parts of the chapter" style="display:none"></ul>

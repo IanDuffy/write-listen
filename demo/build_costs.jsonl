@@ -147,3 +147,121 @@
 {"t": "2026-11-16T20:50:33", "what": "claude interviewer_tester critic", "seconds": null, "backend_tokens": null, "usd": 0.00195}
 {"t": "2026-11-16T20:50:34", "what": "tts listener line", "seconds": 5.5, "backend_tokens": null, "usd": 0.001375}
 {"t": "2026-11-16T20:50:53", "what": "gpt-live interviewer debrief critic", "seconds": 158.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5358, "output": 19, "cached": 2534}, "usd": 0.134712}
+{"t": "2026-11-18T19:28:22", "what": "claude interviewer_tester curious", "seconds": null, "backend_tokens": null, "usd": 0.0011}
+{"t": "2026-11-18T19:28:24", "what": "tts listener line", "seconds": 9.35, "backend_tokens": null, "usd": 0.002337}
+{"t": "2026-11-18T19:28:58", "what": "claude interviewer_tester curious", "seconds": null, "backend_tokens": null, "usd": 0.001416}
+{"t": "2026-11-18T19:29:00", "what": "tts listener line", "seconds": 7.5, "backend_tokens": null, "usd": 0.001875}
+{"t": "2026-11-18T19:29:15", "what": "claude interviewer_tester curious", "seconds": null, "backend_tokens": null, "usd": 0.001474}
+{"t": "2026-11-18T19:29:16", "what": "tts listener line", "seconds": 6.1, "backend_tokens": null, "usd": 0.001525}
+{"t": "2026-11-18T19:29:33", "what": "gpt-live interviewer intro curious", "seconds": 79.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 0, "output": 0, "cached": 0}, "usd": 0.065833}
+{"t": "2026-11-18T19:29:39", "what": "claude interviewer_tester terse", "seconds": null, "backend_tokens": null, "usd": 0.000648}
+{"t": "2026-11-18T19:29:40", "what": "tts listener line", "seconds": 1.85, "backend_tokens": null, "usd": 0.000463}
+{"t": "2026-11-18T19:30:07", "what": "claude interviewer_tester terse", "seconds": null, "backend_tokens": null, "usd": 0.000962}
+{"t": "2026-11-18T19:30:07", "what": "tts listener line", "seconds": 1.45, "backend_tokens": null, "usd": 0.000362}
+{"t": "2026-11-18T19:30:22", "what": "gpt-live interviewer intro terse", "seconds": 45.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 4648, "output": 21, "cached": 2176}, "usd": 0.040186}
+{"t": "2026-11-18T19:30:55", "what": "claude interviewer_tester enjoyed", "seconds": null, "backend_tokens": null, "usd": 0.001242}
+{"t": "2026-11-18T19:30:57", "what": "tts listener line", "seconds": 9.55, "backend_tokens": null, "usd": 0.002388}
+{"t": "2026-11-18T19:31:16", "what": "claude interviewer_tester enjoyed", "seconds": null, "backend_tokens": null, "usd": 0.001456}
+{"t": "2026-11-18T19:31:18", "what": "tts listener line", "seconds": 10.3, "backend_tokens": null, "usd": 0.002575}
+{"t": "2026-11-18T19:31:36", "what": "claude interviewer_tester enjoyed", "seconds": null, "backend_tokens": null, "usd": 0.001702}
+{"t": "2026-11-18T19:31:38", "what": "tts listener line", "seconds": 10.25, "backend_tokens": null, "usd": 0.002563}
+{"t": "2026-11-18T19:31:59", "what": "claude interviewer_tester enjoyed", "seconds": null, "backend_tokens": null, "usd": 0.00171}
+{"t": "2026-11-18T19:32:01", "what": "tts listener line", "seconds": 7.5, "backend_tokens": null, "usd": 0.001875}
+{"t": "2026-11-18T19:32:20", "what": "gpt-live interviewer debrief enjoyed", "seconds": 93.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5340, "output": 19, "cached": 2525}, "usd": 0.080536}
+{"t": "2026-11-18T19:32:29", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.001532}
+{"t": "2026-11-18T19:32:31", "what": "tts listener line", "seconds": 13.45, "backend_tokens": null, "usd": 0.003362}
+{"t": "2026-11-18T19:33:00", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.00169}
+{"t": "2026-11-18T19:33:02", "what": "tts listener line", "seconds": 9.8, "backend_tokens": null, "usd": 0.00245}
+{"t": "2026-11-18T19:33:21", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.001862}
+{"t": "2026-11-18T19:33:23", "what": "tts listener line", "seconds": 9.25, "backend_tokens": null, "usd": 0.002312}
+{"t": "2026-11-18T19:33:39", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.002054}
+{"t": "2026-11-18T19:33:41", "what": "tts listener line", "seconds": 9.75, "backend_tokens": null, "usd": 0.002437}
+{"t": "2026-11-18T19:34:02", "what": "gpt-live interviewer debrief unheard", "seconds": 98.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 0, "output": 0, "cached": 0}, "usd": 0.081667}
+{"t": "2026-11-18T19:35:13", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.001192}
+{"t": "2026-11-18T19:35:14", "what": "tts listener line", "seconds": 9.15, "backend_tokens": null, "usd": 0.002288}
+{"t": "2026-11-18T19:35:35", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.001346}
+{"t": "2026-11-18T19:35:36", "what": "tts listener line", "seconds": 7.65, "backend_tokens": null, "usd": 0.001912}
+{"t": "2026-11-18T19:35:52", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.001682}
+{"t": "2026-11-18T19:35:54", "what": "tts listener line", "seconds": 11.95, "backend_tokens": null, "usd": 0.002987}
+{"t": "2026-11-18T19:36:18", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.001976}
+{"t": "2026-11-18T19:36:20", "what": "tts listener line", "seconds": 11.3, "backend_tokens": null, "usd": 0.002825}
+{"t": "2026-11-18T19:36:41", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.002108}
+{"t": "2026-11-18T19:36:43", "what": "tts listener line", "seconds": 11.45, "backend_tokens": null, "usd": 0.002862}
+{"t": "2026-11-18T19:37:06", "what": "claude interviewer_tester drifted", "seconds": null, "backend_tokens": null, "usd": 0.001936}
+{"t": "2026-11-18T19:37:07", "what": "tts listener line", "seconds": 4.55, "backend_tokens": null, "usd": 0.001138}
+{"t": "2026-11-18T19:37:25", "what": "gpt-live interviewer debrief drifted", "seconds": 139.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5562, "output": 19, "cached": 2636}, "usd": 0.118986}
+{"t": "2026-11-18T22:16:57", "what": "claude interviewer_tester stops", "seconds": null, "backend_tokens": null, "usd": 0.001718}
+{"t": "2026-11-18T22:17:00", "what": "tts listener line", "seconds": 16.8, "backend_tokens": null, "usd": 0.0042}
+{"t": "2026-11-18T22:17:29", "what": "claude interviewer_tester stops", "seconds": null, "backend_tokens": null, "usd": 0.001782}
+{"t": "2026-11-18T22:17:31", "what": "tts listener line", "seconds": 11.65, "backend_tokens": null, "usd": 0.002913}
+{"t": "2026-11-18T22:18:03", "what": "gpt-live interviewer debrief stops", "seconds": 72.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5696, "output": 19, "cached": 2703}, "usd": 0.063223}
+{"t": "2026-11-18T22:18:26", "what": "claude interviewer_tester trails", "seconds": null, "backend_tokens": null, "usd": 0.0028}
+{"t": "2026-11-18T22:18:33", "what": "tts listener line", "seconds": 38.85, "backend_tokens": null, "usd": 0.009713}
+{"t": "2026-11-18T22:19:32", "what": "gpt-live interviewer debrief trails", "seconds": 73.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5724, "output": 19, "cached": 2717}, "usd": 0.064071}
+{"t": "2026-11-18T23:06:01", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.001542}
+{"t": "2026-11-18T23:06:04", "what": "tts listener line", "seconds": 14.15, "backend_tokens": null, "usd": 0.003537}
+{"t": "2026-11-18T23:06:29", "what": "claude interviewer_tester unheard", "seconds": null, "backend_tokens": null, "usd": 0.001516}
+{"t": "2026-11-18T23:06:32", "what": "tts listener line", "seconds": 10.35, "backend_tokens": null, "usd": 0.002587}
+{"t": "2026-11-18T23:07:00", "what": "gpt-live interviewer debrief unheard", "seconds": 65.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5916, "output": 19, "cached": 2813}, "usd": 0.057505}
+{"t": "2026-11-18T23:07:10", "what": "claude interviewer_tester fragments", "seconds": null, "backend_tokens": null, "usd": 0.001352}
+{"t": "2026-11-18T23:07:12", "what": "tts listener line", "seconds": 9.65, "backend_tokens": null, "usd": 0.002412}
+{"t": "2026-11-18T23:07:33", "what": "claude interviewer_tester fragments", "seconds": null, "backend_tokens": null, "usd": 0.00154}
+{"t": "2026-11-18T23:07:35", "what": "tts listener line", "seconds": 9.85, "backend_tokens": null, "usd": 0.002462}
+{"t": "2026-11-18T23:07:54", "what": "claude interviewer_tester fragments", "seconds": null, "backend_tokens": null, "usd": 0.001662}
+{"t": "2026-11-18T23:07:56", "what": "tts listener line", "seconds": 9.55, "backend_tokens": null, "usd": 0.002388}
+{"t": "2026-11-18T23:08:22", "what": "gpt-live interviewer debrief fragments", "seconds": 78.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 0, "output": 0, "cached": 0}, "usd": 0.065}
+{"t": "2026-11-18T23:08:31", "what": "claude interviewer_tester unheard-2", "seconds": null, "backend_tokens": null, "usd": 0.001552}
+{"t": "2026-11-18T23:08:33", "what": "tts listener line", "seconds": 13.95, "backend_tokens": null, "usd": 0.003487}
+{"t": "2026-11-18T23:09:00", "what": "claude interviewer_tester unheard-2", "seconds": null, "backend_tokens": null, "usd": 0.001644}
+{"t": "2026-11-18T23:09:02", "what": "tts listener line", "seconds": 10.85, "backend_tokens": null, "usd": 0.002712}
+{"t": "2026-11-18T23:09:22", "what": "claude interviewer_tester unheard-2", "seconds": null, "backend_tokens": null, "usd": 0.001812}
+{"t": "2026-11-18T23:09:24", "what": "tts listener line", "seconds": 9.9, "backend_tokens": null, "usd": 0.002475}
+{"t": "2026-11-18T23:09:47", "what": "claude interviewer_tester unheard-2", "seconds": null, "backend_tokens": null, "usd": 0.001618}
+{"t": "2026-11-18T23:09:50", "what": "gpt-live interviewer debrief unheard-2", "seconds": 84.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 6060, "output": 19, "cached": 2885}, "usd": 0.073414}
+{"t": "2026-11-18T23:09:58", "what": "claude interviewer_tester fragments-2", "seconds": null, "backend_tokens": null, "usd": 0.00133}
+{"t": "2026-11-18T23:10:00", "what": "tts listener line", "seconds": 8.85, "backend_tokens": null, "usd": 0.002212}
+{"t": "2026-11-18T23:10:20", "what": "claude interviewer_tester fragments-2", "seconds": null, "backend_tokens": null, "usd": 0.001566}
+{"t": "2026-11-18T23:10:22", "what": "tts listener line", "seconds": 12.35, "backend_tokens": null, "usd": 0.003087}
+{"t": "2026-11-18T23:10:45", "what": "claude interviewer_tester fragments-2", "seconds": null, "backend_tokens": null, "usd": 0.001692}
+{"t": "2026-11-18T23:10:47", "what": "tts listener line", "seconds": 9.0, "backend_tokens": null, "usd": 0.00225}
+{"t": "2026-11-18T23:11:10", "what": "claude interviewer_tester fragments-2", "seconds": null, "backend_tokens": null, "usd": 0.001582}
+{"t": "2026-11-18T23:11:13", "what": "gpt-live interviewer debrief fragments-2", "seconds": 79.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5942, "output": 19, "cached": 2826}, "usd": 0.069186}
+{"t": "2026-11-18T23:11:22", "what": "claude interviewer_tester unheard-3", "seconds": null, "backend_tokens": null, "usd": 0.001562}
+{"t": "2026-11-18T23:11:24", "what": "tts listener line", "seconds": 14.2, "backend_tokens": null, "usd": 0.00355}
+{"t": "2026-11-18T23:11:49", "what": "claude interviewer_tester unheard-3", "seconds": null, "backend_tokens": null, "usd": 0.001608}
+{"t": "2026-11-18T23:11:51", "what": "tts listener line", "seconds": 9.8, "backend_tokens": null, "usd": 0.00245}
+{"t": "2026-11-18T23:12:15", "what": "claude interviewer_tester unheard-3", "seconds": null, "backend_tokens": null, "usd": 0.001446}
+{"t": "2026-11-18T23:12:18", "what": "gpt-live interviewer debrief unheard-3", "seconds": 61.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5940, "output": 19, "cached": 2825}, "usd": 0.054185}
+{"t": "2026-11-18T23:12:28", "what": "claude interviewer_tester fragments-3", "seconds": null, "backend_tokens": null, "usd": 0.00134}
+{"t": "2026-11-18T23:12:30", "what": "tts listener line", "seconds": 9.05, "backend_tokens": null, "usd": 0.002263}
+{"t": "2026-11-18T23:12:54", "what": "claude interviewer_tester fragments-3", "seconds": null, "backend_tokens": null, "usd": 0.001628}
+{"t": "2026-11-18T23:12:56", "what": "tts listener line", "seconds": 10.4, "backend_tokens": null, "usd": 0.0026}
+{"t": "2026-11-18T23:13:16", "what": "claude interviewer_tester fragments-3", "seconds": null, "backend_tokens": null, "usd": 0.001844}
+{"t": "2026-11-18T23:13:18", "what": "tts listener line", "seconds": 11.85, "backend_tokens": null, "usd": 0.002962}
+{"t": "2026-11-18T23:13:43", "what": "claude interviewer_tester fragments-3", "seconds": null, "backend_tokens": null, "usd": 0.001606}
+{"t": "2026-11-18T23:13:46", "what": "gpt-live interviewer debrief fragments-3", "seconds": 84.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5954, "output": 19, "cached": 2832}, "usd": 0.073359}
+{"t": "2026-11-18T23:13:55", "what": "claude interviewer_tester unheard-4", "seconds": null, "backend_tokens": null, "usd": 0.001352}
+{"t": "2026-11-18T23:13:57", "what": "tts listener line", "seconds": 8.95, "backend_tokens": null, "usd": 0.002237}
+{"t": "2026-11-18T23:14:14", "what": "claude interviewer_tester unheard-4", "seconds": null, "backend_tokens": null, "usd": 0.001568}
+{"t": "2026-11-18T23:14:16", "what": "tts listener line", "seconds": 10.5, "backend_tokens": null, "usd": 0.002625}
+{"t": "2026-11-18T23:14:37", "what": "claude interviewer_tester unheard-4", "seconds": null, "backend_tokens": null, "usd": 0.001718}
+{"t": "2026-11-18T23:14:39", "what": "tts listener line", "seconds": 8.85, "backend_tokens": null, "usd": 0.002212}
+{"t": "2026-11-18T23:15:05", "what": "gpt-live interviewer debrief unheard-4", "seconds": 75.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 6036, "output": 19, "cached": 2873}, "usd": 0.065902}
+{"t": "2026-11-18T23:15:15", "what": "claude interviewer_tester fragments-4", "seconds": null, "backend_tokens": null, "usd": 0.001332}
+{"t": "2026-11-18T23:15:34", "what": "claude interviewer_tester fragments-4", "seconds": null, "backend_tokens": null, "usd": 0.001524}
+{"t": "2026-11-18T23:15:36", "what": "tts listener line", "seconds": 9.25, "backend_tokens": null, "usd": 0.002312}
+{"t": "2026-11-18T23:16:00", "what": "claude interviewer_tester fragments-4", "seconds": null, "backend_tokens": null, "usd": 0.00136}
+{"t": "2026-11-18T23:16:07", "what": "gpt-live interviewer debrief fragments-4", "seconds": 58.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5732, "output": 19, "cached": 2721}, "usd": 0.051575}
+{"t": "2026-11-18T23:16:16", "what": "claude interviewer_tester unheard-5", "seconds": null, "backend_tokens": null, "usd": 0.001562}
+{"t": "2026-11-18T23:16:18", "what": "tts listener line", "seconds": 13.35, "backend_tokens": null, "usd": 0.003337}
+{"t": "2026-11-18T23:16:42", "what": "claude interviewer_tester unheard-5", "seconds": null, "backend_tokens": null, "usd": 0.001856}
+{"t": "2026-11-18T23:16:45", "what": "tts listener line", "seconds": 12.95, "backend_tokens": null, "usd": 0.003237}
+{"t": "2026-11-18T23:17:13", "what": "gpt-live interviewer debrief unheard-5", "seconds": 62.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 0, "output": 0, "cached": 0}, "usd": 0.051667}
+{"t": "2026-11-18T23:17:24", "what": "claude interviewer_tester fragments-5", "seconds": null, "backend_tokens": null, "usd": 0.00134}
+{"t": "2026-11-18T23:17:44", "what": "claude interviewer_tester fragments-5", "seconds": null, "backend_tokens": null, "usd": 0.001662}
+{"t": "2026-11-18T23:17:47", "what": "tts listener line", "seconds": 14.8, "backend_tokens": null, "usd": 0.0037}
+{"t": "2026-11-18T23:18:12", "what": "claude interviewer_tester fragments-5", "seconds": null, "backend_tokens": null, "usd": 0.001738}
+{"t": "2026-11-18T23:18:14", "what": "tts listener line", "seconds": 11.1, "backend_tokens": null, "usd": 0.002775}
+{"t": "2026-11-18T23:18:39", "what": "claude interviewer_tester fragments-5", "seconds": null, "backend_tokens": null, "usd": 0.001916}
+{"t": "2026-11-18T23:18:40", "what": "tts listener line", "seconds": 9.15, "backend_tokens": null, "usd": 0.002288}
+{"t": "2026-11-18T23:19:03", "what": "gpt-live interviewer debrief fragments-5", "seconds": 105.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 5910, "output": 19, "cached": 2810}, "usd": 0.090836}

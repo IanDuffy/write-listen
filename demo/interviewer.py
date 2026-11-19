@@ -2,19 +2,35 @@
 
 A separate GPT-Live session from the guide's, in its own voice (demo.interviewer.voice), twice per tester:
 
-    intro     checks who it is by the name given with the link ("Hi, is this Rolando?"; asks when there is
-              none; set_listener_name for a correction), says Ian built what it is about to show them, how
-              this will go, takes questions, "I'll hand you over now." (handoff_to_guide); the page then
-              brings in the guide. About 60-90 seconds.
-    debrief   a conversation gathering product feedback for Ian around TOPICS, their real moments
-              (demo/debrief.py) for the one about asking questions, the closing question, thanks by name
-              (end_debrief)
+    intro     checks who it is by the name given with the link ("Hi, is this Rolando?", its one question;
+              asks the name when there is none; set_listener_name for a correction), then in one turn says
+              Ian built what they're about to try, how this will go, and asks "Any questions, or are you
+              ready to try it?"; then "I'll hand you over now." (handoff_to_guide), and the page brings in
+              the guide. About 30-40 seconds.
+    debrief   a short conversation gathering product feedback for Ian: the opening question, at most two
+              more picked from what the tester did (demo/debrief.py: their moments and the account of what
+              they did) and from TOPICS, and it ends itself with one fixed farewell (end_debrief) as soon
+              as it has a few real comments, they sound finished or they ask to stop. Three minutes at
+              most, often less.
 
-Ian's notes after his own run (2026-11-16) made both what they are: the intro had taken 15 seconds, and in the
+Ian's notes after his own run (2026-11-16) made both what they were: the intro had taken 15 seconds, and in the
 debrief the interviewer answered him with "Mm-hmm", "Mm.", "Hmm." and then nothing for 77 seconds. Nothing
 muted it (his words were transcribed throughout): its instructions told it to leave pauses, not to fill a
 silence and to keep to five fixed questions, and no page cue covered a tester left waiting. The prompts now
 have it reply, and the page sends `waiting` (page/interview.js) when it hasn't.
+His notes after his second run (2026-11-18): the intro "spoke a little too much" (49 seconds over six turns,
+stopping after each sentence for an "okay"), the debrief had too many questions, and it asked about things
+that hadn't happened ("Earlier, you chose not to cut in": he had heard none of the piece). So the intro is one
+question and one turn, the debrief is three or four questions, and it is told what the tester did
+(`account`, from demo/debrief.activity) and asks only about that.
+His note on that debrief (2026-11-18): "there was no clear exit... the interviewer kept asking questions". He
+had given long answers from the first one, said "let's end the conversation here" and got the closing question.
+So the questions are a ceiling, the closing question is optional (never after they've said they're done), and
+the end is one farewell (prompts/interviewer_notes.md `farewell`) that the page and `covered` key on (FAREWELL,
+PAGE_DEFAULTS["farewell"]): once it is said the debrief is finished, with or without end_debrief, provided the
+tester said something (a debrief nobody answered stays not done, so it can be taken again). The debrief has its
+own `waiting` note (`waiting_debrief`): the intro's ends "then carry on", which after "let's end here" is the
+wrong push.
 
 The session is opened like the guide's (voice/gpt_live/session.py): the page's WebRTC offer goes to OpenAI with
 the configuration and the key stays here. The tools run through GPT-Live's delegation to a Responses backend
@@ -25,12 +41,18 @@ Everything is kept in listeners/<lid>/study/, never sessions/: memory.meeting() 
 the tester spoke in as a past conversation with the guide, which would then skip introducing itself.
 
     intro-<sid>.jsonl, debrief-<sid>.jsonl   transcripts ({"t", "s", "who", "text", ...}; who: session, page,
-                                             listener, interviewer, tool)
+                                             listener, interviewer, tool); a debrief's first record keeps what
+                                             it was told the tester did (`did`, `activity`)
     log.jsonl                                costs (GPT-Live per session, kind "interviewer"; the summary's Claude call)
+    events.jsonl                             the tester's button presses on the product page (POST /api/demo/event,
+                                             demo/routes.py; demo/debrief.py reads them for the debrief's account)
     <live_id>.mp3 (or .wav if ffmpeg fails)  the session's recording from OpenAI (store: true), fetched after
                                              live.archive_wait_seconds in a background thread
-    debrief.json                             {done, finished_at, topics, closing, session}: the first completed
-                                             debrief's, never overwritten by a later one (debrief-<sid>.json)
+    debrief.json                             {done, finished_at, topics, closing, farewell, session, how}: the
+                                             first completed debrief's, never overwritten by a later one
+                                             (debrief-<sid>.json); closing: the optional closing question was
+                                             asked; farewell: its last words were said; how "no answer": it
+                                             ended with no word from the tester, and is not done
     debrief_summary.md                       one Claude call (prompts/debrief_summary.md); the first completed
                                              debrief's, a later one writes debrief_summary-<sid>.md
     After the end, nothing is written once the folder is deleted or reset (tester.json's stamps changed).
@@ -79,7 +101,7 @@ NAME_MAX = 60
 
 DEFAULTS = {
     "voice": "cedar", "store": True,
-    "intro_max_minutes": 4, "debrief_max_minutes": 9, "debrief_target_minutes": 8,
+    "intro_max_minutes": 2.5, "debrief_max_minutes": 6, "debrief_target_minutes": 4,
     "stale_minutes": 15,              # a session the page never ended is closed after this long without a line
     "audio_tries": 6,                 # the recording: tries after live.archive_wait_seconds, live.archive_retry_seconds apart
     "summary_role": "researcher", "summary_effort": "medium",
@@ -96,11 +118,13 @@ PAGE_DEFAULTS = {
     "greet_fallback_ms": 4000,        # nothing said this long after the start: the opening note again, as an instruction
     "start_timeout_ms": 10000,
     "speaking_level": 0.02,           # the remote voice's level above which the dot pulses
-    "act_grace_ms": 3500,             # a handover or thank-you said with no tool call: the page acts after this
+    "act_grace_ms": 3500,             # a handover or the farewell said with no tool call: the page acts after this
     "handover_quiet_ms": 900,         # the handover's last words: the next voice comes in once both sides are this quiet
-    # The page acts on the handover's words only once the tester has spoken and the intro is this old: the
-    # words can never end the intro in its opening (the tool, and the clock at intro_max_minutes, still can).
-    "handover_min_ms": 15000,
+    # The page acts on the handover's words only once the tester has spoken and the intro is this old (a
+    # tester never heard: three times this): the words can never end the intro in its opening (the tool, and
+    # the clock at intro_max_minutes, still can). 10 s since the intro became 30-40 s (2026-11-18): a tester
+    # whose mic isn't heard is then handed over on the words from 30 s, not left until the clock.
+    "handover_min_ms": 10000,
     "reply_wait_ms": 6000,            # they finished this long ago and it has said nothing but a backchannel: `waiting`
     "reply_words": 3,                 # a line of the voice's with fewer words than this is a backchannel, not a reply
     # Only the final "I'll hand you over now.": the intro also explains that a handover is coming ("before I
@@ -108,21 +132,28 @@ PAGE_DEFAULTS = {
     "handover": r"\bhand(ing)? you over now\b",
     "closing_question": r"\banything I didn['’]?t ask\b",  # the page also straightens curly quotes first
     "thanks": r"\bthank(s| you)\b",
+    # The debrief's last words (prompts/interviewer_notes.md `farewell`): once heard, the page ends the debrief
+    # after act_grace_ms if end_debrief hasn't come, whether or not the closing question was asked.
+    "farewell": r"\bthat['’]?s everything from me\b",
 }
 
-# What the debrief is for, as the interviewer's lines show it came up (prompts/interviewer_debrief.md, "WHAT IAN
-# WANTS TO LEARN"; the same six in prompts/debrief_summary.md and study_report.md). Matching is loose on purpose:
-# it is a conversation, and GPT-Live rarely says a line word for word. None is required.
+# What the debrief is for, as the interviewer's lines show it came up (prompts/interviewer_debrief.md, the opening
+# question and "WHAT IAN MOST WANTS TO LEARN"; the same six in prompts/debrief_summary.md and study_report.md).
+# Matching is loose on purpose: it is a conversation, and GPT-Live rarely says a line word for word. None is
+# required, and since 2026-11-18 a debrief brings up three of them at most.
 TOPICS = {
     "stood_out": r"\b(stood|stand|stands) out\b|stuck with you|stay(ed|s)? with you|tell Ian first",
-    "use": r"\b(you'd|you would|would you|could you|do you|can you)\b[^.?!]*\b(use|using|come back to|listen again)\b",
+    "use": r"\b(you'd|you would|you could|would you|could you|do you|can you)\b[^.?!]*\b(use|using|come back to|listen again)\b",
     "future": r"\bimagine\b|\bbecome\b|where (this|it) (could|might|should|would) go|want (this|it) to (be|do)\b",
     "voice": r"\bvoices?\b",
-    "asking": r"\byou asked\b|stop it (and|to) ask|\bask(ing|ed)?\b[^.?!]*\bquestions?\b|\binterrupt",
+    # "you asked for quiet" and "you asked how it was coming along" are about the wait, not this
+    "asking": r"\byou asked\b(?! for (some )?quiet| how (it|the piece) was)|stop(ped)? it\b[^.?!]{0,40}\bask"
+              r"|\bask(ing|ed)?\b[^.?!]*\bquestions?\b|\binterrupt",
     "confusing": r"confus|(got|get|getting) in (the|your) way|unclear|didn't know what to do|trip(ped)? you up",
 }
 CLOSING = r"anything I didn'?t ask"  # matched, like TOPICS, on norm_quotes(text)
 THANKS = r"\bthank(s| you)\b"
+FAREWELL = r"\bthat'?s everything from me\b"  # the end of the farewell (prompts/interviewer_notes.md `farewell`)
 
 BACKGROUND: list[threading.Thread] = []  # after-end work (audio, summary): tests join these
 _FILE_LOCK = threading.Lock()
@@ -149,6 +180,14 @@ def _fill(text: str, **fields) -> str:
     for k, v in fields.items():
         text = text.replace("{" + k + "}", str(v))
     return text
+
+
+def farewell(name: str | None, n: dict | None = None) -> str:
+    """The debrief's last words, by name when there is one (prompts/interviewer_notes.md `farewell`): the one
+    wording the prompt gives it ({{farewell}}), and what PAGE_DEFAULTS["farewell"] and FAREWELL key on."""
+    n = n or notes()
+    name = (name or "").strip()
+    return _fill(n["farewell"], name=name) if name and name != n["name_unknown"] else n["farewell_unnamed"]
 
 
 # The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_notes.md step_first,
@@ -286,42 +325,125 @@ def intro_values_for(name: str | None) -> dict:
 
 
 def debrief_values(cfg: dict, listener_dir: Path) -> dict:
-    """The debrief's placeholders: name, the chapter (title, summary, how much they heard) and their moments
-    (demo/debrief.py). The topic about asking questions names their first moment, or asks whether anything
-    made them want to."""
+    """The debrief's placeholders: name, the chapter (title, summary, how much they heard), their moments and
+    what they did (demo/debrief.py). The topic about asking questions names their first moment, asks what
+    happened when they tapped to ask (no words of theirs recorded), asks whether they tried it, or (when they
+    heard none of the piece, or none was made) is not to be asked at all."""
     from demo import debrief
     name = (tester_record(listener_dir).get("name") or "").strip()
-    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg))
+    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg),
+                       debrief.activity(listener_dir, cfg, now=time.time()))
 
 
-def values_from(name: str, ctx: dict, got: list[dict]) -> dict:
-    """The debrief's placeholders from a name, a chapter_context and moments (also the simulated checks')."""
-    n = notes()
-    name = name or n["name_unknown"]
+def _times(k, n: dict) -> str:
+    k = int(k)
+    return n["times_1"] if k <= 1 else n["times_2"] if k == 2 else _fill(n["times_n"], n=k)
+
+
+def _span(seconds: float, n: dict) -> str:
+    m = int(round(seconds / 60))
+    return n["talk_short"] if seconds < 45 else n["talk_minute"] if m <= 1 else _fill(n["talk_minutes"], n=m)
+
+
+def heard_none(ctx: dict, act: dict | None) -> bool:
+    """They heard none of the piece: no position past its start, and no record that any of it was read."""
+    return float(ctx.get("minutes_heard") or 0) <= 0 and not (act or {}).get("listened")
+
+
+def _heard_line(ctx: dict, n: dict) -> str:
     minutes, heard = ctx.get("minutes"), float(ctx.get("minutes_heard") or 0)
     if minutes and heard >= minutes - 0.5:
-        heard_line = _fill(n["heard_all"], minutes=round(minutes))
-    elif heard < 1:
-        heard_line = n["heard_little"]
+        return _fill(n["heard_all"], minutes=round(minutes))
+    if heard < 1:
+        return n["heard_little"]
+    return _fill(n["heard_some"], heard=round(heard), minutes=round(minutes or 10))
+
+
+def account(ctx: dict, got: list[dict], act: dict | None, n: dict | None = None) -> list[str]:
+    """What the tester did, as the lines the interviewer (and the summary) reads: only what the records show
+    (demo/debrief.activity), in the words of prompts/interviewer_notes.md `did_*`. With no activity (`act`
+    None: the app kept no record), the piece, how much they heard and their moments, as before."""
+    n = n or notes()
+    a = act or {}
+    piece = bool(ctx.get("run")) or bool(a.get("started"))
+    phase = (a.get("end") or {}).get("phase")
+    if phase == "making" and a.get("ready"):
+        phase = "talk"  # the opening was ready and offered: they were talking, not waiting on it (the page says "making" until it is read)
+    ended = [n.get(f"did_end_{phase}") or n["did_end"]] if a.get("end") else []
+    out = []
+    if a.get("talk_s") is not None:
+        out.append(_fill(n["did_talk_started" if piece else "did_talk_only"], talk=_span(a["talk_s"], n)))
+    if not piece:
+        return (out + ended) or [n["did_unknown"]]
+    unheard = act is not None and heard_none(ctx, act)
+    if ctx.get("title") and (unheard or not ctx.get("summary")):
+        # the title alone: no summary of a piece they never heard (nothing to ask about it), or none written
+        out.append(_fill(n["did_piece_title"], title=ctx["title"]))
+    elif ctx.get("summary") and not unheard:
+        out.append(_fill(n["did_piece"], title=ctx.get("title") or n["title_unknown"], summary=ctx["summary"]))
+    if a.get("quiet_asks"):
+        out.append(_fill(n["did_quiet_asked"], times=_times(a["quiet_asks"], n)))
+    elif a.get("step_backs"):
+        out.append(n["did_quiet_given"])
+    if a.get("taps"):
+        out.append(_fill(n["did_tap_talk"], times=_times(a["taps"], n)))
+    if a.get("status_asks"):
+        out.append(_fill(n["did_status"], times=_times(a["status_asks"], n)))
+    if unheard:
+        ready = a.get("ready")
+        out.append(n["did_none_ready"] if ready else n["did_none"] if ready is None else n["did_none_not_ready"])
     else:
-        heard_line = _fill(n["heard_some"], heard=round(heard), minutes=round(minutes or 10))
+        out.append(_heard_line(ctx, n))
+        out += [_fill(n["did_moment"], when=_when(m["at_s"], n), words=m["words"]) for m in got]
+        if not got:  # a tap to ask with no words of theirs recorded is told as a tap, never as "never stopped it"
+            out.append(_fill(n["did_ask_taps"], times=_times(a["asks"], n)) if a.get("asks") else n["did_no_moments"])
+        if a.get("pauses"):
+            out.append(_fill(n["did_pauses"], times=_times(a["pauses"], n)))
+        if a.get("seeks"):
+            out.append(_fill(n["did_seeks"], times=_times(a["seeks"], n)))
+    return out + ended
+
+
+def recorded_account(study: Path) -> str | None:
+    """The account the newest debrief was given (its transcript's first record), for the study report: what
+    was true when they ended, not what the folder shows later (a piece that finished after they left)."""
+    for p in sorted(Path(study).glob("debrief-*.jsonl"), reverse=True):
+        for rec in read_lines(p)[:1]:
+            if rec.get("who") == "session" and rec.get("did"):
+                return str(rec["did"])
+    return None
+
+
+def values_from(name: str, ctx: dict, got: list[dict], act: dict | None = None) -> dict:
+    """The debrief's placeholders from a name, a chapter_context, moments and an activity (demo/debrief.py;
+    also the simulated checks'). `did` is the account of what they did, one "- " line each; `asking` says how
+    the topic about asking questions may come up, from what they did."""
+    n = notes()
+    bye = farewell(name, n)
+    name = name or n["name_unknown"]
     if got:
         asking = _fill(n["asking_moment"], when=_when(got[0]["at_s"], n), words=got[0]["words"])
-        lines = "\n".join("  - " + _fill(n["moment_line"], when=_when(m["at_s"], n), words=m["words"]) for m in got)
-        moments_text = "\n" + lines
+    elif act is not None and not ctx.get("run") and not act.get("started"):
+        asking = n["asking_no_piece"]  # End demo in the conversation: no piece, no wait
+    elif act is not None and heard_none(ctx, act):
+        asking = n["asking_unheard"]
+    elif (act or {}).get("asks"):
+        asking = _fill(n["asking_tapped"], times=_times(act["asks"], n))
     else:
-        asking, moments_text = n["asking_none"], n["moments_none"]
+        asking = n["asking_none"]
     return {"person": name, "title": ctx.get("title") or n["title_unknown"],
-            "summary": ctx.get("summary") or n["summary_unknown"], "heard": heard_line,
-            "moments": moments_text, "asking": asking,
-            "_moments": got, "_context": ctx}
+            "summary": ctx.get("summary") or n["summary_unknown"], "heard": _heard_line(ctx, n), "asking": asking,
+            "did": "\n".join("- " + x for x in account(ctx, got, act, n)), "farewell": bye,
+            "_moments": got, "_context": ctx, "_activity": act}
 
 
 def instructions(mode: str, values: dict) -> str:
     from voice.gpt_live import session as live_session
     shared = load_prompt("interviewer")
-    text = load_prompt(f"interviewer_{mode}", shared=shared,
-                       **{k: v for k, v in values.items() if not k.startswith("_")})
+    fields = {k: v for k, v in values.items() if not k.startswith("_")}
+    if mode == "debrief":  # a run saved before the farewell (demo/sim_interviewer.py grade) has none
+        fields.setdefault("farewell", farewell(fields.get("person")))
+    text = load_prompt(f"interviewer_{mode}", shared=shared, **fields)
     if live_session.approx_tokens(text) > live_session.INSTRUCTION_TOKENS:
         raise StageError(f"The interviewer's {mode} instructions are too long for GPT-Live.")
     return text
@@ -348,15 +470,18 @@ def session_config(cfg: dict, mode: str, values: dict, *, transport: str = "webr
 
 
 def page_notes(mode: str, values: dict) -> dict:
-    """The notes the page sends during this session, filled: `opened`, `waiting`, and the mode's clock notes."""
+    """The notes the page sends during this session, filled: `opened`, `waiting`, and the mode's clock notes.
+    The debrief's `waiting` is its own (`waiting_debrief`): it never says to carry on, and names the farewell."""
     n = notes()
     if mode == "intro":
         name = values.get("_name") or ""
-        got = {"opened": n["opened_intro_named"] if name else n["opened_intro"], "handover_now": n["handover_now"]}
+        got = {"opened": n["opened_intro_named"] if name else n["opened_intro"], "handover_now": n["handover_now"],
+               "waiting": n["waiting"]}
     else:
         name = values.get("person") or ""
-        got = {"opened": n["opened_debrief"], "time_up": n["time_up"], "wrap_now": n["wrap_now"]}
-    return {k: _fill(v, name=name) for k, v in {**got, "waiting": n["waiting"]}.items()}
+        got = {"opened": n["opened_debrief"], "time_up": n["time_up"], "wrap_now": n["wrap_now"],
+               "waiting": n["waiting_debrief"]}
+    return {k: _fill(v, name=name) for k, v in got.items()}
 
 
 def page_settings(cfg: dict, mode: str) -> dict:
@@ -369,21 +494,34 @@ def page_settings(cfg: dict, mode: str) -> dict:
 
 def covered(lines: list[dict]) -> dict:
     """What a debrief's lines show: {"topics": [keys of TOPICS, in the order they first came up], "closing":
-    the closing question was asked, "answered": they said something after it, "thanked": the interviewer
-    thanked them after that}. A debrief with all three is finished, whether or not end_debrief came."""
+    the closing question was asked (it is optional), "answered": they said something after it, "thanked": the
+    interviewer thanked them after that, "farewell": it said its last words (FAREWELL), "said": the tester said
+    anything at all}. A debrief whose farewell was said is finished, and so is one with the first three, whether
+    or not end_debrief came; but never one the tester said nothing in (`finished`)."""
     topics: list[str] = []
-    closing = answered = thanked = False
+    closing = answered = thanked = bye = spoke = False
     for x in lines:
         text = norm_quotes(x.get("text"))
         if x.get("who") == "interviewer":
             topics += [k for k, pat in TOPICS.items() if k not in topics and re.search(pat, text, re.I)]
+            bye = bye or bool(re.search(FAREWELL, text, re.I))
             if re.search(CLOSING, text, re.I):
                 closing, answered, thanked = True, False, False
             elif closing and answered and re.search(THANKS, text, re.I):
                 thanked = True
-        elif x.get("who") == "listener" and closing and text.strip():
-            answered = True
-    return {"topics": topics, "closing": closing, "answered": answered, "thanked": thanked}
+        elif x.get("who") == "listener" and text.strip():
+            spoke = True
+            answered = answered or closing
+    return {"topics": topics, "closing": closing, "answered": answered, "thanked": thanked, "farewell": bye,
+            "said": spoke}
+
+
+def finished(q: dict) -> bool:
+    """A debrief's lines (`covered`) show it ended itself: the farewell was said, or (the older shape) the
+    closing question was asked and answered and it thanked them after. Never when the tester said nothing: a
+    debrief nobody answered (they walked away, or their mic wasn't heard) reaches the farewell on the clock's
+    notes alone, and marked done it could not be taken again (End demo is gone for good)."""
+    return bool(q.get("said") and (q.get("farewell") or (q.get("closing") and q.get("answered") and q.get("thanked"))))
 
 
 def read_lines(path: Path) -> list[dict]:
@@ -529,8 +667,8 @@ def summarize(cfg: dict, study: Path, sid: str, values: dict, *, check=None) -> 
         out = study / f"debrief_summary-{sid}.md"
     intros = sorted(study.glob("intro-*.jsonl"))
     prompt = load_prompt("debrief_summary", person=values.get("person") or "", title=values.get("title") or "",
-                         summary=values.get("summary") or "", heard=values.get("heard") or "",
-                         moments=values.get("moments") or "", transcript=format_transcript(lines),
+                         summary=values.get("summary") or "", did=values.get("did") or notes()["did_unknown"],
+                         transcript=format_transcript(lines),
                          intro=format_transcript(read_lines(intros[-1])) if intros else "(none)")
     I = icfg(cfg)
     log = Run(name="study", root=study)
@@ -649,7 +787,7 @@ def mount(app, cfg: dict) -> None:
         q = covered(read_lines(s["path"]))
         write_json_atomic(state_path(s["study"], s["id"]), {
             "done": True, "finished_at": datetime.now().isoformat(timespec="seconds"), "topics": q["topics"],
-            "closing": q["closing"], "session": s["id"], "how": how})
+            "closing": q["closing"], "farewell": q["farewell"], "session": s["id"], "how": how})
 
     def close(s: dict, how: str) -> dict:
         """End a session: its cost if the page never reported it (wall clock), the debrief's state, then the
@@ -665,13 +803,18 @@ def mount(app, cfg: dict) -> None:
             state_p = state_path(s["study"], s["id"])
             state = read_json(state_p)
             if not state.get("done"):
-                # Delegation misses tools: a debrief whose closing question was asked and answered, and that
-                # thanked them after, is finished whether or not end_debrief came.
-                if s.get("ended_by_tool") or (q["closing"] and q["answered"] and q["thanked"]):
+                # Delegation misses tools: a debrief whose farewell was said (or, the older shape, whose
+                # closing question was asked and answered and that thanked them after) is finished whether
+                # or not end_debrief came. The closing question is optional: a debrief without it is not
+                # unfinished. One the tester said nothing in is never done, farewell and tool or not: it can
+                # be taken again.
+                if (s.get("ended_by_tool") or finished(q)) and q["said"]:
                     mark_done(s, "complete" if not s.get("ended_by_tool") else "end_debrief")
                 else:
+                    unanswered = not q["said"] and (q["farewell"] or s.get("ended_by_tool"))
                     write_json_atomic(state_p, {"done": False, "finished_at": None, "topics": q["topics"],
-                                                "closing": q["closing"], "session": s["id"], "how": how})
+                                                "closing": q["closing"], "farewell": q["farewell"],
+                                                "session": s["id"], "how": "no answer" if unanswered else how})
             out["done"] = bool(read_json(state_p).get("done"))
         t = threading.Thread(target=_after_end, args=(cfg, s["study"], s), name=f"interviewer-{s['id']}", daemon=True)
         BACKGROUND.append(t)
@@ -717,7 +860,8 @@ def mount(app, cfg: dict) -> None:
                   "model": sc["model"], "backend": sc["delegation"]["responses"]["model"],
                   "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
                   "tools": [t["name"] for t in sc["delegation"]["responses"]["tools"]],
-                  **({"moments": values["_moments"], "chapter": values["_context"]} if req.mode == "debrief"
+                  **({"moments": values["_moments"], "chapter": values["_context"],
+                      "activity": values.get("_activity"), "did": values.get("did")} if req.mode == "debrief"
                      else {"name_given": values.get("_name")})})
         out = {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
                "settings": page_settings(cfg, req.mode)}
@@ -781,7 +925,8 @@ def mount(app, cfg: dict) -> None:
                 out = {**out, "act": "handover", "name": name, "scripts": list(I["scripts"]), "entry": I["entry"]}
         else:  # end_debrief
             s["ended_by_tool"] = True
-            mark_done(s, "end_debrief")
+            if covered(read_lines(s["path"]))["said"]:  # never done with no word from the tester (`finished`); close() looks again
+                mark_done(s, "end_debrief")
             out = {"ended": True, "act": "close"}
         s["tools"].append(req.name)
         write(s, {"who": "tool", "name": req.name, "input": args, "by": req.by,

@@ -518,8 +518,8 @@ Deploy: `DEPLOY.md`, `deploy/`.
 - **The guide is unchanged:** it gets the name through profile.md (`testers.set_name`) and the handoff opening
   note (`notes.md` `handoff`). Tester runs are 10 minutes (`faststart.base.sized_overrides`, written into the
   run's config.yaml by `start_seed`); a chapter card (`faststart/card.py`, `prompts/fast_card.md`,
-  `/api/live/card/<run>`) is written within seconds of the start (no longer shown while the chapter is made: below). "I'm done" and the chapter's end hand back
-  (`handback_done`, `handback_end`), then `Live.debrief` starts the interviewer's debrief.
+  `/api/live/card/<run>`) is written within seconds of the start (no longer shown while the chapter is made: below). End demo (it was "I'm done") and the chapter's end hand
+  back (the `handback_*` notes, below), then `Live.debrief` starts the interviewer's debrief.
 - **The handover is prepared ahead** (Ian's notes, 2026-11-16: 20 s from the interviewer's last words to the
   guide's first, a jumpy screen). The gate fetches /app and the scripts into memory during the intro; when the
   handover's words are heard the page calls the tool itself, injects the page under the gate and opens the guide's
@@ -533,19 +533,65 @@ Deploy: `DEPLOY.md`, `deploy/`.
 - **After Ian's first tester run (2026-11-16)**, what differs from the spec and the lines above:
   - The interviewer is given the name (`wl study create "Label" --name Rolando`, the admin form, or a label that
     reads as a first name; not "Pilot", "Design Team": `testers.NOT_A_NAME`) and opens "Hi, is this Rolando?". It
-    says Ian built it and how the session will go, 60 to 90 seconds; still never what the thing is.
+    says Ian built it and how the session will go (60 to 90 seconds then; 30 to 40 since 2026-11-18, below);
+    still never what the thing is.
   - The handover happens on the words "hand you over now" (the page calls the tool as it hears them, once the
     tester has spoken and the intro is `handover_min_ms` old), so the intro prompt keeps "hand you over" for
     its final line. The guide's session opens ahead of the handover (`Live.handoff({hold})`), silent and deaf:
     about 2 s from the interviewer's last word to the guide's first.
   - The debrief is a conversation around topics (`interviewer.TOPICS`), not five fixed questions; it replies to
-    each answer, and the page tells it when a tester is left waiting (`waiting`).
+    each answer, and the page tells it when a tester is left waiting (`waiting`). (Much shorter since 2026-11-18.)
   - No chapter card while the chapter is made: the steps to the opening, then the chapter's parts. The card is
     still written at the start (the debrief and the admin page read it); the library shows its overview.
   - The play button is on a bottom bar fixed to the screen (`#player`), never on the circle; the bar shows
     whenever this conversation's chapter is ready and not started. A tap on the circle only talks or rests.
   - The pitch nudge waits for real interest: held after the guide says what it does and after its latest
     question, sent in a lull (`live.page.pitch_hold`); after a no the guide asks rather than guessing again.
+- **After Ian's second tester run (2026-11-18)** (his records: `listeners/t-ian-run-2/`; built and reviewed, not
+  yet tried by him; the prompt changes made after the review are not checked live):
+  - **The intro** is one question ("Hi, is this <name>?"), then one turn (Ian built it and asked for their
+    feedback; how this will go, with the End demo button named), then "Any questions, or are you ready to try
+    it?", then "I'll hand you over now." 30 to 40 seconds (`intro_max_minutes` 2.5, `handover_min_ms` 10000).
+  - **End demo** (`#end-demo`, fixed upper right, `page/live.js` `endDemo`/`endDemoShown`) replaces "I'm done"
+    (`#done`) and the library's debrief card. A tester sees it from the reveal through the conversation, while
+    the chapter is made (talking or resting) and while it is read, paused or asked about; never in the intro or
+    the debrief, or once the debrief is done. A tap goes to the debrief with nothing to confirm: with the
+    guide's session open the guide closes in a sentence and hands back (`handback_done` while the chapter is
+    read or asked about, an instruction, since it has a reading to stop; `handback_talk`, `handback_making` and
+    `handback_end` go as speakable context: as instructions GPT-Live let them pass, live); with no session
+    (resting, paused, a page they came back to) the debrief starts at once. A chapter being made is not
+    stopped. For a tester back on a page of their own, `GET /api/live/demo` says whether it shows: tester.json
+    `debrief_card` (the stored field, unchanged; "End demo: auto / show / hide" on the admin page), auto
+    meaning once they have a chapter or have started a conversation there.
+  - **What the tester did:** the page posts each press to `POST /api/demo/event` (`end_demo` with the phase,
+    `play`, `pause`, `seek`, `ask`, `tap_talk`; `demo/debrief.py` `EVENTS`/`PHASES`), appended to
+    `listeners/<lid>/study/events.jsonl`. `demo/debrief.activity` reads that, the guide's transcripts and the
+    chapter's files; `demo/interviewer.account` words it (`prompts/interviewer_notes.md` `did_*`, `asking_*`)
+    as the debrief's {{did}}, kept with the debrief transcript's first record for the summary and the study
+    report. It says only what a record shows, as of when they ended (Ian's debrief had said "you chose not to
+    cut in" of a piece he never heard).
+  - **The debrief:** the opening question, at most two more chosen from what they did and Ian's list, one
+    follow-up at most. Those are a ceiling: **it ends itself** once it has enough (two or three specific
+    comments), they sound finished, or they ask to stop (Ian: "no clear exit ... kept asking questions"; he said
+    "let's end the conversation here" and got the closing question). The closing question is optional. It ends
+    on one fixed farewell (`prompts/interviewer_notes.md` `farewell`: "Thank you, <name>. That really helps Ian.
+    That's everything from me."), which the page closes on (`PAGE_DEFAULTS["farewell"]`) and the server counts
+    as done if the tester said anything (`interviewer.finished`; debrief.json `farewell`). One to two minutes in
+    ten simulated runs (`debrief_target_minutes` 4, `debrief_max_minutes` 6). `demo.sim_interviewer` checks
+    `questions`, `more_topics`, `exit` (no question after they say they're done) and `too_soon`. Its `--runs`
+    is the total and defaults to 10: pass `--runs 2` with two personas for one each.
+  - **The guide** (note 3: fewer questions, more eager, picks up on silence): a question is the exception and
+    never two turns running (the offer and the pitch excepted); a lull before a chapter is its cue; "Want to
+    hear what I do?" after one exchange, never in its first two turns, and the page cues it once in the first
+    lull (`live.page.offer_nudge`, 30 to 50 s); the explanation ends by asking about one particular thing
+    (listening to, reading, watching); the pitch as soon as something lights them up, the thing itself
+    (`pitch_nudge_secs` [120, 180], `pitch_hold` 40/20/40). `python -m voice.gpt_live persona --personas
+    evening --handoff Ian` repeats the check it was tuned against (results: `voice/gpt_live/REPORT.md`).
+  - **The guide speaks as what it is** (Ian, the same run: "relating to human experiences which they couldn't
+    have any experience with": it envied his carbonara and gave a verdict on plywood). `00_system.md`: it has
+    never eaten, cooked, built or been anywhere, so it never talks as if it had; what it brings is curiosity,
+    what strikes it, a guess about them, an opinion about an idea. The example lines that modelled it ("a lunch
+    like that has me jealous", "a small piece of yourself") are gone.
 
 ## Local setup
 

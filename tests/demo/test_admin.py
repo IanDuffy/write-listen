@@ -213,11 +213,19 @@ def test_the_admin_page_lists_creates_and_acts_with_confirms(dcfg, site):
     page.wait_for_function("document.querySelector(\"tr[data-lid='t-pilot-2']\").innerText.includes('revoked')")
     assert any("Revoke Pilot 2" in m for m in dialogs) and testers.record("t-pilot-2")["token"] is None
 
-    page.select_option("tr[data-lid='t-pilot-1'] select[data-do='card']", "off")
+    # The End demo button for a tester who comes back (it replaced the library's debrief card, 2026-11-18): the
+    # control reads so; the stored field is still debrief_card with its values.
+    card = "tr[data-lid='t-pilot-1'] select[data-do='card']"
+    assert page.get_attribute(card, "aria-label") == "End demo button"
+    assert page.eval_on_selector_all(card + " option", "(os) => os.map((o) => [o.value, o.textContent])") == [
+        ["auto", "End demo: auto"], ["on", "End demo: show"], ["off", "End demo: hide"]]
+    assert "card" not in page.inner_text("tr[data-lid='t-pilot-1']").lower()
+    page.select_option(card, "off")
     deadline = time.monotonic() + 5
     while testers.record("t-pilot-1")["debrief_card"] != "off" and time.monotonic() < deadline:
         time.sleep(0.05)
     assert testers.record("t-pilot-1")["debrief_card"] == "off"
+    page.wait_for_function("document.getElementById('msg').innerText.includes('End demo button hidden')")
 
     page.click("tr[data-lid='t-pilot-2'] button[data-do='delete']")
     page.wait_for_function("!document.querySelector(\"tr[data-lid='t-pilot-2']\")")

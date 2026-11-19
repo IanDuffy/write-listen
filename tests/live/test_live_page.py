@@ -168,7 +168,7 @@ def site(cfg, tmp_path, monkeypatch):
                                greet_fallback_ms=1500, answer_wait_ms=2500, start_nudge_ms=1500,
                                # the clock-driven cues are off unless a test turns them on (Live.S)
                                hello_silence_secs=1000, pitch_nudge_secs=[1000, 1000], ready_remind_secs=1000,
-                               pitch_hold={"explained_secs": 0, "question_secs": 0, "max_secs": 0},
+                               pitch_hold={"explained_secs": 0, "question_secs": 0, "max_secs": 0}, offer_nudge=None,
                                aside_quiet_secs=1000, end_hold_secs=1000, talk_rest_secs=1000, wake_grace_secs=0,
                                # every listener counts as engaged (the guide keeps them company after the start)
                                # unless a test says otherwise
@@ -1477,6 +1477,80 @@ def test_no_nudge_once_the_chapter_is_started(world):
     p.hear("still chatting")
     p.page.wait_for_timeout(1500)
     assert w.notes["pitch_nudge"] not in instructions(p)
+
+
+OFFERED = "\\bwhat i do\\b"  # config live.page.offer_nudge.offered
+
+
+def test_the_first_lull_is_the_guides_cue_to_say_what_it_does_once(world):
+    """Ian's second tester run (2026-11-18): "Want to hear what I do?" came two minutes in, after four questions
+    about his day ("jump quicker into ... what they do"; "it did a good job at trying to find the silence"). Once
+    the listener has spoken and the conversation is after_secs old, the first lull sends offer_nudge; never twice."""
+    w = world
+    p = connect(w, start=False)
+    cue(p, "offer_nudge", {"after_secs": 0.5, "max_secs": 1000, "offered": OFFERED})
+    p.page.wait_for_timeout(4600)  # a lull, but the listener hasn't said a word yet: that is the hello's check-in
+    assert w.notes["offer_nudge"] not in instructions(p)
+    p.hear("oh hi, just winding down")
+    p.page.wait_for_timeout(1000)
+    p.say("Ooh, winding down from what, I wonder.")
+    p.page.wait_for_timeout(2500)
+    assert w.notes["offer_nudge"] not in instructions(p)  # not yet a lull (4 s of quiet from both)
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['offer_nudge'])})", timeout=4000)
+    assert p.L("Date.now() - L.spokeAt") >= 4000 and p.marks("offer-nudge")
+    p.say("Want to hear what I do?")
+    p.hear("no, tell me about your day")
+    p.page.wait_for_timeout(1000)
+    p.say("Ha, mine's been all talk.")
+    p.page.wait_for_timeout(5000)  # another lull
+    assert instructions(p).count(w.notes["offer_nudge"]) == 1
+
+
+def test_no_offer_cue_once_the_guide_has_said_what_it_does_nor_while_its_offer_is_being_answered(world):
+    w = world
+    p = connect(w, start=False)
+    cue(p, "offer_nudge", {"after_secs": 0.5, "max_secs": 1000, "offered": OFFERED})
+    p.hear("hey")
+    p.page.wait_for_timeout(600)
+    p.say("So, want to hear what I do?")
+    p.page.wait_for_timeout(5200)  # they're thinking about it: a lull, but its own offer is the line waiting
+    assert w.notes["offer_nudge"] not in instructions(p)
+    p.hear("sure")
+    p.page.wait_for_timeout(600)
+    p.say("I make short audio chapters, researched properly and written just for you.")
+    p.wait("L.explainedAt")
+    p.page.wait_for_timeout(5200)
+    assert w.notes["offer_nudge"] not in instructions(p) and not p.marks("offer-nudge")
+
+
+def test_by_max_secs_the_offer_cue_goes_even_while_they_talk(world):
+    """A listener who never pauses (or a guide that answers every line at once) leaves no lull: by max_secs the cue
+    goes as they speak, so the guide's reply takes it in."""
+    w = world
+    p = connect(w, start=False)
+    p.page.wait_for_timeout(1600)  # never on top of the guide's hello
+    age = p.L("(Date.now() - L.convAt) / 1000")  # max_secs counts from the conversation's start
+    cue(p, "offer_nudge", {"after_secs": 0.2, "max_secs": age + 2.5, "offered": OFFERED})
+    for _ in range(3):
+        p.hear("and another thing about the shed")
+        p.page.wait_for_timeout(400)
+    assert w.notes["offer_nudge"] not in instructions(p)  # before max_secs, only a lull would do
+    for _ in range(6):
+        p.hear("and the roof, too")
+        p.page.wait_for_timeout(400)
+        if w.notes["offer_nudge"] in instructions(p):
+            break
+    assert instructions(p).count(w.notes["offer_nudge"]) == 1
+    assert p.L("Date.now() - L.heardAt") < 4000  # no lull was needed
+
+
+def test_no_offer_cue_once_a_chapter_is_started(world):
+    w = world
+    p = connect(w)  # start_chapter called
+    cue(p, "offer_nudge", {"after_secs": 0.2, "max_secs": 1, "offered": OFFERED})
+    p.hear("still chatting")
+    p.page.wait_for_timeout(5200)
+    assert w.notes["offer_nudge"] not in instructions(p)
 
 
 @pytest.mark.parametrize("asked, reply", [("Let's just have some quiet time in the meantime.", "Sure, I'll give you space."),

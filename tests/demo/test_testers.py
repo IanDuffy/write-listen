@@ -159,6 +159,40 @@ def test_consent_is_recorded_once_with_its_time(dcfg, tmp_path):
     assert c.post("/api/demo/consent").json()["consent_at"] == "2020-01-01T00:00:00"  # the first is kept
 
 
+def test_a_button_press_is_kept_for_the_testers_own_debrief(dcfg, tmp_path):
+    """Ian's notes (2026-11-18): "pass a bit of context about the things that it did or buttons it pressed".
+    POST /api/demo/event appends to the request's tester's study/events.jsonl: known events only, bounded."""
+    one, two = testers.create(dcfg, "Pilot 1"), testers.create(dcfg, "Pilot 2")
+    c = client(dcfg, tmp_path)
+    assert c.post("/api/demo/event", json={"event": "end_demo"}).status_code == 404  # no tester
+    c.get(f"/t/{one['token']}")
+    got = c.post("/api/demo/event", json={"event": "end_demo", "phase": "resting", "chapter_t": None, "detail": None})
+    assert got.status_code == 200 and got.json() == {"ok": True, "saved": True}
+    assert c.post("/api/demo/event", json={"event": "pause", "phase": "reading", "chapter_t": 61.26, "detail": "x" * 300}).json()["saved"]
+    assert c.post("/api/demo/event", json={"event": "rm -rf", "phase": "reading"}).status_code == 400
+    assert c.post("/api/demo/event", json={"event": "pause", "detail": "x" * 5000}).status_code == 422
+    assert c.post("/api/demo/event", json={"phase": "reading"}).status_code == 422
+    d = testers.folder("t-pilot-1")
+    recs = [json.loads(x) for x in (d / "study" / "events.jsonl").read_text().splitlines()]
+    assert [(r["event"], r["phase"], r["chapter_t"]) for r in recs] == [("end_demo", "resting", None), ("pause", "reading", 61.3)]
+    assert set(recs[0]) == {"t", "event", "phase", "chapter_t", "detail"} and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d", recs[0]["t"])
+    assert len(recs[1]["detail"]) == 200
+    assert not (d / "sessions").exists() or not list((d / "sessions").glob("*.jsonl"))  # never where memory reads
+    assert not (testers.folder("t-pilot-2") / "study" / "events.jsonl").exists()        # and only their own folder
+    c2 = client(dcfg, tmp_path)
+    c2.get(f"/t/{two['token']}")
+    c2.post("/api/demo/event", json={"event": "tap_talk", "phase": "resting"})
+    assert len((d / "study" / "events.jsonl").read_text().splitlines()) == 2
+    from demo import debrief
+    assert debrief.activity(d)["end"]["phase"] == "resting" and debrief.activity(testers.folder("t-pilot-2"))["taps"] == 1
+    # A revoked link no longer writes; with tester mode off the route answers nobody.
+    testers.revoke("t-pilot-1")
+    assert c.post("/api/demo/event", json={"event": "pause"}).status_code == 404
+    off = client(demo_cfg(dict(dcfg), enabled=False), tmp_path)
+    off.cookies.set(testers.COOKIE, two["token"])
+    assert off.post("/api/demo/event", json={"event": "pause"}).status_code == 404
+
+
 def test_revoke_stops_the_link_and_the_cookie_and_keeps_the_folder(dcfg, tmp_path):
     got = testers.create(dcfg, "Pilot 1")
     c = client(dcfg, tmp_path)
@@ -248,7 +282,10 @@ def test_set_name_writes_one_line_in_the_profile(dcfg):
 
 
 def test_debrief_card_and_update(dcfg):
+    """The stored field and its values are kept (Ian's notes, 2026-11-18): it now governs the End demo button
+    for a tester who comes back with the debrief not done, in place of the library's debrief card."""
     testers.create(dcfg, "Pilot 1")
+    assert testers.CARD_VALUES == ("auto", "on", "off") and testers.record("t-pilot-1")["debrief_card"] == "auto"
     assert testers.set_debrief_card("t-pilot-1", "off")["debrief_card"] == "off"
     with pytest.raises(StageError):
         testers.set_debrief_card("t-pilot-1", "maybe")

@@ -1,6 +1,7 @@
 """Tester Demo, part D, server side: the 10-minute sizing of a fast run, the chapter card (faststart/card.py and
-/api/live/card), the handoff into the guide's first session (/api/live/start's `handoff`), and the library's
-debrief card (library_state's `debrief`). Nothing reaches a model or OpenAI."""
+/api/live/card), the handoff into the guide's first session (/api/live/start's `handoff`), and the handback
+notes. (The End demo button's state, which replaced the library's debrief card, is tested in test_demo_page.py.)
+Nothing reaches a model or OpenAI."""
 
 import json
 
@@ -10,7 +11,6 @@ from fastapi.testclient import TestClient
 import server
 from fakes import FakeAnthropic, Responder, all_text
 from faststart import base, card, outline
-from overnight import routes as lib_routes
 from stages import guide, llm
 from stages.common import Run, StageError, _merge
 from voice.gpt_live import session as S
@@ -229,42 +229,9 @@ def test_an_ordinary_start_is_unchanged(app, cfg):
 def test_the_handback_notes_exist():
     n = S.notes()
     assert "handing them back to the person who welcomed them" in n["handback_end"]
-    assert "I'm done" in n["handback_done"] and "Stop reading now" in n["handback_done"]
+    assert "End demo" in n["handback_done"] and "Stop reading now" in n["handback_done"]  # (it was I'm done)
+    for k in ("handback_talk", "handback_making"):  # End demo in conversation, and while the chapter is made
+        assert "End demo" in n[k] and "handing them back to the person who welcomed them" in n[k]
+    assert "isn't stopped" in n["handback_making"]
     assert "{name}" in n["handoff"]
 
-
-# --- 6. the library's debrief card -------------------------------------------------------------------
-
-@pytest.mark.parametrize("tester, debrief, chapter, show", [
-    (None, None, True, False),                                 # not a tester: never
-    ({"debrief_card": "auto"}, None, False, False),            # auto: not before a chapter was started
-    ({"debrief_card": "auto"}, None, True, True),
-    ({}, None, True, True),                                    # auto is the default
-    ({"debrief_card": "auto"}, {"done": True}, True, False),   # done: gone
-    ({"debrief_card": "off"}, None, True, False),              # Ian turned it off
-    ({"debrief_card": "on"}, None, False, True),               # Ian turned it on
-    ({"debrief_card": "on"}, {"done": True}, False, False),    # the card stays until the debrief is done
-])
-def test_the_debrief_card(tmp_path, tester, debrief, chapter, show):
-    lis = tmp_path / "listeners" / "t-pilot-1"
-    lis.mkdir(parents=True)
-    if tester is not None:
-        (lis / "tester.json").write_text(json.dumps({"label": "Pilot 1", "lid": "t-pilot-1", **tester}))
-    if debrief is not None:
-        (lis / "study").mkdir()
-        (lis / "study" / "debrief.json").write_text(json.dumps(debrief))
-    if chapter:
-        (lis / "chapters" / "roman-concrete-20261116").mkdir(parents=True)
-    got = lib_routes.debrief_card(lis)
-    assert got["show"] is show
-    if tester is not None:
-        assert got["line"] == "Got five minutes to tell Ian how it went?"
-
-
-def test_library_state_carries_the_debrief_field(cfg, tmp_path):
-    lis = tmp_path / "listener"
-    lis.mkdir()
-    cfg["listener_dir"] = str(lis)
-    assert lib_routes.library_state(cfg)["debrief"] == {"show": False, "line": ""}
-    (lis / "tester.json").write_text(json.dumps({"debrief_card": "on"}))
-    assert lib_routes.library_state(cfg)["debrief"]["show"] is True

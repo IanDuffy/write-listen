@@ -7,12 +7,20 @@
                                     registered, so server.py's own GET / answers as before.
     GET  /app                       {style, body, body_class}: the product page's parts for the gate's handoff
     POST /api/demo/consent          the gate's tap
+    POST /api/demo/event            {event, phase?, chapter_t?, detail?}: a button press on the tester's page
+                                    (end_demo, play, pause, seek, ask, tap_talk), appended to their
+                                    study/events.jsonl for the debrief's account of what they did
+                                    (demo/debrief.py). Tester mode only; 404 without a tester, 400 for an
+                                    event it doesn't know
     GET  /admin                     page/admin.html
     GET  /api/admin/testers         every tester's record and state, and the cost totals
     POST /api/admin/testers         {label, name?}: a new link (name: what the interviewer greets them by)
     POST /api/admin/greeting        {label, name?}: {name} it would greet them as, or null (it asks); nothing made
     POST /api/admin/testers/{lid}/revoke | reset | delete
-    POST /api/admin/testers/{lid}/card    {value: auto|on|off}
+    POST /api/admin/testers/{lid}/card    {value: auto|on|off}: tester.json's debrief_card. Since Ian's notes
+                                    of 2026-11-18 it governs the End demo button for a tester who comes back
+                                    with the debrief not done (it was the library's debrief card): auto shows
+                                    it once a chapter was started, on always, off never
     GET  /api/admin/testers/{lid}/study/{name}   the debrief summary, or a transcript as plain text
 
 The admin routes answer on loopback (no forwarding headers: behind Caddy every request comes from
@@ -30,12 +38,12 @@ import secrets as _secrets
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from stages import common
 from stages.common import ROOT, StageError
 
-from . import state, testers
+from . import debrief, state, testers
 
 BLANK = ROOT / "page" / "blank.html"
 GATE = ROOT / "page" / "gate.html"   # part C's
@@ -53,6 +61,14 @@ class NewTester(BaseModel):
 
 class Card(BaseModel):
     value: str
+
+
+class Event(BaseModel):
+    """A button press (demo/debrief.py EVENTS, PHASES); the lengths bound what a page can write."""
+    event: str = Field(max_length=40)
+    phase: str | None = Field(default=None, max_length=40)
+    chapter_t: float | None = None
+    detail: str | None = Field(default=None, max_length=2000)
 
 
 def demo_on(cfg: dict) -> bool:
@@ -197,6 +213,17 @@ def mount(app: FastAPI, cfg: dict) -> None:
         if rec is None:
             raise HTTPException(404)
         return {"consent_at": testers.record_consent(rec["lid"])["consent_at"]}
+
+    @app.post("/api/demo/event")
+    def event(req: Event, request: Request) -> dict:
+        """What the tester pressed, for the debrief (study/, never sessions/: memory reads those)."""
+        rec = tester_of(request) if demo_on(cfg) else None
+        if rec is None:
+            raise HTTPException(404)
+        if req.event not in debrief.EVENTS:
+            raise HTTPException(400, "Unknown event.")
+        saved = debrief.add_event(testers.folder(rec["lid"]), req.event, req.phase, req.chapter_t, req.detail)
+        return {"ok": True, "saved": saved is not None}
 
     # --- admin -----------------------------------------------------------------------
 

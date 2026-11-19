@@ -27,7 +27,7 @@ How the spec (docs/tester-demo.md) is built on the existing code. Written 2026-1
 | A. Per-tester server | stages/common.py, server.py, stages/guide.py, stages/memory.py, voice/gpt_live/routes.py, overnight/live.py, overnight/routes.py, faststart/guide_hooks.py, ask/routes.py | listener per request, per-listener Pipeline + chat, build limit of 3 with a queue, thread pinning, the 10-minute run sizing hook, per-tester reset |
 | B. Testers, admin, study | demo/testers.py, demo/state.py, demo/admin.py, demo/report.py, demo/cli.py, page/admin.html | token registry, /t/<token>, cookie, folders, consent, admin page and actions, per-tester stats, `wl study report` |
 | C. Interviewer | demo/interviewer.py, demo/debrief.py, prompts/interviewer*.md, prompts/interviewer_tools.json, page/gate.html, page/interview.js | the interviewer's GPT-Live sessions (intro, debrief), its routes, moments and chapter context for the debrief, transcripts/audio/summary in study/, the gate screen, the handoff into the guide |
-| D. Demo chapter | page/live.js, page/live.html, page/library.js, voice/gpt_live/notes.md, faststart/ (sizing), prompts/fast_card.md | the chapter card, the 10-minute fast sizing, "I'm done", the guide's handback at chapter end, tester mode on the product page, the debrief card in the library, the reveal and cool-down transitions |
+| D. Demo chapter | page/live.js, page/live.html, page/library.js, voice/gpt_live/notes.md, faststart/ (sizing), prompts/fast_card.md | the chapter card, the 10-minute fast sizing, End demo (it was "I'm done" and the library's debrief card), the guide's handback, tester mode on the product page, the reveal and cool-down transitions |
 | E. Hosting | deploy/ (Caddyfile, systemd units, env example, backup), DEPLOY.md, `wl deploy`, server host/port flags | the droplet setup Ian runs tonight |
 
 ## Contracts
@@ -120,8 +120,10 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
 - Storage: `listeners/<lid>/study/` (never `sessions/`): `intro-<sid>.jsonl`, `debrief-<sid>.jsonl` (same line
   format as session transcripts: `{"t", "who", "text", ...}`), `log.jsonl` (usage and Claude costs, same record
   shape as sessions/log.jsonl), `<live_id>.wav` / `.mp3` (fetched from OpenAI after the session, store: true),
-  `debrief_summary.md`, `debrief.json` `{done, finished_at, topics: [...], closing}` (the topics that came
-  up, `interviewer.TOPICS`; before Ian's first run it was `questions_asked: [1..5]`).
+  `debrief_summary.md`, `debrief.json` `{done, finished_at, topics: [...], closing, farewell}` (the topics that came
+  up, `interviewer.TOPICS`; before Ian's first run it was `questions_asked: [1..5]`; `closing`: the optional
+  closing question was asked; `farewell`: its last words were said, which is what finishes a debrief the tester
+  said something in).
 - Routes `/api/interview/{start,tool,line,usage,end}`: `start {mode: "intro"|"debrief", sdp}` → `{sid, live_id,
   sdp}`; tools: `set_listener_name {name}`, `handoff_to_guide {}` (intro), `end_debrief {}` (debrief).
   `end {sid}` closes, fetches audio in the background, and for a debrief writes the summary (Claude, cost in
@@ -161,13 +163,18 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
   three or more sections is softened.
 - Tester mode (`body.tester`, injected when the request is a tester's): hides Start fresh, Stop making this
   chapter, typing, the library's Settings and overnight wording.
-- "I'm done" (`#done`, shown during the chapter, tester mode only) and chapter end: the guide gets the notes key
-  `handback_done` / `handback_end` (close in a sentence or two, then say it's handing them back), then the page
-  tears the guide session down (usage, memory pass, archive as now) and calls `Interview.start("debrief",
-  {stream, onDone})`; the screen cools (product fades to ground, coral to neutral) during the debrief, and the
-  library appears after.
-- The library's debrief card: `library_state` adds `debrief: {show, line}` for a tester whose debrief isn't done
-  (and whose card isn't turned off); its button calls `Interview.start("debrief", ...)`.
+- End demo (`#end-demo`, upper right, tester mode only; it was "I'm done", `#done`, shown only during the
+  chapter) and chapter end: with the guide's session open the guide gets a handback note (`handback_done` while
+  the chapter is read or asked about, `handback_talk`, `handback_making`, `handback_end`: close in a sentence
+  or two, then say it's handing them back), then the page tears the guide session down (usage, memory pass,
+  archive as now) and calls `Interview.start("debrief", {stream, onDone})`; with no session open the debrief
+  starts at once. The screen cools (product fades to ground, coral to neutral) during the debrief, and the
+  library appears after. See "After Ian's second tester run" below for when it shows.
+- End demo for a tester back on a page of their own (it was the library's debrief card, `library_state`'s
+  `debrief: {show, line}`, now gone): `GET /api/live/demo` -> `{tester, show, done, setting}` from tester.json
+  `debrief_card` (auto | on | off) and study/debrief.json.
+- What the tester did: `POST /api/demo/event` `{event, phase, chapter_t, detail}` -> one line of
+  `listeners/<lid>/study/events.jsonl` (demo/debrief.py `add_event`, `EVENTS`, `PHASES`).
 
 ### Hosting (E provides)
 
@@ -203,3 +210,55 @@ What changed from the spec (`docs/tester-demo.md`) and from the contracts above:
 - **The pitch nudge waits for real interest**: held after the guide says what it does and while its latest
   question is answered, sent in a lull; after a no the guide asks which of the other things they mentioned
   they'd rather hear about.
+
+## After Ian's second tester run (2026-11-18)
+
+His notes and what was built (it supersedes the lines above where they differ):
+
+- **The intro** is one question ("Hi, is this <name>?"), then one turn: thanks, Ian built what they're about to
+  try and asked it to gather their feedback, and how this will go (passed to someone else, talk a little,
+  listen for about ten minutes, interrupt any time, the End demo button at the top of the screen, back for a
+  couple of minutes afterwards). Then "Any questions, or are you ready to try it?" and "I'll hand you over
+  now." 30 to 40 seconds, not 60 to 90 (`intro_max_minutes` 2.5, `handover_min_ms` 10000).
+- **The handover** showed the gate's "Tap to begin" again as the dot grew: the gate kept its state as classes
+  on `<body>`, which live.js rewrites. They are on `#w-gate` now.
+- **End demo.** One button, fixed upper right, in place of "I'm done" and the library's card ("Got five minutes
+  to tell Ian how it went?"). Shown from the reveal: through the conversation, while the chapter is made
+  (talking or resting), and while it is read, paused or asked about. Hidden during the intro and the debrief,
+  gone once the debrief is done. A tap goes to the debrief by default, with no confirm step: the guide closes
+  in a sentence and hands back if its session is open, otherwise the debrief starts at once. A chapter being
+  made is not stopped. A tester who comes back with the debrief not done sees the same button (Ian's per-tester
+  setting, the stored `debrief_card`, governs it). During the debrief the circle's screen is shown and scrolled
+  to, wherever in the library the button was pressed.
+- **What the tester did.** The page reports button presses (`/api/demo/event`); `demo/debrief.activity` adds
+  what the guide's transcripts and the chapter's files show (how long they talked before a chapter was started,
+  summed within visits; quiet asked for; taps to talk; asking how it was going; whether the piece was ready and
+  how much was heard; questions asked mid-piece in their words, or taps to ask with nothing recorded; pauses
+  and moves; where End demo was pressed). A line is left out when no record shows it, and the study report reads
+  it as of when the tester ended.
+- **The debrief** is the opening question, at most two more chosen from that account and Ian's list, one
+  follow-up at most, the fixed closing question, thanks by name: about three minutes (clocks at 4 and 6). It
+  asks only about things that happened.
+- **The debrief ends itself** (Ian's note on that debrief, the same day: "there was no clear exit... the
+  interviewer kept asking questions"; he said "let's end the conversation here" and got the closing question).
+  After every answer it weighs whether it has enough: two or three specific comments are more than enough, and
+  so is a tester who sounds finished. The questions are a ceiling, a request to stop gets the farewell at once,
+  and the closing question is optional (only for someone who plainly has more to say). The end is one fixed
+  farewell, "Thank you, <name>. That really helps Ian. That's everything from me." (`farewell` in
+  prompts/interviewer_notes.md; the code keys on its last sentence): the page ends the debrief on it after
+  `act_grace_ms` if `end_debrief` hasn't come, and never cues the voice again after it; the server counts a
+  debrief whose farewell was said as done. `debrief.json` gains `farewell`; `closing` only records whether the
+  optional question was asked. The clock notes ask for the farewell (no more questions at 4 minutes, the
+  farewell now at 6). `demo/sim_interviewer.py` requires the farewell, not the closing question, and its `exit`
+  check fails any question asked after the tester said they were done (personas `stops`, `trails`).
+  After the review of that change (the same day; offline tests only, not rerun live): a debrief the tester said
+  nothing in is never marked done, by the farewell or the tool (`covered()["said"]`; `how: "no answer"`), so
+  someone who walked away can take it again; the debrief has its own `waiting` note (`waiting_debrief`: no
+  "carry on", it names the farewell); "sound finished" needs one specific comment first, a mid-sentence pause is
+  not trailing off, and a farewell spoken over is said again in full; the `asking_*` lines no longer owe a
+  question; the sim's `DONE` pattern is tighter, its moment rule follows the prompt, and `too_soon` fails an
+  end on a fragment.
+- **The guide**: few questions (never two turns running), eager, a lull before a chapter is its cue; it offers
+  to say what it does after one exchange (never in its first two turns; the page cues it once at the first
+  lull, `live.page.offer_nudge`), ends the explanation by asking about one particular thing, and pitches the
+  thing itself as soon as something lights them up.

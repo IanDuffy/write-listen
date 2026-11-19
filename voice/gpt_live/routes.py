@@ -6,6 +6,8 @@
                               opening is sent or recorded here (the page opens this session a moment ahead of
                               the handover and sends the `handoff` note itself, with the name, at the handover);
                               the answer's `debrief_done`: their debrief is done, so no handback again
+    GET  /api/live/demo       {tester, show, done, setting}: a tester's End demo button (page/live.js) on a page
+                              they came back to: Ian's setting for them, and whether their debrief is done
     POST /api/live/resume    {"session", "sdp"}: the same conversation in a new GPT-Live session (the old
                               one dropped, rested too long, or neared its time limit), told the conversation so far
     POST /api/live/tool       {"session", "name", "args"}: a tool the backend called, run in the conversation
@@ -173,9 +175,28 @@ def continuing(cfg: dict, pipe) -> dict | None:
 
 def debrief_done(cfg: dict) -> bool:
     """Tester Demo: this tester's debrief is done (study/debrief.json, demo/interviewer.py), so the page never
-    hands back to the interviewer again: a later chapter just ends, and I'm done isn't shown."""
+    hands back to the interviewer again: a later chapter just ends, and End demo isn't shown."""
     got = fast_base.read_json(common.listener_dir(cfg) / "study" / "debrief.json", {})
     return bool(isinstance(got, dict) and got.get("done"))
+
+
+def end_demo(cfg: dict) -> dict:
+    """Tester Demo: the End demo button (page/live.js; it replaced the library's debrief card, Ian 2026-11-18)
+    for a tester on a page they came back to. Handed over by the interviewer the page shows it without asking;
+    back later, it follows Ian's setting for them (tester.json `debrief_card`, the admin page's "End demo"
+    control; the stored field kept its name): "on" always, "off" never, "auto" (the default) once they have
+    a chapter (a folder under chapters/; the page adds: or a conversation begun on it). `show` is false, and
+    `done` true, once the debrief is done (study/debrief.json). Not a tester (no tester.json): never."""
+    listener = common.listener_dir(cfg)
+    tester = fast_base.read_json(listener / "tester.json", None)
+    if not isinstance(tester, dict):
+        return {"tester": False, "show": False, "done": False, "setting": "off"}
+    done = debrief_done(cfg)
+    setting = tester.get("debrief_card") if tester.get("debrief_card") in ("auto", "on", "off") else "auto"
+    chapters = listener / "chapters"
+    started = chapters.is_dir() and any(p.is_dir() and not p.name.startswith((".", "_")) for p in chapters.iterdir())
+    return {"tester": True, "show": bool(not done and (setting == "on" or (setting == "auto" and started))),
+            "done": done, "setting": setting}
 
 
 def let_go(pipe) -> None:
@@ -238,6 +259,10 @@ def mount(app, cfg: dict, pipe, chat) -> None:
     def align_js() -> Response:
         return Response(ALIGN_JS.read_text(encoding="utf-8"), media_type="text/javascript",
                         headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/live/demo")
+    def demo() -> dict:
+        return end_demo(cfg)
 
     @app.post("/api/live/start")
     def start(req: Start) -> dict:

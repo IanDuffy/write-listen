@@ -14,6 +14,68 @@ in how the transcript spells them. The persona is better than at the start but d
 (graded 3-6/10): praise and long pitches persist, and going back after a question still leans on the
 page's own cues. Costs: $0.05 per connected minute; a 20-minute live chapter is about $1.10 of voice.
 
+## After Ian's second tester run (2026-11-18): fewer questions, more eager
+
+**What he said.** "Too many questions now from the narrator, it should pick up on silence or try to get the
+listener to talk a little bit more, overall it should be more eager"; in his debrief: the voice "could have been
+a little bit more peppy", and "we were talking a little too much before the ideas were brought into this
+conversation ... like when you meet someone new, you're like, So what do you do?". In his run
+(`listeners/t-ian-run-2/sessions/20261118-184440.jsonl`) four questions about his day came before the offer at
+2:00, and the pitch at 4:50, hedged and about a neighbouring subject. The tester handoff had removed the hello
+and name exchange, so "one or two easy exchanges" became four small-talk questions; the 2026-11-16 holds had
+pushed the nudge to 3:30.
+
+**Changed** (tests in `tests/live/`; the instruction files' notes above `---` record why):
+- Instructions: the persona is eager and never dutiful; conversation is bright and quick (the reading keeps its
+  calm voice); a question is the exception and never two turns running (the offer and the pitch excepted); no
+  small-talk questions that go nowhere, none about dull work; a lull before a chapter is the guide's cue; the
+  offer after one exchange, never in its first two turns; the explanation ends by asking about one particular
+  thing (listening to, reading, watching); the pitch as soon as something lights them up, the thing itself; a
+  quiet listener is offered a surprise that has nothing to do with their work or day.
+- The page: `offer_nudge` (`live.page.offer_nudge`: once, at the first lull from 30 s, by 50 s even while they
+  talk; never once the guide has said what it does); `pitch_nudge_secs` [120, 180]; `pitch_hold` 40/20/40.
+- The handback notes for End demo (`handback_talk`, `handback_making`; `handback_end` reworded) go as speakable
+  context: as instructions GPT-Live let them pass (12 s of silence in conversation, 8 s at the chapter's end).
+- `persona.converse(handoff=...)` and `python -m voice.gpt_live persona --handoff NAME` open as the Tester Demo
+  does; the `evening` persona (prompts/live_personas.md) is the listener these were checked against; a line
+  with "..." is spoken in pieces; `pace()` reports when it said what it does, pitched and started.
+- prompts/live_grade.md's criteria follow the new rules (they still graded the 2026-11-15 guide); not yet used.
+
+**Live checks** (five conversations, no grade, about $0.88; `voice/gpt_live/_runs/20261118-192341`, `-193443`):
+
+| Listener | Said what it does | Pitched | Started | Turns that asked |
+| --- | --- | --- | --- | --- |
+| Ian-like, handoff (before tuning) | 1:16 | 2:19 | 2:48 | 5 of 8 |
+| Terse, handoff (before tuning) | 0:23 (she asked) | 2:06 | 2:37 | 5 of 9 |
+| Dad, plain hello (before tuning) | 0:17 (he asked) | 1:27 | 1:54 | 4 of 4 |
+| Ian-like again (after tuning) | 1:14 | 2:07 | 2:40 | 3 of 13 |
+| Terse again (after tuning) | 0:21 | 1:24 | 1:49 | 3 of 7 |
+
+The handback through the real page: nine short runs, $0.21 (speakable: the guide's goodbye begins 0.5 to 0.6 s
+after the tap and the debrief 4 to 7 s after it; mid-reply it varies, bounded by the page's 2.5 s rule).
+
+**Not checked live** (a review after the tuning found them; wording only, pinned by tests): on the tuned text
+the terse listener got "Want to hear what I do?" as the guide's second turn, 13 s in, then a cold "What's
+something you'd be tickled to dive into?", and was pitched the dull work week that was all she had said. Now:
+not in its first two turns, the explanation ends by asking about one particular thing, and a pick for a quiet
+listener leaves their work and day alone. One run of `--personas reserved --handoff Priya` would show it
+(about $0.15). Whether the voice sounds peppier cannot be told from transcripts: its measured pace is unchanged
+(3.5 to 3.8 words a second).
+
+**After those fixes, and Ian's further note** ("the narrator ai was relating to human experiences which they
+couldn't have any experience with": "Carbonara ... I'm kinda jealous of that", "Plywood can be fussy, but when
+it's dialed in, it's so clean"): `00_system.md` now says it speaks as what it is (never eaten, cooked, built,
+been anywhere), and the example lines that modelled it are gone ("a lunch like that has me jealous", "a small
+piece of yourself"). Two conversations on the final text (`_runs/20261118-220431`, $0.29):
+
+| Listener | Said what it does | Pitched | Started | Turns that asked |
+| --- | --- | --- | --- | --- |
+| `evening` (Ian-like), handoff | 1:14 offer, 1:38 said | 2:16 (cut by his fragments; again at 2:44) | not within 3 minutes | 4 of 11 |
+| `builder`, handoff | 0:44 (he asked) | 1:41 | 2:10 | 3 of 6 |
+
+No claimed experience in either. Closest: "I love the chaos" and "Carbonara! That's bold on a weeknight." Still
+a small-talk question in one ("What kind of dinner night was it?"). The offer was not in its first two turns.
+
 ## Ian's fifth note (2026-11-16): step back while it researches
 
 "It should default to silence the mic ... suggest she will step back for a bit to research, unless the listener

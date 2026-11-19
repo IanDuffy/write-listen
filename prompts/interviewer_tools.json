@@ -8,6 +8,6 @@
    "description": "Hand the person over, right after the interviewer has said it is handing them over. Reply with an empty message.",
    "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}},
   {"name": "end_debrief",
-   "description": "End the conversation, right after the interviewer has thanked them by name at the very end. Reply with an empty message.",
+   "description": "End the conversation, right after the interviewer has said its farewell (it thanks them and ends \"That's everything from me.\"). Reply with an empty message.",
    "input_schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": false}}
 ]

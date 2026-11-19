@@ -340,7 +340,9 @@ def test_read_along_opens_the_chapter_view_in_this_page(site):
         page.click("#read")
         page.wait_for_function("location.hash === '#/chapter/synthetic'")
         page.wait_for_function("!document.getElementById('chapter-audio').paused && document.getElementById('audio').paused")
-        assert page.evaluate("document.getElementById('chapter-audio').currentTime") >= 30
+        # (waited for: the player seeks once the recording's metadata is in, a moment after it stops being paused;
+        # asserted at once, this failed about one run in six)
+        page.wait_for_function("document.getElementById('chapter-audio').currentTime >= 30")
         assert len(page.context.pages) == 1
     finally:
         browser.close()

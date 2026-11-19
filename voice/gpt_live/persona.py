@@ -168,20 +168,42 @@ def listener_reply(cfg: dict, log_run: Run, persona: dict, timeline: list[dict],
     return text
 
 
+PAUSE = re.compile(r"\s*(?:\.\.\.|…)\s*")  # a listener's line with "..." in it is spoken in pieces, a pause at each
+PAUSE_SECS = 2.5
+
+
+def explained_at(timeline: list[dict]) -> float | None:
+    """When the guide first said what it does (session.EXPLAINED, as the page's L.explainedAt)."""
+    return next((x["t"] for x in timeline if x["who"] == "guide" and live.EXPLAINED.search(x.get("text") or "")), None)
+
+
 async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 12, after_start: int = 2,
-                   max_minutes: float = 6, log_run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None) -> dict:
-    """One onboarding conversation by voice; returns (and saves) its transcript."""
+                   max_minutes: float = 6, log_run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None,
+                   handoff: str | None = None, pause_secs: float = PAUSE_SECS) -> dict:
+    """One onboarding conversation by voice; returns (and saves) its transcript. `handoff`: the name a
+    tester gave the interviewer: the conversation opens with the page's `handoff` note (the guide greets
+    them by name) instead of the hello, as in the Tester Demo. A listener's line with "..." in it is
+    spoken in pieces with `pause_secs` of silence at each (someone who talks in fragments: does the guide
+    wait, or cut in?)."""
     log_run = log_run or claude_run()
     name = persona["name"]
     values = first_meeting_values(persona["now"])
     reply_fn = reply_fn or (lambda timeline, moment: listener_reply(cfg, log_run, persona, timeline, moment))
-    sim = S.Sim(cfg, live.session_config(cfg, values, transport="websocket"), label=f"persona {name}",
+    notes = live.notes()
+    kw = dict(sim_kwargs or {})
+    if handoff:
+        kw["greet"] = False
+    sim = S.Sim(cfg, live.session_config(cfg, values, transport="websocket", greet=not handoff), label=f"persona {name}",
                 tool_handler=S.FakeTools(), max_minutes=max_minutes, audio_out=out_dir / f"{name}.guide.wav",
-                events_path=out_dir / f"{name}.events.jsonl", **(sim_kwargs or {}))
+                events_path=out_dir / f"{name}.events.jsonl", **kw)
     before = _cost_lines()
     await sim.connect()
+    if handoff:
+        await sim.note("commentary", notes["handoff"].replace("{name}", handoff))
     since, said, silent, stop = 0, 0, 0, "turns"
-    nudges, nudged, notes = cfg["live"]["page"].get("pitch_nudge_secs") or [], 0, live.notes()
+    page = cfg["live"]["page"]
+    nudges, nudged = page.get("pitch_nudge_secs") or [], 0
+    offer, offered, hold = page.get("offer_nudge") or {}, False, page.get("pitch_hold") or {}
     after_noted = False
     try:
         while True:
@@ -229,13 +251,28 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                     break
                 continue
             silent = 0
-            # The page's clock (live.js conversationCues): a conversation running long with no chapter is
-            # nudged toward one, the note sent as the listener speaks.
-            if (nudged < len(nudges) and sim.now() > nudges[nudged]
-                    and not any(c["name"] == "start_chapter" for c in sim.calls)):
+            # The page's clock (live.js conversationCues), the notes sent as the listener speaks. A guide that
+            # hasn't said what it does by offer_nudge.max_secs is cued to offer it (the page also cues it at
+            # the first lull from after_secs: here, when the guide has just let a silence run); a conversation
+            # running long with no chapter is nudged toward one, not within pitch_hold.explained_secs of the
+            # guide's explanation.
+            no_chapter = not any(c["name"] == "start_chapter" for c in sim.calls)
+            told = explained_at(sim.timeline + ([{"t": sim.now(), "who": "guide", "text": sim.spoken_since(0)}]))
+            if (offer and not offered and told is None and no_chapter and said >= 1
+                    and sim.now() > (offer["after_secs"] if not new else offer["max_secs"])
+                    and not (offer.get("offered") and sim.turns
+                             and re.search(offer["offered"], sim.turns[-1]["text"], re.I))):
+                await sim.note("instructions", notes["offer_nudge"])
+                offered = True
+            elif (nudged < len(nudges) and sim.now() > nudges[nudged] and no_chapter
+                    and not (told is not None and sim.now() - told < (hold.get("explained_secs") or 0))):
                 await sim.note("instructions", notes["pitch_nudge" if nudged == 0 else "pitch_nudge_again"])
                 nudged += 1
-            await sim.say(reply)
+            pieces = [x for x in PAUSE.split(reply) if x.strip()] if pause_secs else [reply]
+            for i, piece in enumerate(pieces or [reply]):
+                if i:
+                    await asyncio.sleep(pause_secs)
+                await sim.say(piece)
             said += 1
             start = next((c for c in sim.calls if c["name"] == "start_chapter"), None)
             after = sum(1 for x in sim.timeline if x["who"] == "listener" and x.get("text") and start
@@ -332,11 +369,28 @@ def grade(cfg: dict, path: Path, log_run: Run | None = None) -> dict:
     return data
 
 
+def pace(transcript: dict) -> dict:
+    """The pace Ian asked for (2026-11-18): when the guide said what it does (seconds in), when it pitched
+    (its last question before start_chapter) and started the chapter, and how many of its turns up to the
+    start asked something (backchannels like "Mm." are not counted as turns)."""
+    tl = transcript["timeline"]
+    start = next((x["t"] for x in tl if x["who"] == "tool" and x.get("name") == "start_chapter"), None)
+    turns = [x for x in tl if x["who"] == "guide" and (start is None or x["t"] <= start)
+             and len(re.findall(r"[A-Za-z']+", x["text"])) > 2]
+    asked = [x for x in turns if "?" in x["text"]]
+    return {"explained": explained_at(tl), "pitched": asked[-1]["t"] if asked and start is not None else None,
+            "started": start, "turns": len(turns), "questions": len(asked)}
+
+
 def summary(name: str, transcript: dict, g: dict | None) -> str:
     c = transcript["cost"]
     lines = [f"{name}: stop={transcript['stop']}, {c['seconds']:.0f} s connected, GPT-Live ${c['usd']:.3f}"
              f" (backend {c['backend']['input']} in / {c['backend']['output']} out), "
              f"tools: {', '.join(x['name'] for x in transcript['calls']) or 'none'}"]
+    k = pace(transcript)
+    at = lambda v: "never" if v is None else f"{int(v) // 60}:{int(v) % 60:02d}"  # noqa: E731
+    lines.append(f"  said what it does at {at(k['explained'])}, pitched at {at(k['pitched'])}, started at "
+                 f"{at(k['started'])}; {k['questions']} of its {k['turns']} turns up to then asked something")
     if g:
         failed = [r for r in g["rules"] if r["verdict"] == "fail"]
         lines.append(f"  score {g['score']}/10; failed: {', '.join(r['id'] for r in failed) or 'none'}; "

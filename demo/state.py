@@ -13,6 +13,10 @@ is right whoever's request (or none) is in scope.
 - minutes_heard: the newest chapter's live/reading.jsonl, the best reading of each paragraph (most words
   heard), at live.page.words_per_second.
 - questions: that chapter's asides of kind ask in which the listener said something.
+- all_states adds the tester's record, with debrief_card (auto/on/off): whether a tester who comes back with
+  the debrief not done sees the End demo button (demo/testers.py).
+- The tester's button presses (study/events.jsonl, POST /api/demo/event) count as activity for last_active,
+  like every study/*.jsonl; the debrief's account of what they did is demo/debrief.activity.
 - cost: sessions/log.jsonl, study/log.jsonl, chapters/*/log.jsonl (minus the early scout's lines copied in
   when a run adopts it: they are counted in chapters/_scouts/) and chapters/_scouts/*/log.jsonl; provider
   openai is GPT-Live, anthropic (or none) Claude. A GPT-Live session seen in a transcript or the reading log

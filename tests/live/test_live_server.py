@@ -698,7 +698,7 @@ def test_the_pitch_waits_for_real_interest(app, cfg):
     assert "passing mention" in notes["pitch_nudge"] and "waved off" in notes["pitch_nudge"]
     assert "don't pitch: ask one easy question" in notes["pitch_nudge"]
     assert "don't guess again" in notes["pitch_nudge_again"]
-    assert "never at a passing mention" in pitch and "If they say no to a pitch, don't guess again" in pitch
+    assert "Never pitch a passing mention" in pitch and "If they say no to a pitch, don't guess again" in pitch
     assert "Want to hear what I do?" in pitch  # the offer he liked stays
     # Review follow-ups: no "what would you love to understand better" (20_meeting.md rules that kind of
     # question out: asked cold, people go blank), and after a no the ask has edges and is not made twice
@@ -712,6 +712,79 @@ def test_the_pitch_waits_for_real_interest(app, cfg):
     assert 'Never ask an open "what would you like?" twice' in pitch and "what they want to learn" in pitch
     page = cfg["live"]["page"]
     hold = page["pitch_hold"]
-    assert hold["explained_secs"] >= 45 and hold["question_secs"] >= 15 and hold["max_secs"] <= 90
+    assert hold["explained_secs"] >= 30 and hold["question_secs"] >= 15 and hold["max_secs"] <= 90
     assert page["explained"] == S.EXPLAINED.pattern  # the page and the server agree on "explained"
     assert '"pitch_hold"' in app[0].get("/live.js").text
+
+
+def test_the_guide_never_speaks_as_if_it_had_lived_what_the_listener_has(app, cfg):
+    """Ian's second tester run (2026-11-18): "the narrator ai was relating to human experiences which they couldn't
+    have any experience with" ("Carbonara ... I'm kinda jealous of that"; "Plywood can be fussy, but when it's
+    dialed in, it's so clean"). One of its own example lines had said a lunch "has me jealous"."""
+    text = S.instructions(S.values_for(cfg, VALUES))
+    who = text[text.index("WHO YOU ARE"):text.index("HOW YOU TALK")]
+    assert "You speak as what you are" in who and "never talk as if you had" in who
+    assert "never an experience of your own" in text
+    assert "jealous" not in text and "piece of yourself" not in text and "No invented past" not in text
+
+
+def test_the_guide_is_eager_asks_little_and_gets_to_the_chapter_sooner(app, cfg):
+    """Ian's second tester run (2026-11-18): "too many questions now from the narrator, it should pick up on
+    silence ... overall it should be more eager"; what it does came two minutes in and the pitch at 4:50, hedged
+    and about a neighbouring subject."""
+    notes, text = S.notes(), S.instructions(S.values_for(cfg, VALUES))
+    part = lambda a, b: text[text.index(a):text.index(b)]  # noqa: E731
+    who, talk = part("WHO YOU ARE", "HOW YOU TALK"), part("HOW YOU TALK", "GETTING TO KNOW")
+    meeting, pitch = part("GETTING TO KNOW", "THE PITCH"), part("THE PITCH", "THE CHAPTER\n")
+    # eager, and it sounds it; the reading keeps its own voice
+    assert "Never dutiful" in who and "eager" in who
+    assert "bright, upbeat and quick" in talk and "calm, warm, unhurried" in part("THE CHAPTER\n", "IF THEY INTERRUPT")
+    # few questions: the exception, never two turns running, no small talk that goes nowhere
+    assert "A question is the exception" in talk and "Do you usually cook?" in talk
+    assert "half your turns end in a question" not in text
+    feel = [x for x in text.splitlines() if x.strip().startswith("Feel, not a script")]
+    assert len(feel) == 2 and not any("?" in x for x in feel)  # the examples it imitates ask nothing
+    # silence is its cue, not the listener's to fill
+    assert "A lull is your cue" in talk and "leave the pause to them" not in text
+    assert "Never fill a silence with another question about their day" in talk
+    # what it does after an exchange or two, then straight for what they'd love to hear about
+    # ... but not in its first two turns (live, a terse listener: "Want to hear what I do?" 13 s in, nothing about her)
+    assert "never in your first two turns" in meeting and "if that comes sooner" not in meeting
+    assert "After that exchange (two at most), or at the first lull after it" in meeting
+    # the explanation ends by asking about one particular thing (live: "What's something you'd be tickled to dive into?")
+    assert "End that same turn by asking about one particular thing" in meeting and "End that same turn on an invitation" not in meeting
+    assert meeting.count("listening to lately") == 2 and '"What\'s on your mind?"' in meeting  # the offer, and after it
+    assert "go straight for what they'd love to hear about" in meeting
+    assert "what you do by about a minute in, your pitch within two or three minutes" in meeting
+    # the pitch: the thing itself, plainly, as soon as it lights them up
+    assert "as soon as something lights them up" in pitch and "plainly and with enthusiasm" in pitch
+    assert "Never a neighbouring subject in its place" in pitch and '"I don\'t want to step on"' in pitch
+    assert "A question is the exception here too" in pitch  # company while it's made
+    # the page's cues keep that pace
+    page = cfg["live"]["page"]
+    assert page["pitch_nudge_secs"][0] <= 130 and page["pitch_nudge_secs"][1] <= 190
+    offer = page["offer_nudge"]
+    assert 20 <= offer["after_secs"] < offer["max_secs"] <= 60
+    assert "Want to hear what I do?" in notes["offer_nudge"] and "If they already know" in notes["offer_nudge"]
+    assert "listening to, reading or watching lately" in notes["offer_nudge"] and "what they'd love to hear about" not in notes["offer_nudge"]
+    assert "never a neighbouring subject" in notes["pitch_nudge"] and "no hedging" in notes["pitch_nudge"]
+    assert "say it in a sentence first" not in notes["pitch_nudge"]  # live: it explained itself again inside the pitch
+    # live checks (2026-11-18): three questions running to a terse listener, one about her dull work; a pitch
+    # with three question marks; the explanation offered again after it had been given
+    assert "after you've asked one, your next turn is never another" in talk and "never one about work they find dull" in talk
+    assert "your offer to say what you do and your pitch don't count" in talk  # the flow has each end in a question
+    # the lull cue is for before a chapter is started; while one is made a pause can sit (30_pitch.md says the same)
+    assert "Until their chapter is started" in talk and "Once their chapter is being made, a comfortable pause can sit" in talk
+    assert "stop asking: questions make a quiet person quieter" in meeting
+    # a quiet listener is never pitched the dull week that was all she had said (live, the same listener)
+    assert "offer to surprise them" in meeting and "nothing to do with their work or their day" in meeting
+    assert "name one thing" not in meeting and "pitch it as soon as they know what you do" in meeting
+    assert "Once you've said it, never offer or explain it again" in meeting
+    assert "one question mark in the whole pitch" in pitch
+    js = app[0].get("/live.js").text
+    assert '"offer_nudge"' in js and "N.offer_nudge" in js
+    # a returning listener is never offered the explanation by the instructions (the cue's wording covers them)
+    back = S.instructions(S.values_for(cfg, {**VALUES, "identity": "- Name: Sunniva."}))
+    assert "Want to hear what I do?" not in back and "A lull is your cue" in back
+    # the handoff from the interviewer greets by name, glad to meet them
+    assert "Say hello to {name} by name, brightly, glad to meet them" in notes["handoff"]

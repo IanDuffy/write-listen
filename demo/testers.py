@@ -4,6 +4,11 @@
     listeners/<lid>/tester.json    {label, lid, token, created, opened_at, consent_at, name, given_name,
                                     debrief_card: "auto"|"on"|"off", stage_hint, intro_done, ...}
 
+debrief_card (the name is kept from when it was the library's "Got five minutes to tell Ian how it went?"
+card; Ian's notes, 2026-11-18, replaced that with the End demo button): whether a tester who comes back with
+the debrief not done sees the End demo button. auto: once a chapter was started; on: always; off: never. In
+their first sitting the button shows whatever this says.
+
 A tester may be made with a name (Ian's notes, 2026-11-16): the interviewer greets them by it ("Hi, is this
 Rolando?"). With none given, a label that looks like a first name is used (first_name). It is saved as
 set_name saves one, so the guide has it whatever the intro does, and kept as given_name so a reset or a
@@ -330,6 +335,7 @@ def record_consent(lid: str) -> dict:
 
 
 def set_debrief_card(lid: str, value: str) -> dict:
+    """The admin's toggle: the End demo button for this tester when they come back (see the module's notes)."""
     if value not in CARD_VALUES:
         raise StageError(f"debrief_card must be one of {', '.join(CARD_VALUES)}.")
     return update(lid, debrief_card=value)

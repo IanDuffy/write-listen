@@ -173,6 +173,10 @@ class Page:
         return [e for e in self.js("window.__sent") if e["type"] == type_]
 
     def posted(self, path):
+        # A Playwright call first: the sync API delivers the page's request events only during one, so a wait that
+        # only slept and read self.posts could never see a post made after the last call (the end's post, behind
+        # the handover, timed out under load however long the wait).
+        self.js("1")
         return [b for p, b in self.posts if p == path]
 
 
@@ -211,11 +215,11 @@ def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     # It speaks first: the opening note goes as speakable context once the session starts.
     wait_for(lambda: page.sent("session.commentary.append"))
     assert page.sent("session.commentary.append")[0]["content"].startswith("Begin now")
-    assert page.js("document.body.classList.contains('w-on')")
+    assert page.js("document.getElementById('w-gate').classList.contains('w-on')")
     page.wait("getComputedStyle(document.getElementById('w-dot')).backgroundColor === 'rgb(107, 99, 92)'")
     page.say("Thanks so much for making the time. What's your name?")
-    page.wait("document.body.classList.contains('w-speaking')")
-    page.page.wait_for_function("() => !document.body.classList.contains('w-speaking')", timeout=4000)
+    page.wait("document.getElementById('w-gate').classList.contains('w-speaking')")
+    page.page.wait_for_function("() => !document.getElementById('w-gate').classList.contains('w-speaking')", timeout=4000)
     page.emit({"type": "session.input_transcript.delta", "delta": "I'm Sam."})
     page.tool("set_listener_name", {"name": "Sam"})
     wait_for(lambda: site.testers.names == [("t-sam", "Sam")])
@@ -231,7 +235,7 @@ def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     assert page.posted("api/interview/end")[-1]["how"] == "handover"
     # The next screen came into this same document; the gate warmed and then went.
     assert page.js("getComputedStyle(document.getElementById('next')).color") == "rgb(1, 2, 3)"
-    assert page.js("document.body.classList.contains('tester') && document.body.classList.contains('w-warm')")
+    assert page.js("document.body.classList.contains('tester') && document.getElementById('w-gate').classList.contains('w-warm')")
     assert page.js("!document.getElementById('w-base')")
     # The dot grows into exactly the next screen's circle (place, size, colour), then the gate goes: no jump.
     page.wait("""(() => { const r = document.getElementById('w-dot').getBoundingClientRect();
@@ -245,10 +249,33 @@ def test_tap_consents_starts_the_intro_and_hands_over_with_the_name(site, page):
     assert rec[-1]["who"] == "session" and rec[-1]["ended"] == "handover"
 
 
+def test_the_three_words_stay_gone_when_the_next_screen_rewrites_the_bodys_classes(site, page):
+    """Ian's second run (2026-11-18): a "tap" label was visible at the handover. The next screen's script sets
+    <body>'s whole class list as it draws; this screen kept its state there, so "Tap to begin" faded back in over
+    the dot and the dot lost its two seconds of growing. Its state is on #w-gate now."""
+    started(page)
+    opacity = "getComputedStyle(document.getElementById('w-tap')).opacity"
+    page.wait(f"{opacity} === '0'")
+    page.js("() => { document.body.className = 'idle connecting talking'; }")  # as the next screen does
+    page.page.wait_for_timeout(1000)  # the fade back took 0.8 s
+    assert page.js(opacity) == "0"
+    assert page.js("document.getElementById('w-gate').classList.contains('w-on')")
+    heard(page)
+    page.say("Good to meet you, Sam. I'll hand you over now.")
+    page.wait("window.__held", timeout=3000)
+    page.js("() => { document.body.className = 'idle talk'; }")
+    page.page.wait_for_timeout(300)
+    assert page.js("document.getElementById('w-gate').classList.contains('w-warm')")
+    assert page.js(opacity) == "0"
+    assert "2s" in page.js("getComputedStyle(document.getElementById('w-dot')).transitionDuration")  # still growing
+    page.wait("getComputedStyle(document.getElementById('w-note')).opacity === '0'", timeout=3000)
+    page.wait("window.__handed", timeout=8000)
+
+
 def test_mic_refused_says_so_and_tries_again(site, page):
     page.js("window.__micDenied = true")
     page.page.click("#w-gate")
-    page.wait("document.body.classList.contains('w-refused')")
+    page.wait("document.getElementById('w-gate').classList.contains('w-refused')")
     assert page.page.is_visible("#w-mic") and not page.page.is_visible("#w-tap")
     assert page.page.inner_text("#w-mic").startswith("I need your microphone to talk with you")
     assert not site.consents and not page.posted("api/interview/start")
@@ -256,7 +283,7 @@ def test_mic_refused_says_so_and_tries_again(site, page):
     page.page.click("#w-again")
     page.wait("window.Interview.I.started")
     assert page.js("window.__mics") == 2 and len(site.consents) == 1
-    assert not page.js("document.body.classList.contains('w-refused')")
+    assert not page.js("document.getElementById('w-gate').classList.contains('w-refused')")
 
 
 def test_handover_said_without_the_tool_is_acted_on_by_the_page(site, page):
@@ -288,7 +315,7 @@ def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page
     held = page.js("window.__held")
     assert held["at"] - t0 < 1000 and held["gate"] and held["open"]  # while the welcome's session is still open
     assert held["same"] and held["live"] == "live" and not page.js("window.__handed")
-    assert page.js("document.body.classList.contains('w-warm') && !!document.getElementById('next')")
+    assert page.js("document.getElementById('w-gate').classList.contains('w-warm') && !!document.getElementById('next')")
     assert page.js("window.__fetched.filter((u) => u === '/app' || u === '/next.js').length") == 2  # not fetched again
     assert not page.js("[...document.scripts].some((s) => (s.src || '').endsWith('/next.js'))")  # run from memory
     page.wait("window.__handed", timeout=3000)
@@ -297,7 +324,7 @@ def test_the_next_part_is_got_ready_while_the_handover_words_are_said(site, page
     tool = page.posted("api/interview/tool")
     assert [(t["name"], t["by"]) for t in tool] == [("handoff_to_guide", "page")]
     wait_for(lambda: page.posted("api/interview/end") and page.posted("api/interview/end")[-1]["how"] == "handover",
-             timeout=15)  # the end is posted behind the handover now (the session's close, then its cost), slower under load
+             timeout=15)  # the end is posted behind the handover (the session's close, then its cost); posted() lets it be seen
 
 
 def test_nothing_is_timed_before_the_session_has_started(site, page):
@@ -314,7 +341,7 @@ def test_nothing_is_timed_before_the_session_has_started(site, page):
 def test_a_dropped_intro_goes_back_to_the_dot(site, page):
     started(page)
     page.emit({"type": "session.closed", "reason": "server_error"})
-    page.wait("!document.body.classList.contains('w-on') && !window.Interview.busy()")
+    page.wait("!document.getElementById('w-gate').classList.contains('w-on') && !window.Interview.busy()")
     assert page.posted("api/interview/end")[-1]["how"] == "dropped"
     assert not page.js("window.__handed")
     page.page.click("#w-gate")  # tap again: a new intro
@@ -353,6 +380,116 @@ def test_curly_apostrophes_still_close_the_debrief_on_the_thanks(site, page):
     page.wait("window.__done", timeout=6000)
     tool = page.posted("api/interview/tool")
     assert tool and tool[-1]["name"] == "end_debrief" and tool[-1]["by"] == "page"
+    assert json.loads((site.study / "debrief.json").read_text())["done"]
+
+
+DEBRIEF_JS = """async () => { const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+  await Interview.start("debrief", { stream: s, onDone: (x) => { window.__done = x; } }); }"""
+FAREWELL = "Thank you, Sam. That really helps Ian. That’s everything from me."  # as GPT-Live writes it
+
+
+def test_the_farewell_closes_the_debrief_with_no_closing_question_and_no_tool(site, page):
+    """Ian's note (2026-11-18): "there was no clear exit for the post product demo interview". He said "let's end
+    the conversation here" and got the closing question, the page's only way out. Now the farewell is the end
+    wherever it comes: the page acts on it after act_grace_ms when end_debrief hasn't."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    assert re.search(page.js("window.Interview.I.S.farewell"), FAREWELL, re.I)  # from the server's page settings
+    page.say("Welcome back, Sam. What's one thing that stood out to you?")
+    time.sleep(0.4)
+    page.emit({"type": "session.input_transcript.delta", "delta": "The voice was flat at first. Let's end here."})
+    time.sleep(0.4)
+    page.say("Thank you, Sam. That really helps.")  # a thanks alone is not the end (no closing question was asked)
+    time.sleep(1.0)  # line_quiet_ms 200, act_grace_ms 400
+    assert page.posted("api/interview/tool") == [] and not page.js("window.__done")
+    page.say("Of course. " + FAREWELL)
+    page.wait("window.__done", timeout=6000)
+    assert page.js("window.__done") == {"ok": True, "how": "done"}
+    tool = page.posted("api/interview/tool")
+    assert len(tool) == 1 and tool[0]["name"] == "end_debrief" and tool[0]["by"] == "page"
+    state = json.loads((site.study / "debrief.json").read_text())
+    assert state["done"] and state["farewell"] and state["closing"] is False
+
+
+def test_the_farewell_with_the_tool_closes_once_and_nothing_tells_it_to_speak_again(site, page):
+    """After the farewell the tester may add a word ("bye!") and wait: the page must never answer that with the
+    `waiting` note or a clock note, which would have the voice start talking again."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { const S = Interview.I.S; S.reply_wait_ms = 300; S.act_grace_ms = 4000; S.close_quiet_ms = 2500; "
+            "S.close_min_ms = 2500; S.debrief_target_minutes = 0.01; S.debrief_max_minutes = 0.02; }")
+    page.say("What's one thing that stood out to you?")
+    time.sleep(0.4)
+    page.emit({"type": "session.input_transcript.delta", "delta": "It was calm. That's about it."})
+    time.sleep(0.3)
+    page.say(FAREWELL)
+    time.sleep(0.4)
+    before = len(page.sent("session.instructions.append"))
+    page.emit({"type": "session.input_transcript.delta", "delta": "Thanks, bye!"})
+    time.sleep(1.6)  # well past reply_wait_ms and both clock notes, inside the act's grace: nothing is sent
+    assert page.js("window.Interview.I.farewellAt") and not page.js("window.__done")
+    assert len(page.sent("session.instructions.append")) == before
+    page.tool("end_debrief")  # the tool arrives inside the grace: one call, by the backend, and the page's is dropped
+    page.wait("window.__done", timeout=8000)
+    assert page.js("window.__done") == {"ok": True, "how": "done"}
+    tool = page.posted("api/interview/tool")
+    assert [x.get("by") for x in tool] == [None] and tool[0]["name"] == "end_debrief"
+    assert len(page.sent("session.instructions.append")) == before
+    assert json.loads((site.study / "debrief.json").read_text())["done"]
+
+
+def test_the_farewell_ends_the_debrief_even_when_the_server_does_not_answer(site, page):
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.page.route("**/api/interview/tool", lambda r: r.abort())
+    heard(page, "The voice was calm and the wait was long.")  # they answered: a debrief nobody answered is never done
+    time.sleep(0.5)  # line_quiet_ms 200: their line is posted
+    page.say(FAREWELL)
+    page.wait("window.__done", timeout=6000)
+    assert page.js("window.__done") == {"ok": True, "how": "done"}
+    assert json.loads((site.study / "debrief.json").read_text())["done"]  # the server reads the farewell at the end
+
+
+def test_a_debrief_nobody_answered_closes_on_the_farewell_but_is_not_done(site, page):
+    """Review of the debrief's exit (2026-11-18): a tester who pressed End demo and walked away (or whose mic
+    isn't heard) gets the opening question, then at time the clock's note asks for the farewell; the page closed
+    and the server marked the debrief done with no word from them, so End demo never came back. The page still
+    closes; the debrief stays not done, to be taken again."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.say("Welcome back, Sam. What's one thing that stood out to you?")
+    time.sleep(0.4)
+    page.say(FAREWELL)
+    page.wait("window.__done", timeout=6000)
+    tool = page.posted("api/interview/tool")
+    assert len(tool) == 1 and tool[0]["name"] == "end_debrief" and tool[0]["by"] == "page"
+    wait_for(lambda: (site.study / "debrief.json").exists())
+    state = json.loads((site.study / "debrief.json").read_text())
+    assert state["done"] is False and state["farewell"] and state["how"] == "no answer"
+
+
+def test_a_farewell_cut_off_closes_nothing_and_the_waiting_note_never_says_carry_on(site, page):
+    """Review of the debrief's exit (2026-11-18): the page keys on the farewell's last sentence, and a tester
+    who speaks over it ("no problem, bye") leaves a line without it. Nothing closes, and the page's `waiting`
+    note is what the voice gets next: the intro's ends "then carry on", which here is another question. The
+    debrief's own note names the farewell."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { Interview.I.S.reply_wait_ms = 500; }")
+    page.say("Welcome back, Sam. What's one thing that stood out to you?")
+    time.sleep(0.4)
+    heard(page, "The voice was calm. Let's end here.")
+    time.sleep(0.4)
+    page.say("Thank you, Sam. That really helps Ian. That’s every")  # cut off by their next words
+    time.sleep(0.1)
+    heard(page, "No problem, bye.")
+    notes = lambda: [e["content"] for e in page.sent("session.instructions.append") if "waiting for you" in e["content"]]  # noqa: E731
+    wait_for(lambda: len(notes()) == 1)
+    assert "carry on" not in notes()[0] and "your farewell, word for word" in notes()[0]
+    assert not page.js("window.Interview.I.farewellAt") and not page.js("window.__done")
+    assert page.posted("api/interview/tool") == []
+    page.say(FAREWELL)  # said in full: now it closes
+    page.wait("window.__done", timeout=6000)
     assert json.loads((site.study / "debrief.json").read_text())["done"]
 
 

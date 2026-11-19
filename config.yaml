@@ -343,6 +343,8 @@ live:
                                 # sent at the end, it starts 0.7-0.9 s later: a natural paragraph pause
     resend_ms: 3500             # a paragraph that should have started this long ago is sent again, once
     handback_quiet_ms: 2500     # a check-in hands back to the reading at the first pause this long
+    handback_again_ms: 3000     # End demo (Tester Demo): the guide silent this long after its closing note: once more, as an instruction
+    handback_silent_ms: 7000    # ... and still silent this long: on to the debrief without its goodbye
     reopen_ratio: 0.8           # GPT-Live's context this full (it compacts at 0.9): a new session at the next section
     reopen_before_expiry_minutes: 10  # or this close to the session's time limit (about 2 hours from its start)
     greet_fallback_ms: 5000     # no word from the guide this long after the session started: ask it to greet again
@@ -351,12 +353,19 @@ live:
     start_nudge_ms: 10000       # the guide said it would start the chapter but start_chapter hasn't come: remind it
     # After Ian's second test (2026-11-15):
     hello_silence_secs: 7       # no word from the listener this long after the guide's hello: it checks in, once
-    pitch_nudge_secs: [150, 210]  # into a conversation with no chapter yet: the guide is asked to move toward one
+    pitch_nudge_secs: [120, 180]  # into a conversation with no chapter yet: the guide is asked to move toward one
     # Ian's tester run (2026-11-16): the nudge landed 12 s after the guide's first open question and it pitched
     # the first thing he said. No nudge this soon after the guide says what it does, nor while its latest
     # question is being answered (that second hold delays a nudge by max_secs at most).
     # Within max_secs of due it also goes only in a lull, never while they are talking.
-    pitch_hold: {explained_secs: 60, question_secs: 25, max_secs: 60}
+    pitch_hold: {explained_secs: 40, question_secs: 20, max_secs: 40}
+    # Ian's second tester run (2026-11-18): "Want to hear what I do?" came two minutes in, after four questions
+    # about his day, and the pitch at 4:50 (hence the sooner nudges above: was [150, 210], holds 60/25/60). He
+    # liked that it found a silence for the offer and wanted it "in a couple of turns". So once the listener has
+    # spoken and the conversation is after_secs old, the first lull is the guide's cue to offer what it does
+    # (notes.md offer_nudge); by max_secs the cue goes even while they talk. Once, not once it has said what it
+    # does, and not while its own offer (`offered`) is the line being answered.
+    offer_nudge: {after_secs: 30, max_secs: 50, offered: "\\bwhat i do\\b"}
     explained: "\\baudio chapters?\\b"  # the guide saying what it does (voice/gpt_live/session.py EXPLAINED)
     ready_remind_secs: 120      # a ready chapter offered and not taken up: the guide asks once more, at a pause
     opening_estimate_secs: 240  # the ring's guess at the opening's wait when no earlier runs have timed it
@@ -562,9 +571,9 @@ demo:
   interviewer:                  # part C: demo/interviewer.py, page/interview.js, prompts/interviewer*.md
     voice: cedar                # its own GPT-Live voice (the guide's is live.voice); model and backend are live's
     store: true                 # OpenAI keeps the session's audio 30 days; fetched into study/<live_id>.mp3
-    intro_max_minutes: 4        # the intro aims at 60-90 s; the page asks for the handover 30 s before this, and hands over itself at it
-    debrief_target_minutes: 8   # the page tells it to ask its closing question
-    debrief_max_minutes: 9      # then to thank them and end; a minute later the page closes it
+    intro_max_minutes: 2.5      # the intro aims at 30-40 s (Ian, 2026-11-18); the page asks for the handover 30 s before this, and hands over itself at it
+    debrief_target_minutes: 4   # the debrief ends itself once it has a few real comments (three minutes at most); here the page tells it: no more questions, the farewell
+    debrief_max_minutes: 6      # then to say the farewell now; a minute later the page closes it
     stale_minutes: 15           # a session the page never ended is closed after this long without a line
     audio_tries: 6              # the recording: after live.archive_wait_seconds, every live.archive_retry_seconds
     summary_role: researcher    # debrief_summary.md on Sonnet 5.5 (models.researcher), effort medium
@@ -575,10 +584,10 @@ demo:
       close_quiet_ms: 1400      # after the handover or the thanks: close once both sides are this quiet
       close_max_ms: 9000
       handover_quiet_ms: 900    # the handover's words heard: the guide comes in once both sides are this quiet
-      handover_min_ms: 15000    # ... and those words count only once the tester has spoken and the intro is this old
-      act_grace_ms: 3500        # said "I'll hand you over" (or thanked them after the last question) with no tool call: the page acts
+      handover_min_ms: 10000    # ... and those words count only once the tester has spoken and the intro is this old (never heard: 3x)
+      act_grace_ms: 3500        # said "I'll hand you over" (or the debrief's farewell) with no tool call: the page acts
       reply_wait_ms: 6000       # they finished this long ago and it has said nothing but "mm": the page tells it they're waiting (again at 3x)
     checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests
-      intro_minutes: 3          # a simulated intro's connected time at most
-      debrief_minutes: 8        # a debrief's (live.checks.run_cap_usd also bounds it: $0.40 is 8 minutes)
-      time_note_minutes: 6.5    # the debrief's time note, on a compressed clock (the page's is debrief_target_minutes)
+      intro_minutes: 2          # a simulated intro's connected time at most
+      debrief_minutes: 6        # a debrief's (live.checks.run_cap_usd also bounds it: $0.40 is 8 minutes)
+      time_note_minutes: 4      # the debrief's time note (the page's is debrief_target_minutes)

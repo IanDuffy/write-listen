@@ -108,8 +108,11 @@ function row(t) {
   const tester = `${esc(t.label)}${t.name ? `<div class="sub">${esc(t.name)}</div>` : ""}`
                + (t.link ? ` <button data-do="copy" data-link="${esc(t.link)}">Copy link</button>`
                          : ' <span class="sub">revoked</span>');
-  const card = `<select data-do="card" aria-label="Debrief card">${["auto", "on", "off"].map((v) =>
-    `<option value="${v}"${t.debrief_card === v ? " selected" : ""}>card: ${v === "auto" ? "auto" : v === "on" ? "show" : "hide"}</option>`).join("")}</select>`;
+  // The End demo button for a tester who comes back to their page (handed over by the interviewer they always
+  // have it, until the debrief is done): auto = once they have a chapter or start talking again. The stored
+  // field is still debrief_card (auto | on | off): the button replaced the library's debrief card (2026-11-18).
+  const card = `<select data-do="card" aria-label="End demo button" title="The End demo button when they come back to their page">${["auto", "on", "off"].map((v) =>
+    `<option value="${v}"${t.debrief_card === v ? " selected" : ""}>End demo: ${v === "auto" ? "auto" : v === "on" ? "show" : "hide"}</option>`).join("")}</select>`;
   const actions = `<div class="actions">${t.link ? '<button data-do="revoke">Revoke</button>' : ""}
     <button data-do="reset">Reset</button>${card}<button class="warn" data-do="delete">Delete all data</button></div>`;
   return `<tr data-lid="${esc(t.lid)}" data-label="${esc(t.label)}">${cell("Tester", tester)}${cell("Stage", stage)}`
@@ -178,8 +181,8 @@ $("rows").addEventListener("change", async (ev) => {
   const s = ev.target.closest("select[data-do=card]");
   if (!s) return;
   const tr = s.closest("tr");
-  try { await api(`/api/admin/testers/${encodeURIComponent(tr.dataset.lid)}/card`, { value: s.value }); say(`${tr.dataset.label}: debrief card ${s.value}.`); }
-  catch (e) { say("Couldn't change the card: " + e.message); }
+  try { await api(`/api/admin/testers/${encodeURIComponent(tr.dataset.lid)}/card`, { value: s.value }); say(`${tr.dataset.label}: End demo button ${s.value === "on" ? "shown" : s.value === "off" ? "hidden" : "auto"}.`); }
+  catch (e) { say("Couldn't change the End demo button: " + e.message); }
   load();
 });
 

@@ -94,17 +94,16 @@ def test_the_intro_checks_who_it_is_says_ian_built_it_and_how_this_will_go(cfg, 
     (tmp_path / "tester.json").write_text(json.dumps({"name": "Rolando"}))
     v = IV.intro_values(tmp_path)
     text = IV.instructions("intro", v)
-    order = ['"Hi, is this Rolando?"', "Ian built what you're about to show them", "pass them to someone else",
-             "about ten minutes", "interrupt and ask questions whenever they like", '"I\'m done" button',
-             "come back to you for a few minutes", "no right answers", "any questions before you start",
-             '"I\'ll hand you over now."']
+    order = ['"Hi, is this Rolando?"', "Ian built what they're about to try", "I'll pass you to someone else",
+             "The two of you will talk a little", "about ten minutes", "interrupt with questions any time",
+             "End demo button at the top of the screen", "come back to me for a couple of minutes",
+             '"Any questions, or are you ready to try it?"', '"I\'ll hand you over now."']
     at = [text.index(x) for x in order]
     assert at == sorted(at)
-    assert "a minute to a minute and a half" in text and "You'll see in a moment." in text
+    assert "You'll see in a moment." in text
     notes = IV.page_notes("intro", v)
     assert notes["opened"] == 'Begin now: say hello warmly and check who it is: "Hi, is this Rolando?" Nothing else yet.'
     assert "waiting for you" in notes["waiting"] and "handover_now" in notes
-    assert IV.icfg(cfg)["intro_max_minutes"] >= 3  # room for 60-90 seconds and a question or two
     # The page hands over on the words when no tool call comes: only on the handover itself, not on the
     # explanation that someone else comes next.
     hand = re.compile(IV.page_settings(cfg, "intro")["handover"], re.I)
@@ -115,6 +114,35 @@ def test_the_intro_checks_who_it_is_says_ian_built_it_and_how_this_will_go(cfg, 
     text = IV.instructions("intro", nameless)
     assert "ask their name" in text and "Rolando" not in text and "{" not in text.replace("{{", "")
     assert IV.page_notes("intro", nameless)["opened"] == "Begin now: say hello warmly and ask their name. Nothing else yet."
+
+
+def test_the_intro_is_one_question_and_one_turn(cfg, tmp_path):
+    """Ian's notes (2026-11-18): "spoke a little too much... maybe just one question, then it saying what this
+    will be like and what to expect, then directly any questions or are you ready to try it out". His intro
+    took 49 seconds over six turns: the old text asked for two or three turns with a pause after each."""
+    text = IV.instructions("intro", IV.intro_values_for("Rolando"))
+    for gone in ("two or three short turns", "a small pause after each", "a minute to a minute and a half",
+                 "I'm done", "no right answers", "One step a turn"):
+        assert gone not in text, gone
+    for want in ("thirty to forty seconds in all", "say all of this in ONE turn", "don't stop between them for an answer",
+                 "that isn't an interruption", "silence is a yes", "unless the steps below ask for one longer turn"):
+        assert want in text, want
+    # The explanation is step 2 alone, and the only questions the prompt gives it to ask are the who-check
+    # and the one that ends that turn (the name's confirmation is for a correction).
+    step2 = text[text.index("\n2. "):text.index("\n3. ")]
+    for part in ("Ian built", "someone else", "ten minutes", "interrupt", "End demo", "Afterwards", "Any questions, or are you ready"):
+        assert part in step2, part
+    assert [q for q in re.findall(r'"([^"]*)"', text) if q.endswith("?")] == [
+        "Hi, is this Rolando?", "Roland. Did I get that right?", "Any questions, or are you ready to try it?"]
+    # What it says is given in the second person: told about the tester as "they", it said "They'll talk a
+    # little, and then listen" (live check, 2026-11-18, and Ian's own intro).
+    assert "They'll talk a little" not in text and "you'll listen to something" in step2
+    # The clocks fit an intro of 30-40 seconds: the words count from 10 s (a tester never heard: from 30 s,
+    # page/interview.js mayHandOver's three times), and the page steps in well after a slow one.
+    S = IV.page_settings(cfg, "intro")
+    assert S["handover_min_ms"] == 10000 and 3 * S["handover_min_ms"] <= 30000
+    assert 2 <= S["intro_max_minutes"] <= 3
+    assert cfg["demo"]["interviewer"]["checks"]["intro_minutes"] <= S["intro_max_minutes"]
 
 
 def test_only_the_final_line_is_the_handover(cfg):
@@ -162,8 +190,9 @@ def test_debrief_session_is_a_conversation_around_ians_topics_with_their_real_mo
     for gone in ("Take me through what that was like", "to a friend", "tomorrow morning", "in this order"):
         assert gone not in text, gone
     for want in ("What's one thing that stood out to you?", "respond before you ask", "Always answer a direct question",
-                 "something they would use, and when", "Where they imagine this going", "The voice:",
-                 'About 3 minutes in, they asked "What\'s a parameter?". Ask how that went',
+                 "something they would use, and when", "Where they imagine this going", "The voice they talked with:",
+                 'About 3 minutes in, they stopped it to ask "What\'s a parameter?". Not owed if you already have enough; '
+                 'if you do go on to another subject, make it this one: how that went.',
                  "Anything confusing, or that got in the way", "gather their feedback for Ian",
                  "Is there anything I didn't ask that I should have?", "Thank you, Sam."):
         assert want in text, want
@@ -182,18 +211,155 @@ def test_the_interviewer_is_told_to_reply_never_to_sit_in_silence(cfg, tmp_path)
         assert "It never stands in for a reply" in text and "When they ask you something, answer it." in text
         assert "A silence longer than a few seconds after they've spoken is always yours to end." in text
         note = IV.page_notes(mode, v)["waiting"]
-        assert note.startswith("[") and "Speak now" in note
+        assert note.startswith("[") and "Speak now" in note and "waiting for you" in note
+    # The debrief's own note (review, 2026-11-18): "then carry on" after "let's end here", or after a farewell
+    # they spoke over, pushed it on to another question. The intro's is unchanged.
+    assert IV.page_notes("intro", IV.intro_values(tmp_path))["waiting"].endswith("in a sentence, then carry on.]")
+    note = IV.page_notes("debrief", IV.debrief_values(cfg, tmp_path))["waiting"]
+    assert "carry on" not in note and "Then your farewell, word for word, if they asked to stop" in note
+    assert "or you had begun it; only otherwise your next question.]" in note
     assert IV.page_settings(cfg, "debrief")["reply_wait_ms"] == 6000
 
 
-def test_debrief_without_moments_asks_whether_anything_made_them_want_to_stop(cfg, tmp_path, monkeypatch):
+def test_debrief_without_moments_asks_whether_they_tried_only_if_they_heard_the_piece(cfg, tmp_path, monkeypatch):
+    """Ian's notes (2026-11-18): "Did you give that a try?" is for a tester who heard the piece and never
+    asked. One who heard none of it is not asked about it at all (his debrief said "you chose not to cut in")."""
     from demo import debrief
+    monkeypatch.setattr(debrief, "moments", lambda d, c=None: [])
+    monkeypatch.setattr(debrief, "chapter_context", lambda d, c=None: {
+        "run": "r", "title": "The List", "summary": "Why.", "minutes_heard": 4.0, "minutes": 10})
+    real = debrief.activity
+    monkeypatch.setattr(debrief, "activity", lambda d, c=None, now=None: {"started": True, "listened": True, "ready": True})
+    text = IV.session_config(cfg, "debrief", IV.debrief_values(cfg, tmp_path))["instructions"]
+    assert "never stopped it to ask anything. You may ask whether they tried interrupting it" in text
+    assert "- They never stopped it to ask anything." in text and "about 4 of its 10 minutes" in text
+    # No chapter and no record at all: nothing is claimed, and nothing about the piece is asked.
     monkeypatch.setattr(debrief, "chapter_context", lambda d, c=None: {
         "run": None, "title": None, "summary": None, "minutes_heard": 0, "minutes": None})
-    monkeypatch.setattr(debrief, "moments", lambda d, c=None: [])
+    monkeypatch.setattr(debrief, "activity", real)  # an empty folder: no conversation, no chapter, no presses
     text = IV.session_config(cfg, "debrief", IV.debrief_values(cfg, tmp_path))["instructions"]
-    assert "They didn't stop it to ask anything. Ask whether anything made them want to." in text
-    assert "less than a minute" in text and "{" not in text.replace("{{", "")
+    assert "- The app has no record of what they did: ask, don't assume." in text
+    assert "No piece was made for them, so there is nothing to ask here" in text
+    assert "They heard none of the piece" not in text and "or the wait" not in text
+    assert "less than a minute" not in text and "{" not in text.replace("{{", "")
+
+
+def test_the_debrief_is_three_or_four_questions_about_what_they_did(cfg, tmp_path, world):
+    """Ian's notes (2026-11-18): "much less questions, and... pass a bit of context about the things that it did
+    or buttons it pressed". His debrief asked seven questions in 5 min 20 s, one of them "Would you want to be
+    able to ask it things as you go?" (it exists) and one "Earlier, you chose not to cut in" (he heard none)."""
+    from demo import debrief
+    debrief.add_event(world.dir, "end_demo", "talk")
+    v = IV.debrief_values(cfg, world.dir)
+    text = IV.instructions("debrief", v)
+    for gone in ("five to eight minutes", "Don't close early", "bring it up before your closing question",
+                 "Let these come up naturally", "Would you want"):
+        assert gone not in text, gone
+    assert "three or four questions in all" not in text
+    assert "four questions at most" not in text and "the next question you ask is the closing one" not in text
+    order = ["three minutes at the very most", "WHAT THEY DID",
+             "- They pressed End demo while talking with the voice.",
+             '"What\'s one thing that stood out to you?"', "one more question, chosen from what they did",
+             "Two more questions after your opening is the ceiling, never a target; keep count",
+             "Follow up only when an answer is vague or general", "once in the whole conversation",
+             "A clear answer needs no follow-up",
+             "Choose at most two", "A question about something they did names it",
+             "never say they chose not to do something", "never ask whether they would want a thing that is already there"]
+    at = [text.index(x) for x in order]
+    assert at == sorted(at), [x for x, a, b in zip(order, at, sorted(at)) if a != b]
+    # The clocks: no more questions from four minutes, the farewell now at six.
+    I = IV.icfg(cfg)
+    assert (I["debrief_target_minutes"], I["debrief_max_minutes"]) == (4, 6) == (
+        cfg["demo"]["interviewer"]["debrief_target_minutes"], cfg["demo"]["interviewer"]["debrief_max_minutes"])
+    notes = IV.page_notes("debrief", v)
+    assert notes["time_up"].startswith("[You're at time. No more questions:") and "say your farewell" in notes["time_up"]
+    assert cfg["demo"]["interviewer"]["checks"]["debrief_minutes"] <= I["debrief_max_minutes"]
+    # What it was told is kept with the transcript (the summary and the study report read it from there).
+    sid = world.client.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()["sid"]
+    first = lines(world.dir / "study" / f"debrief-{sid}.jsonl")[0]
+    assert first["did"] == "- They pressed End demo while talking with the voice." == v["did"]
+    assert first["activity"]["end"]["phase"] == "talk" and first["activity"]["listened"] is False
+    assert IV.recorded_account(world.dir / "study") == first["did"]
+    assert "They pressed End demo while talking with the voice." in world.offers[-1]["instructions"]
+
+
+def test_the_debrief_ends_itself_with_one_farewell(cfg, tmp_path):
+    """Ian's note (2026-11-18): "there was no clear exit for the post product demo interview, the interviewer
+    kept asking questions, it should have an exit if the interview seems to be coming to a close. Even just
+    evaluating if it received a good amount of response, even just a few comments would be more than enough."
+    He said "let's end the conversation here" and was asked the closing question."""
+    (tmp_path / "tester.json").write_text(json.dumps({"name": "Sam"}))
+    v = IV.debrief_values(cfg, tmp_path)
+    bye = "Thank you, Sam. That really helps Ian. That's everything from me."
+    assert v["farewell"] == bye == IV.farewell("Sam")
+    text = IV.instructions("debrief", v)
+    for gone in ("Then your closing question, exactly", "go straight to your closing question",
+                 "When they've answered it, thank them by name", "go to your closing question, then thank them",
+                 "four questions at most"):
+        assert gone not in text, gone
+    order = ["A few real comments are all Ian needs.",
+             "After every answer, weigh whether you have enough",
+             "is the ceiling, never a target",
+             "You have enough as soon as one of these is true",
+             "two or three specific comments, in one answer or across several. That is more than enough",
+             "don't go on to another subject to use up your questions",
+             "They sound finished", '"that\'s about it"', "they trail off",
+             "This counts only once they've given you at least one specific comment.",
+             'A short or vague first answer ("it was good") is not finished: follow up once (below)',
+             'A pause in the middle of a sentence ("it was good, I, um...") is not trailing off: wait for the rest.',
+             "natural close",
+             "Don't ask whether they have more.",
+             'If they ask to stop or say they\'re done ("let\'s end here", "that\'s all", "I have to go"): your farewell, at once.',
+             "No question of any kind first.",
+             "One optional question, only when they plainly have more they want to say",
+             '"Is there anything I didn\'t ask that I should have?"',
+             "Never after they've said they're done, and never as a step you owe.",
+             "YOUR FAREWELL", f'Exactly these words, once: "{bye}"',
+             "If they start speaking before you've finished it, stop and listen, respond in a few words, then say it in full.",
+             "Say nothing after it, whatever they say.",
+             "If the app tells you you're at time, no more questions: your farewell.",
+             "- end_debrief: end the conversation, right after your farewell.",
+             "- You have just said your farewell (end_debrief), in the same breath."]
+    at = [text.index(x) for x in order]
+    assert at == sorted(at), [x for x, a, b in zip(order, at, sorted(at)) if a != b]
+    assert text.count(bye) == 1  # one wording, in one place
+    # The page and the server key on its last sentence, straight or curly, whatever the case.
+    for said in (bye, bye.replace("'", "’"), bye.upper()):
+        assert re.search(IV.PAGE_DEFAULTS["farewell"], said, re.I)
+        assert re.search(IV.FAREWELL, IV.norm_quotes(said), re.I)
+    assert IV.page_settings(cfg, "debrief")["farewell"] == IV.PAGE_DEFAULTS["farewell"]
+    # No name known: the same words without one, never "Thank you, them."
+    anon = IV.values_from("", {"run": None}, [], None)
+    assert anon["farewell"] == "Thank you. That really helps Ian. That's everything from me." == IV.farewell(None)
+    assert "Thank you, them" not in IV.instructions("debrief", anon)
+    assert re.search(IV.PAGE_DEFAULTS["farewell"], anon["farewell"], re.I)
+    # The clock's notes ask for the farewell, never for the closing question; a run saved before it still fills.
+    notes = IV.page_notes("debrief", v)
+    assert notes["wrap_now"] == "[Time is up. Say your farewell now, word for word, and end.]"
+    assert "closing question" not in notes["time_up"] + notes["wrap_now"]
+    old = {k: x for k, x in v.items() if k != "farewell"}
+    assert bye in IV.instructions("debrief", old)
+    # The backend and the tool are told the same end.
+    from stages.common import load_prompt
+    assert "That's everything from me." in load_prompt("interviewer_backend")
+    assert "That's everything from me." in next(t for t in IV.tools("debrief") if t["name"] == "end_debrief")["description"]
+    # No line of {{asking}} owes a question (review, 2026-11-18: "One of your questions is how that went" stood
+    # in a list of choices, against "the ceiling, never a target").
+    n = IV.notes()
+    for k in ("asking_moment", "asking_tapped", "asking_unheard", "asking_no_piece", "asking_none"):
+        assert "One of your questions is" not in n[k] and not re.search(r"(^|[.:] )Ask (about|what)\b", n[k]), k
+    assert "Not owed if you already have enough" in n["asking_moment"]
+    assert all("If you ask here, ask" in n[k] for k in ("asking_tapped", "asking_unheard", "asking_no_piece"))
+
+
+def test_you_asked_for_quiet_is_not_the_topic_of_asking_questions():
+    said = lambda *xs: [{"who": "interviewer", "text": x} for x in xs]  # noqa: E731
+    assert IV.covered(said("You asked for quiet while it was being made. How was the wait?"))["topics"] == []
+    assert IV.covered(said("You asked how it was coming along. Was the wait okay?"))["topics"] == []
+    assert IV.covered(said("You stopped it about three minutes in to ask about the levers. How did that go?"))["topics"] == ["asking"]
+    assert IV.covered(said("Did you try interrupting it?"))["topics"] == ["asking"]
+    # live check, 2026-11-18: this question about using it wasn't counted
+    assert IV.covered(said("Is this something you could see yourself using, say in a different moment?"))["topics"] == ["use"]
 
 
 def test_covered_topics_in_the_order_they_came_up_and_the_close():
@@ -207,12 +373,26 @@ def test_covered_topics_in_the_order_they_came_up_and_the_close():
     lines = [{"who": w, "text": t} for w, t in said]
     got = IV.covered(lines)
     assert got == {"topics": ["stood_out", "voice", "asking", "use", "future", "confusing"], "closing": True,
-                   "answered": False, "thanked": False}
+                   "answered": False, "thanked": False, "farewell": False, "said": True}
+    assert not IV.finished(got)
     lines += [{"who": "interviewer", "text": "Thank you."}]  # thanks before they answered the closing question
     assert not IV.covered(lines)["thanked"]
     lines += [{"who": "listener", "text": "No."}, {"who": "interviewer", "text": "Thank you, Sam. That really helps."}]
     assert IV.covered(lines) == {**got, "answered": True, "thanked": True}
-    assert IV.covered(lines[:2]) == {"topics": ["stood_out"], "closing": False, "answered": False, "thanked": False}
+    assert IV.finished(IV.covered(lines))  # the older shape still counts
+    assert IV.covered(lines[:2]) == {"topics": ["stood_out"], "closing": False, "answered": False, "thanked": False,
+                                     "farewell": False, "said": True}
+    # The farewell ends it wherever it comes: no closing question needed (Ian's note, 2026-11-18).
+    early = lines[:2] + [{"who": "interviewer", "text": "Thank you, Sam. That really helps Ian. That’s everything from me."}]
+    assert IV.covered(early) == {"topics": ["stood_out"], "closing": False, "answered": False, "thanked": False,
+                                 "farewell": True, "said": True}
+    assert IV.finished(IV.covered(early))
+    # ... but never with no word from the tester: the opening question and the farewell alone (they walked away,
+    # the clock's note asked for the farewell) is not a finished debrief. Review, 2026-11-18.
+    alone = IV.covered([lines[0], early[-1]])
+    assert alone["farewell"] and not alone["said"] and not IV.finished(alone)
+    assert not IV.finished(IV.covered([lines[0], {"who": "listener", "text": "  "}, early[-1]]))
+    assert not IV.covered(lines[:2] + [{"who": "listener", "text": "That's everything from me."}])["farewell"]  # theirs
     assert set(IV.TOPICS) == {"stood_out", "use", "future", "voice", "asking", "confusing"}
 
 
@@ -308,7 +488,7 @@ def debrief_session(world, said):
     c = world.client
     got = c.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()
     assert got["notes"]["opened"].startswith("Begin now") and {"time_up", "wrap_now", "waiting"} <= set(got["notes"])
-    assert got["settings"]["debrief_target_minutes"] == 8
+    assert got["settings"]["debrief_target_minutes"] == 4 and got["settings"]["debrief_max_minutes"] == 6
     for who, text in said:
         c.post("/api/interview/line", json={"sid": got["sid"], "who": who, "text": text})
     return got["sid"]
@@ -345,6 +525,64 @@ def test_a_complete_debrief_without_the_tool_counts_as_done_and_a_partial_one_do
         assert world.client.post("/api/interview/end", json={"sid": sid, "how": "pagehide"}).json()["done"] is False
     state = json.loads((world.dir / "study" / "debrief.json").read_text())
     assert state == {**state, "done": False, "topics": TOPICS, "closing": True}
+
+
+def test_a_debrief_that_ended_on_the_farewell_is_done_without_the_closing_question(world):
+    """Ian's note (2026-11-18): the debrief ends itself once it has enough. Done is the farewell (the tool
+    often never comes), and a missing closing question is not an unfinished debrief."""
+    said = FULL[:4] + [("in", "I think that's about it, let's end here."),
+                       ("out", "Thank you, Sam. That really helps Ian. That’s everything from me.")]
+    sid = debrief_session(world, said)
+    end = world.client.post("/api/interview/end", json={"sid": sid, "how": "dropped"}).json()
+    assert end["done"] and end["topics"] == ["stood_out", "voice"]
+    state = json.loads((world.dir / "study" / "debrief.json").read_text())
+    assert state == {**state, "done": True, "closing": False, "farewell": True, "how": "complete", "session": sid}
+    assert IV.debrief_done(world.dir)
+    # By the page (it heard the farewell and no tool call came) or by the tool: the same, and closing stays false.
+    (world.dir / "study" / "debrief.json").unlink()
+    sid = debrief_session(world, said)
+    got = world.client.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief", "by": "page"}).json()
+    assert got == {"ended": True, "act": "close"}
+    state = json.loads((world.dir / "study" / "debrief.json").read_text())
+    assert state == {**state, "done": True, "closing": False, "farewell": True, "how": "end_debrief"}
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "done"}).json()["done"]
+    # Without the farewell (and no tool), a debrief that stopped after two answers is not done.
+    (world.dir / "study" / "debrief.json").unlink()
+    sid = debrief_session(world, said[:5])
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "pagehide"}).json()["done"] is False
+    state = json.loads((world.dir / "study" / "debrief.json").read_text())
+    assert state == {**state, "done": False, "closing": False, "farewell": False}
+
+
+def test_a_debrief_nobody_answered_is_never_done(world):
+    """Review of the debrief's exit (2026-11-18): the farewell needed no word from the tester. Someone who
+    pressed End demo and walked away (or whose mic wasn't heard) got the opening question, then `time_up` asked
+    for the farewell, the page called end_debrief and debrief.json said done: End demo gone for good, "Done" on
+    the admin page, no summary. Now neither the farewell nor the tool marks it done until they have spoken."""
+    bye = ("out", "Thank you, Sam. That really helps Ian. That’s everything from me.")
+    sid = debrief_session(world, [FULL[0], bye])
+    got = world.client.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief", "by": "page"}).json()
+    assert got == {"ended": True, "act": "close"}  # the page still closes
+    assert not (world.dir / "study" / "debrief.json").exists() and not IV.debrief_done(world.dir)
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "done"}).json()["done"] is False
+    state = json.loads((world.dir / "study" / "debrief.json").read_text())
+    assert state == {**state, "done": False, "farewell": True, "finished_at": None, "how": "no answer"}
+    assert not IV.debrief_done(world.dir)
+    # The farewell alone, no tool: the same.
+    sid = debrief_session(world, [FULL[0], bye])
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "dropped"}).json()["done"] is False
+    assert json.loads((world.dir / "study" / "debrief.json").read_text())["how"] == "no answer"
+    # One line of theirs and it is done; a line that reaches the server after the tool call counts at the close.
+    sid = debrief_session(world, [FULL[0], FULL[1], bye])
+    world.client.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief"})
+    assert json.loads((world.dir / "study" / "debrief.json").read_text())["done"]
+    (world.dir / "study" / "debrief.json").unlink()
+    sid = debrief_session(world, [FULL[0], bye])
+    world.client.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief"})
+    world.client.post("/api/interview/line", json={"sid": sid, "who": "in", "text": "It was calm, and the wait was long."})
+    assert world.client.post("/api/interview/end", json={"sid": sid, "how": "done"}).json()["done"]
+    state = json.loads((world.dir / "study" / "debrief.json").read_text())
+    assert state == {**state, "done": True, "how": "end_debrief"}
 
 
 def test_ians_own_debrief_is_not_done(world):
@@ -434,10 +672,15 @@ def test_summary_is_one_claude_call_costed_in_study(cfg, tmp_path, monkeypatch):
     write_debrief(study, "s1", FULL, done=True)
     (study / "intro-s0.jsonl").write_text(json.dumps({"s": 3, "who": "listener", "text": "I'm Sam."}) + "\n")
     out = IV.summarize(cfg, study, "s1", {"person": "Sam", "title": "The List", "summary": "Nine levers.",
-                                          "heard": "They heard all of it.", "moments": "none"})
+                                          "did": "- They heard none of the piece: it wasn't ready yet when they ended."})
     assert out.read_text().startswith("# Debrief: Sam")
     prompt = seen[0]["messages"][0]["content"]
     assert "[1:15] them: It was calm." in prompt and "[1:10] interviewer: Welcome back, Sam." in prompt
+    # What they did is in the summary's material and its first heading (Ian's notes, 2026-11-18: his own
+    # summary said "He did not cut in during the piece" when he had heard none of it).
+    assert "- They heard none of the piece: it wasn't ready yet when they ended." in prompt
+    assert prompt.index("## What they did") < prompt.index("## What stood out")
+    assert "never infer it from the interviewer's questions" in prompt
     for heading in ("## What stood out", "## Would they use it, and when", "## Where they imagine it going", "## The voice",
                     "## Asking questions", "## Confusing, or got in the way", "## Anything else they raised", "## Notable quotes"):
         assert heading in prompt, heading
@@ -681,3 +924,15 @@ def test_the_study_cli_never_loads_the_repos_dot_env():
     import demo.cli
     from stages.common import ROOT
     assert demo.cli.ROOT != ROOT  # tests/demo/conftest.py
+
+
+def test_end_demo_with_the_opening_ready_and_unstarted_is_while_talking_not_while_it_was_made():
+    """The page reports "making" until the piece is read, also once its opening is ready and offered: the account
+    then said both "it was ready, but they didn't start it" and "pressed End demo while the piece was being made"."""
+    n = IV.notes()
+    ctx = {"run": "r", "title": "The List", "summary": "Why.", "minutes_heard": 0, "minutes": 10}
+    act = {"started": True, "ready": True, "listened": False, "end": {"phase": "making"}}
+    got = IV.account(ctx, [], act)
+    assert got[-2:] == [n["did_none_ready"], n["did_end_talk"]] and n["did_end_making"] not in got
+    for ready in (False, None):
+        assert IV.account(ctx, [], {**act, "ready": ready})[-1] == n["did_end_making"]

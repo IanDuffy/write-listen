@@ -43,6 +43,17 @@ def test_a_full_run_minutes_questions_title_debrief_and_cost(dcfg):
     assert s["cost"] == {"claude": 1.62, "gpt_live": 0.45, "total": 2.07, "estimated": 0.1}
 
 
+def test_a_debrief_that_ended_without_the_closing_question_is_done(dcfg):
+    """The debrief ends itself on its farewell (Ian's note, 2026-11-18); the closing question is optional, so
+    `closing: false` is not an unfinished debrief anywhere the stage is read (the admin page, the report)."""
+    import json
+    lid = seed(dcfg, "Pilot 1", "done")
+    p = testers.folder(lid) / "study" / "debrief.json"
+    p.write_text(json.dumps({**json.loads(p.read_text()), "closing": False, "farewell": True}))
+    s = state.tester_state(dcfg, lid)
+    assert s["stage"] == "done" and s["debrief"]["done"] is True and s["left_early"] is False
+
+
 def test_title_falls_back_to_the_outline_then_the_card(dcfg):
     lid = seed(dcfg, "Pilot 1", "chapter")
     ch = testers.folder(lid) / "chapters" / "bridges-20261116"

@@ -104,7 +104,7 @@
     Object.assign(I, { mode, opts, stream: opts.stream || null, connecting: true, started: false, startedAt: 0,
       out: "", outAt: 0, inp: "", inAt: 0, spokeAt: 0, heardAt: 0, spoken: false, seconds: 0,
       backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(), pending: null, name: null,
-      act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, said: 0,
+      act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, farewellAt: 0, said: 0,
       graceAt: 0, graceAct: null, stateNow: null });
   }
 
@@ -222,7 +222,9 @@
     const sid = I.sid;
     if (!name || !sid || I.act) return;
     const got = await quiet("/api/interview/tool", { sid, name, args: {}, by: "page" });
-    if (got && sid === I.sid) act(got);
+    if (sid !== I.sid) return;
+    if (got) act(got);
+    else if (which === "close" && I.farewellAt) act({ act: "close" });  // its last words were said: the end, even unanswered
   }
 
   function act(got) {
@@ -257,10 +259,17 @@
     I.said++;
     if (String(raw || "").split(/\s+/).filter(Boolean).length >= (I.S.reply_words || 3)) I.repliedAt = I.outAt;  // more than "Mm-hmm."
     const text = String(raw || "").replace(/[‘’]/g, "'");  // transcripts may write didn’t: the patterns use '
-    const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks");
+    const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks"), bye = rx("farewell");
     if (I.mode === "intro" && hand && hand.test(text) && !I.act && mayHandOver()) { I.graceAt = t; I.graceAct = "handover"; }
-    if (I.mode === "debrief" && ask && ask.test(text)) I.closingAsked = t;
-    if (I.mode === "debrief" && thanks && thanks.test(text) && I.closingAsked && I.lastThemAt > I.closingAsked && !I.act) {
+    if (I.mode !== "debrief") return;
+    // The debrief ends itself. Its fixed last words are the end whenever they come, and the page acts on them
+    // if the tool call hasn't arrived act_grace_ms later: it once had no way out but the last question (Ian was
+    // asked it after saying "let's end the conversation here"). The older shape still closes too: a thanks
+    // after that question was answered.
+    if (ask && ask.test(text)) I.closingAsked = t;
+    const said = bye && bye.test(text);
+    if (said && !I.farewellAt) I.farewellAt = t;
+    if (!I.act && !I.graceAct && (said || (thanks && thanks.test(text) && I.closingAsked && I.lastThemAt > I.closingAsked))) {
       I.graceAt = t; I.graceAct = "close";
     }
   }
@@ -296,6 +305,7 @@
   // decides for itself when to speak, and once sat through 77 seconds of someone waiting for an answer.
   function waiting(t, speaking) {
     if (I.waitSid !== I.sid) { I.waitSid = I.sid; I.repliedAt = 0; I.waitFor = 0; I.waitSent = 0; }  // a new session
+    if (I.farewellAt) return;  // its last words are said: whatever they add ("bye!"), it is never told to speak again
     if (!I.heardAt || I.repliedAt > I.heardAt || I.act || I.pending || speaking || I.inp || I.out) return;
     const wait = I.S.reply_wait_ms || 6000, again = I.waitFor === I.heardAt;
     if (again && I.waitSent > 1) return;
@@ -312,8 +322,8 @@
       if (mins > max - 0.5) cue("handover", I.notes.handover_now);
       if (mins > max && !I.act) selfCall("handover");
     } else {
-      if (mins > (S.debrief_target_minutes || 8)) cue("time", I.notes.time_up);
-      if (mins > (S.debrief_max_minutes || 9)) cue("wrap", I.notes.wrap_now);
+      if (!I.farewellAt && mins > (S.debrief_target_minutes || 8)) cue("time", I.notes.time_up);
+      if (!I.farewellAt && mins > (S.debrief_max_minutes || 9)) cue("wrap", I.notes.wrap_now);
       if (mins > (S.debrief_max_minutes || 9) + 1 && !I.act) { I.act = "timeout"; finish("timeout"); }
     }
   }

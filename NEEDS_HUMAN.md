@@ -10,11 +10,47 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## After Ian's second tester run (2026-11-18): what to look and listen for on the next one
+- **The intro.** "Hi, is this Ian?", then one turn on what to expect (it names the End demo button), then "Any
+  questions, or are you ready to try it?" and the handover: 30 to 40 seconds.
+- **The handover.** Nothing on screen invites a tap while the dot grows into the circle (it was the gate's own
+  "Tap to begin" coming back).
+- **End demo**, upper right, from the moment the guide's screen appears: through the conversation, while the
+  chapter is made and while it is read. Tap it at three different moments on three runs (talking, resting,
+  mid-chapter): each should go to the debrief with nothing to confirm, the guide saying a sentence of goodbye
+  first when it is there. On a phone it should sit clear of the notch. Not tried with a real microphone or on
+  a phone yet.
+- **The guide.** Fewer questions, brighter, and it should use a pause to say "Want to hear what I do?" within a
+  couple of turns (not as its second line), then ask about one particular thing (what you've been listening
+  to or reading), and pitch that as soon as you light up. Whether the voice itself sounds peppier only you can
+  judge: the words are livelier, its pace measured the same.
+- **The debrief.** About three minutes: "What's one thing that stood out to you?", at most two more questions
+  that fit what you actually did (it is told: how long you talked, quiet asked for, taps, questions asked
+  mid-chapter, where you pressed End demo). It should never ask about something you didn't do.
+- **The debrief's exit** (your note: "there was no clear exit... the interviewer kept asking questions"). It
+  should stop by itself once you've given it two or three real comments or sound finished, and end with "Thank
+  you, Ian. That really helps Ian. That's everything from me.", after which the screen moves on within a few
+  seconds. Say "let's end here" mid-way on one run: the farewell should come at once, with no "anything I
+  didn't ask?" first (that question is now optional, for someone who clearly has more to say). Not tried with
+  a real microphone; whether "enough" comes too early or too late for a real talker is your ear. Two things
+  changed after a review and were not run live: it should not say its farewell on a first half-sentence ("it
+  was good, I, um...") but wait or follow up once; and if you say nothing at all in the debrief it still ends,
+  but is not marked done (End demo comes back, admin does not show "Done").
+- **The final debrief wording, run live** (after that review): ten simulated debriefs, two personas (one who
+  trails off mid-sentence, one like your run who heard none of the piece), all ended on the farewell after two
+  or three questions, 50 to 105 seconds, none on a first half-sentence. $0.77 (the sim's default is ten runs; I
+  meant two).
+- **The narrator speaking as what it is** (your note: "relating to human experiences which they couldn't have
+  any experience with"). It should no longer envy your dinner or give a verdict on plywood as if it had handled
+  it; it can still be curious, guess about you and say what strikes it. Two simulated conversations showed
+  none; the nearest were "I love the chaos" and "Carbonara! That's bold on a weeknight." Say if those are still
+  too much.
+
 ## After Ian's first tester run (2026-11-16): what to listen for on the next one
 Make the link with a name (`cli.py study create "Ian test" --name Ian`, or the admin form, which shows what the
 interviewer will say). Then:
 - **The intro's length and warmth.** It should open "Hi, is this Ian?", say Ian built it and how the session
-  will go, ask for questions, and take 60 to 90 seconds: welcoming, not long. It must not hand over before its
+  will go, ask for questions, and take 60 to 90 seconds (30 to 40 since 2026-11-18): welcoming, not long. It must not hand over before its
   final "I'll hand you over now."
 - **The handover.** The guide's first words should come about 2 to 3 seconds after the interviewer's last, by
   name, with no glitch in the sound and no jump on screen.
@@ -24,7 +60,7 @@ interviewer will say). Then:
   should ask rather than guess again.
 - **The debrief replying.** Answer in fragments and ask it something back: it should respond in words within a
   couple of seconds every time, never "Mm-hmm" and silence.
-- **On a phone:** the bottom bar clear of the home indicator, with "I'm done" above it.
+- **On a phone:** the bottom bar clear of the home indicator, and End demo in the upper right clear of the notch.
 
 ## 5. The guide uses the name from the interviewer and never asks for it
 Open a tester link, tap, give your name to the interviewer, and listen to the guide's first words after the
@@ -36,7 +72,7 @@ Claude and $0.50 of GPT-Live.
 
 ## 11. On the droplet over HTTPS: mic and audio on iPhone Safari, Android Chrome and a laptop
 For each: open a tester link, tap, hear the interviewer, talk, hear the guide after the handover, ask a question
-mid-chapter, finish (or tap I'm done), do the debrief. Note anything that stays silent or asks for the mic twice.
+mid-chapter, finish (or tap End demo), do the debrief. Note anything that stays silent or asks for the mic twice.
 
 ## 12. Two testers at once
 Two people (or two phones on two different tester links) at the same time: each hears only their own guide and

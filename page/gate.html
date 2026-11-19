@@ -13,7 +13,7 @@
   microphone stay unlocked), the next part opens its own voice session, held silent, and the dot grows over
   about two seconds into exactly the next screen's circle (its place, size and colour). At the handover the
   session is let go with the name and the mic, and this screen fades away over the same circle.
-  Ids are prefixed w- so they never meet the next screen's.
+  Ids are prefixed w- so they never meet the next screen's, and this screen's state classes sit on #w-gate.
 -->
 <style id="w-base">
   html, body { margin: 0; height: 100%; background: #F5F2ED; overflow: hidden; }
@@ -33,14 +33,17 @@
   #w-mic { display: none; margin-top: 22px; text-align: center; }
   #w-again { margin-top: 12px; font: inherit; color: #6B635C; background: none; border: 1px solid #6B635C;
              border-radius: 999px; padding: 6px 18px; cursor: pointer; }
-  body.w-on #w-dot { background: #6B635C; }
-  body.w-on #w-tap { opacity: 0; }
-  body.w-speaking #w-dot { animation: w-pulse 2.4s ease-in-out infinite; }
-  body.w-refused #w-tap { display: none; }
-  body.w-refused #w-mic { display: block; }
-  body.w-warm #w-dot { background: #d9822b; animation: none;  /* about two seconds, to the place and size set in warm() */
-                       transition: background-color 2s ease, left 2s ease, top 2s ease, width 2s ease, height 2s ease; }
-  body.w-warm #w-note { opacity: 0; }
+  /* This screen's states are classes on #w-gate itself, never on <body>: the next screen's script rewrites
+     <body>'s classes as it draws, and the three words came back over the growing dot (Ian, 2026-11-18). */
+  #w-gate.w-on #w-dot { background: #6B635C; }
+  #w-gate.w-on #w-tap, #w-gate.w-warm #w-tap { opacity: 0; }
+  #w-gate.w-speaking #w-dot { animation: w-pulse 2.4s ease-in-out infinite; }
+  #w-gate.w-refused #w-tap { display: none; }
+  #w-gate.w-refused #w-mic { display: block; }
+  #w-gate.w-warm #w-dot { background: #d9822b; animation: none;  /* about two seconds, to the place and size set in warm() */
+                          transition: background-color 2s ease, left 2s ease, top 2s ease, width 2s ease, height 2s ease; }
+  #w-gate.w-warm #w-note { opacity: 0; }
+  #w-gate.w-warm { cursor: default; }
   @keyframes w-pulse { 50% { transform: scale(1.18); opacity: .8; } }
 </style>
 </head>
@@ -57,6 +60,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const body = document.body;
+  const gate = $("w-gate").classList;  // this screen's states live on it (see the styles)
   const W = { busy: false, ctx: null, stream: null, pre: null, ready: null, warmAt: 0 };
   window.Welcome = W;  // for tests
 
@@ -64,7 +68,7 @@
     if (e) e.stopPropagation();
     if (W.busy) return;
     W.busy = true;
-    body.classList.remove("w-refused");
+    gate.remove("w-refused");
     // All of this inside the tap, before any await: phones allow sound and the microphone only from a gesture.
     try {
       W.ctx = W.ctx || new (window.AudioContext || window.webkitAudioContext)();
@@ -80,17 +84,17 @@
 
   function refused() {
     W.busy = false;
-    body.classList.remove("w-on", "w-speaking");
-    body.classList.add("w-refused");
+    gate.remove("w-on", "w-speaking");
+    gate.add("w-refused");
   }
 
   async function talk(stream) {
     W.stream = stream;
-    body.classList.add("w-on");
+    gate.add("w-on");
     try { await fetch("/api/demo/consent", { method: "POST" }); } catch (x) { /* the talk goes on */ }
     const ok = await Interview.start("intro", {
       stream,
-      onState: (s) => body.classList.toggle("w-speaking", s === "speaking"),
+      onState: (s) => gate.toggle("w-speaking", s === "speaking"),
       onNear: near,
       onHandoff: handOn,
       onDone: again,
@@ -112,7 +116,7 @@
   function again() {
     if (W.handed) return;
     W.busy = false;
-    body.classList.remove("w-on", "w-speaking");
+    gate.remove("w-on", "w-speaking");
   }
 
   // The handover is decided, its last words still being said: the next screen comes in under this one, its
@@ -155,7 +159,7 @@
     Object.assign(dot.style, { position: "fixed", left: (r.left + r.width / 2 - d / 2) + "px",
                                top: (r.top + r.height / 2 - d / 2) + "px", width: d + "px", height: d + "px" });
     dot.getBoundingClientRect();  // it starts from where it is
-    body.classList.add("w-warm");
+    gate.add("w-warm");
     Object.assign(dot.style, { left: end.x + "px", top: end.y + "px", width: end.w + "px", height: end.h + "px" });
     if (end.color) dot.style.backgroundColor = end.color;
     W.warmAt = Date.now();
@@ -164,7 +168,7 @@
   async function handOn(h) {
     if (W.handed) return;
     W.handed = true;
-    body.classList.remove("w-speaking");
+    gate.remove("w-speaking");
     const target = await near(h);
     if (target && typeof target.handoff === "function") target.handoff({ name: h.name, stream: h.stream || W.stream });
     const left = W.warmAt + 2000 - Date.now();  // the dot has finished growing

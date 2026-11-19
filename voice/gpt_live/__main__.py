@@ -1,6 +1,7 @@
 """Live checks for the GPT-Live guide (voice/gpt_live/persona.py, sim.py).
 
     python -m voice.gpt_live persona [--n K] [--personas builder,reserved] [--max-turns 8] [--max-minutes 3] [--grade]
+                                     [--handoff NAME]   (the Tester Demo's opening: --personas evening --handoff Ian)
     python -m voice.gpt_live asides [--only closing,lost] [--run runs/<fast run>] [--grade]
     python -m voice.gpt_live grade <folder or transcript.json>
     python -m voice.gpt_live spend
@@ -51,7 +52,8 @@ def cmd_persona(cfg: dict, a) -> None:
             if a.n > 1:
                 p["name"] = f"{name}-{k + 1}"
             t = asyncio.run(P.converse(cfg, p, out, max_turns=a.max_turns or C["max_turns"], after_start=C["after_start"],
-                                       max_minutes=a.max_minutes or C["max_minutes"], log_run=log_run))
+                                       max_minutes=a.max_minutes or C["max_minutes"], log_run=log_run,
+                                       handoff=a.handoff or None))
             g = P.grade(cfg, out / f"{p['name']}.json", log_run) if (a.grade or C["grade"]) else None
             print(P.summary(p["name"], t, g), flush=True)
     print(f"Saved in {out}. Build spend: ${S.spent():.2f}")
@@ -123,6 +125,8 @@ def main(argv=None) -> int:
     p.add_argument("--max-minutes", type=float, default=None, help="connected time at most (live.checks.max_minutes)")
     p.add_argument("--grade", action="store_true", help="grade each conversation (Sonnet; off by default: live.checks.grade)")
     p.add_argument("--no-grade", action="store_true", help=argparse.SUPPRESS)  # the old default, kept as a no-op
+    p.add_argument("--handoff", metavar="NAME", help="open as the Tester Demo does: the page's handoff note with this "
+                                                     "name (the guide greets them by name), no hello")
     s = sub.add_parser("asides", help="scripted questions mid-chapter, then graded")
     s.add_argument("--only", help="comma-separated scenario names (default: all)")
     s.add_argument("--run", default="runs/ideas-behind-systems-stocks-20261113",
