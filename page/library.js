@@ -32,8 +32,8 @@
 
   // --- markup -------------------------------------------------------------------------------------
   const STYLE = `
-  #library, #lib-player { --card: #ffffff; --soft: #f3e3d1; }
-  @media (prefers-color-scheme: dark) { #library, #lib-player { --card: #1c1c1a; --soft: #3a2a1b; } }
+  /* Colours: only the theme's (/theme.css, theme/, docs/theming.md): Material 3 roles and the app's names for them
+     (--bg, --fg, --muted, --line, --accent, --on-accent, --card, --soft, --lt-*). Never a colour of its own. */
   #library { display: block; width: 100%; max-width: 38em; margin: 0 auto; flex: none; text-align: left;
              padding: 32px 16px calc(48px + var(--lib-player-h, 0px)); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
   #library.lib-wide { max-width: 1100px; }
@@ -60,7 +60,7 @@
   #library .lib-notes { margin: 0 0 12px; padding-left: 1.1em; font-size: 14px; color: var(--muted); }
   #library .lib-notes li { margin: 2px 0; }
   #note-text { display: block; width: 100%; margin-top: 12px; font: inherit; color: var(--fg); background: transparent;
-               border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+               border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; resize: vertical; }
   #note-text:focus { outline: none; border-color: var(--accent); }
   #note-msg { margin-top: 10px !important; }
   #live { font-size: 14px; color: var(--muted); margin: 12px 0 0; }
@@ -73,6 +73,19 @@
   #settings .days label { display: inline-block; margin-right: 10px; }
   #settings input[type=time] { font: inherit; }
   #settings .note { font-size: 13px; color: var(--muted); }
+  /* Colours: the listener's seed, style and contrast (theme/, docs/theming.md). A swatch shows its seed. */
+  #theme-box { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
+  #th-swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 4px; }
+  .th-swatch { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--line); padding: 0; cursor: pointer;
+               background: var(--sw); }
+  .th-swatch[aria-checked="true"] { border-color: var(--fg); box-shadow: 0 0 0 3px var(--bg) inset; }
+  .th-swatch:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+  #settings input[type=color] { width: 44px; height: 32px; border: 1px solid var(--edge); border-radius: 8px; padding: 2px;
+                                background: none; vertical-align: middle; cursor: pointer; }
+  #settings select { font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--edge); border-radius: 8px;
+                     padding: 4px 8px; }
+  #th-preview { display: flex; gap: 6px; margin: 10px 0 0; }
+  #th-preview span { width: 28px; height: 18px; border-radius: 6px; border: 1px solid var(--line); }
   #lib-chapter h1 { font-size: 26px; line-height: 1.3; margin: 14px 0 4px; }
   #ch-angle { color: var(--muted); margin: 0; }
   #ch-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 36px; margin-top: 18px; }
@@ -82,7 +95,7 @@
   #ch-text p { margin: 0 0 12px; }
   #ch-text .lib-s { cursor: pointer; border-radius: 4px; transition: background .2s; }
   #ch-text .lib-s:hover { text-decoration: underline; text-decoration-color: var(--line); }
-  #ch-text .lib-s.current { background: var(--soft); }
+  #ch-text .lib-s.current { background: var(--soft); color: var(--on-soft); }
   #ch-cards .lib-ref { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; font-size: 15px; line-height: 1.45; }
   #ch-cards .lib-ref.latest { border-color: var(--accent); }
   #ch-cards .lib-ref .kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
@@ -94,7 +107,7 @@
   #lib-player[hidden] { display: none; }
   #lib-player .lib-pin { max-width: 38em; margin: 0 auto; padding: 8px 16px; display: flex; align-items: center; gap: 12px; }
   #player-toggle { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0; background: var(--accent);
-                   color: #fff; cursor: pointer; font-size: 14px; }
+                   color: var(--on-accent); cursor: pointer; font-size: 14px; }
   #lib-player .lib-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   #player-title { font-size: 14px; color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #player-line { font-size: 13px; color: var(--muted); }
@@ -107,9 +120,6 @@
   /* The library timeline (docs/library-timeline.md, sketches B and D). Colours: the app's own tokens where it
      sets one (--bg, --fg, --muted, --line, --accent, the system font: the spec keeps the app's, PROGRESS.md), the
      sketches' for the rest (accent text, topic colours, surface). */
-  #library { --lt-surface: var(--card); --lt-accent-text: #9C4330; --lt-teal: #24585B; --lt-coral: #C8553D;
-             --lt-amber: #B7791F; --lt-became: #E8C9BF; }
-  @media (prefers-color-scheme: dark) { #library { --lt-accent-text: #E59A82; --lt-became: #6b3a2d; } }
   #library:not(.lib-wide) { max-width: 480px; padding-left: 0; padding-right: 0; }
   #lib-home { gap: 20px; }
   #lib-home > *:not(.lt-stripwrap) { margin-left: 22px; margin-right: 22px; }
@@ -131,20 +141,26 @@
              padding: 22px; display: flex; flex-direction: column; justify-content: space-between; gap: 16px;
              scroll-snap-align: start; scroll-snap-stop: always; }
   .lt-spacer { flex: 0 0 var(--lt-tail, 64px); }  /* room for Up next to come into view like the others */
-  .lt-ch { color: #fff; background: var(--lt-teal); }
-  .lt-ch.coral { background: var(--lt-coral); }
-  .lt-ch.amber { background: var(--lt-amber); color: #1E1A17; }  /* white on amber fails contrast: ink instead */
+  .lt-ch { color: var(--lt-on-topic-1); background: var(--lt-topic-1); }  /* topics: primary, tertiary, secondary */
+  .lt-ch.topic-2 { color: var(--lt-on-topic-2); background: var(--lt-topic-2); }
+  .lt-ch.topic-3 { color: var(--lt-on-topic-3); background: var(--lt-topic-3); }
   .lt-cdate { font-size: 12px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; opacity: .9; }
   .lt-cbottom { display: flex; flex-direction: column; gap: 6px; }
   .lt-ctitle, #library a.lt-ctitle { font-size: 24px; font-weight: 600; line-height: 1.15; margin: 0; color: inherit; text-decoration: none; }
   a.lt-ctitle::after { content: ""; position: absolute; inset: 0; border-radius: 22px; }  /* the whole card opens it */
   a.lt-ctitle:focus-visible { outline: none; }
-  a.lt-ctitle:focus-visible::after { outline: 3px solid var(--fg); outline-offset: 3px; }
+  a.lt-ctitle:focus-visible::after { outline: 3px solid var(--fg); outline-offset: 3px; }  /* outside the card: on the page */
   .lt-cstatus { font-size: 13px; opacity: .9; }
   .lt-crow { position: relative; z-index: 1; display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap; }
   .lt-play { font: inherit; font-size: 15px; font-weight: 600; min-height: 44px; padding: 0 22px; border-radius: 22px; border: 0;
-             background: #fff; color: #1E1A17; cursor: pointer; }
+             background: var(--lt-on-topic-1); color: var(--lt-topic-1); cursor: pointer; }  /* the card's colours, swapped */
+  .lt-ch.topic-2 .lt-play { background: var(--lt-on-topic-2); color: var(--lt-topic-2); }
+  .lt-ch.topic-3 .lt-play { background: var(--lt-on-topic-3); color: var(--lt-topic-3); }
   .lt-play:focus-visible, .lt-link:focus-visible, .lt-arrow:focus-visible, .lt-pill:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+  .lt-ch .lt-play:focus-visible, .lt-ch .lt-link:focus-visible { outline-color: currentColor; }  /* on a card: its own text colour */
+  .lt-ch .lt-play:focus-visible { outline-color: var(--lt-on-topic-1); }
+  .lt-ch.topic-2 .lt-play:focus-visible { outline-color: var(--lt-on-topic-2); }
+  .lt-ch.topic-3 .lt-play:focus-visible { outline-color: var(--lt-on-topic-3); }
   .lt-ch .lt-link { color: inherit; }
   .lt-link { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; padding: 0; min-height: 44px;
              text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
@@ -170,8 +186,8 @@
   .lt-pill:disabled { opacity: .5; cursor: default; }
   .lt-headr { display: flex; align-items: center; gap: 8px; }
   .lt-arrow { display: none; flex: none; width: 44px; height: 44px; border-radius: 50%;
-              border: 1px solid var(--line); background: var(--lt-surface); color: var(--fg); cursor: pointer; padding: 0;
-              align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+              border: 1px solid var(--edge); background: var(--lt-surface); color: var(--fg); cursor: pointer; padding: 0;
+              align-items: center; justify-content: center; box-shadow: 0 1px 4px color-mix(in srgb, var(--md-sys-color-shadow) 8%, transparent); }
   .lt-arrow:disabled { opacity: .35; cursor: default; }
   @media (hover: hover) and (pointer: fine), (min-width: 600px) { .lt-arrow { display: flex; } }
   .lt-scrubwrap { display: flex; flex-direction: column; gap: 4px; }
@@ -233,7 +249,7 @@
   .lt-mk:focus-visible { outline: 3px solid var(--fg); outline-offset: -8px; border-radius: 50%; }
   .lt-mk i { display: block; box-sizing: border-box; }
   .lt-mk.question i, .lt-mk.note i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--fg); background: var(--bg); }
-  .lt-mk.mention i { width: 10px; height: 10px; background: var(--lt-amber); transform: rotate(45deg); }
+  .lt-mk.mention i { width: 10px; height: 10px; background: var(--lt-mention); transform: rotate(45deg); }
   .lt-mk.became i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent); background: var(--bg); transform: none; }
   .lt-barlabels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .lt-moments { display: flex; flex-direction: column; gap: 10px; }
@@ -311,6 +327,21 @@
       <label>Build starts <input type="time" id="s-start"> <span class="note">(changes after this go to the next build)</span></label>
       <label>Plan written <input type="time" id="s-plan"></label>
       <div class="lib-row"><button class="lib-pill" id="s-save">Save</button><span class="note" id="s-note"></span></div>
+      <div id="theme-box">
+        <p class="lib-kicker">Colours</p>
+        <div id="th-swatches" role="radiogroup" aria-label="Colour"></div>
+        <label>Your own colour <input type="color" id="th-seed" aria-label="Your own colour"></label>
+        <label>Style <select id="th-variant"></select></label>
+        <label>Contrast <select id="th-contrast"></select></label>
+        <div id="th-preview" aria-hidden="true">
+          <span style="background: var(--md-sys-color-primary)"></span><span style="background: var(--md-sys-color-secondary)"></span>
+          <span style="background: var(--md-sys-color-tertiary)"></span><span style="background: var(--md-sys-color-primary-container)"></span>
+          <span style="background: var(--md-sys-color-surface-container)"></span>
+        </div>
+        <div class="lib-row"><button class="lib-pill" id="th-save" disabled>Save colours</button>
+          <button class="lib-link" id="th-cancel" hidden>Cancel</button><button class="lib-link" id="th-default">Back to the default</button>
+          <span class="note" id="th-note" aria-live="polite"></span></div>
+      </div>
     </section>
   </div>
   <div id="lib-page" hidden>
@@ -356,6 +387,11 @@
   </div>
   <audio id="chapter-audio" preload="none"></audio>`;
 
+  if (!document.querySelector('link[href^="/theme.css"]')) {  // a host page that forgot the theme: the colours come first
+    const t = document.createElement("link");
+    t.rel = "stylesheet"; t.href = "/theme.css"; t.id = "theme-css";
+    document.head.prepend(t);
+  }
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.appendChild(style);
@@ -1029,7 +1065,7 @@
     const refocus = fcard ? { run: fcard.dataset.run, sel: fe.id ? `#${fe.id}` : "a.lt-ctitle" } : null;
     strip.querySelectorAll(".lt-ch").forEach((e) => e.remove());
     T.items = tl.chapters.map((c, i) => {
-      const card = el("article", `lt-card lt-ch ${c.color || "teal"}`);
+      const card = el("article", `lt-card lt-ch ${c.color || "topic-1"}`);
       card.dataset.run = c.run; card.dataset.i = i;
       card.setAttribute("aria-label", `${plain(c.title)}, ${cardDate(c.date)}`);
       const date = el("span", "lt-cdate", [cardDate(c.date), c.minutes ? `${c.minutes} min` : null].filter(Boolean).join(" · "));
@@ -1504,6 +1540,12 @@
 
   // --- the Up next card and the rest of the page ------------------------------------------------------------
   function render(s) {
+    if (TH.listener && s.listener !== TH.listener) {  // another listener (Start fresh): their colours, no stale picks
+      TH.saved = null; TH.pick = null;
+      applyTheme(null);
+      if (host.classList.contains("lib-settings-open")) loadTheme();
+    }
+    TH.listener = s.listener;
     state = s;
     const up = s.up_next, card = up.card;
     host.classList.remove("planned", "building", "failed", "waiting", "none", "off");
@@ -1765,6 +1807,111 @@
   $("settings-link").addEventListener("click", () => {
     host.classList.toggle("lib-settings-open");
     if (state) fillSettings(state.settings);
+    if (host.classList.contains("lib-settings-open")) loadTheme(); else themeCancel();
+  });
+
+  // --- colours: the listener's theme (theme/, /theme.css, docs/theming.md) ---------------------------------------
+  // Choosing previews at once (the stylesheet is swapped for /theme.css?seed=...); Save puts it in settings.json,
+  // Cancel (or closing Settings) goes back to the saved one. The swap loads the new sheet before dropping the old,
+  // so nothing flashes unstyled.
+  const VARIANT_NAMES = { tonal_spot: "Tonal spot (Material's default)", vibrant: "Vibrant", expressive: "Expressive",
+                          neutral: "Neutral", fidelity: "Fidelity (keeps your colour)", content: "Content", monochrome: "Monochrome" };
+  const TH = { saved: null, pick: null, choices: null, seq: 0, latest: null, listener: null };
+  const sameTheme = (a, b) => !!a && !!b && a.seed === b.seed && a.variant === b.variant && a.contrast === b.contrast;
+  function applyTheme(t) {  // t: a theme to preview, or null for the saved one
+    const q = t ? `?seed=${encodeURIComponent(t.seed)}&variant=${t.variant}&contrast=${t.contrast}` : `?v=${++TH.seq}`;
+    const old = document.getElementById("theme-css");
+    const next = document.createElement("link");
+    next.rel = "stylesheet"; next.href = `/theme.css${q}`;
+    TH.latest = next;  // only the latest choice may win, whichever request finishes first
+    next.addEventListener("load", () => {
+      if (TH.latest !== next) { next.remove(); return; }
+      document.querySelectorAll('link[href^="/theme.css"]').forEach((l) => { if (l !== next) l.remove(); });
+      next.id = "theme-css";
+    }, { once: true });
+    next.addEventListener("error", () => {  // the colours on the page stay as they were
+      next.remove();
+      if (TH.latest === next) $("th-note").textContent = "Couldn't load those colours.";
+    }, { once: true });
+    if (old && old.parentNode) old.parentNode.insertBefore(next, old.nextSibling); else document.head.prepend(next);
+  }
+  // The controls are built once, when the choices arrive; a pick only updates them, so focus stays where it is.
+  // The swatches are a radio group: one tab stop (the checked swatch, else the first), arrow keys move and pick.
+  function buildTheme(c) {
+    $("th-swatches").replaceChildren(...c.presets.map((p, i) => {
+      const b = el("button", "th-swatch");
+      b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-label", p.name);
+      b.dataset.seed = p.seed;
+      b.style.setProperty("--sw", p.seed);  // the swatch shows its seed: data from the server, not a page colour
+      b.addEventListener("click", () => pickTheme({ seed: p.seed }));
+      b.addEventListener("keydown", (e) => {
+        const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        const all = [...$("th-swatches").children], to = all[(i + step + all.length) % all.length];
+        to.focus();
+        pickTheme({ seed: to.dataset.seed });
+      });
+      return b;
+    }));
+    $("th-variant").replaceChildren(...c.variants.map((v) => { const o = el("option", null, VARIANT_NAMES[v] || v); o.value = v; return o; }));
+    $("th-contrast").replaceChildren(...c.contrasts.map((v) => { const o = el("option", null, v[0].toUpperCase() + v.slice(1)); o.value = v; return o; }));
+  }
+  function paintTheme() {
+    const t = TH.pick, c = TH.choices;
+    if (!t || !c) return;
+    const sw = [...$("th-swatches").children];
+    const on = sw.findIndex((b) => b.dataset.seed === t.seed);
+    sw.forEach((b, i) => {
+      b.setAttribute("aria-checked", String(i === on));
+      b.tabIndex = i === (on < 0 ? 0 : on) ? 0 : -1;
+    });
+    if ($("th-seed").value !== t.seed) $("th-seed").value = t.seed;
+    $("th-variant").value = t.variant;
+    $("th-contrast").value = t.contrast;
+    const dirty = !sameTheme(t, TH.saved);
+    $("th-save").disabled = !dirty;
+    show($("th-cancel"), dirty);
+  }
+  async function loadTheme() {
+    try {
+      const got = await (await fetch("/api/theme", { cache: "no-store" })).json();
+      if (!TH.choices) buildTheme(got);
+      TH.choices = got; TH.saved = got.settings;
+      if (!TH.pick) TH.pick = { ...got.settings };
+      paintTheme();
+    } catch (e) { $("th-note").textContent = "Couldn't load the colours."; }
+  }
+  let previewTimer = 0;
+  function pickTheme(change) {
+    TH.pick = { ...(TH.pick || TH.saved), ...change };
+    $("th-note").textContent = "";
+    paintTheme();
+    clearTimeout(previewTimer);  // the colour wheel sends many changes a second: preview the last
+    previewTimer = setTimeout(() => applyTheme(TH.pick), 120);
+  }
+  function themeCancel() {
+    if (TH.pick && TH.saved && !sameTheme(TH.pick, TH.saved)) applyTheme(null);
+    TH.pick = TH.saved ? { ...TH.saved } : null;
+    paintTheme();
+  }
+  $("th-seed").addEventListener("input", () => pickTheme({ seed: $("th-seed").value }));
+  $("th-variant").addEventListener("change", () => pickTheme({ variant: $("th-variant").value }));
+  $("th-contrast").addEventListener("change", () => pickTheme({ contrast: $("th-contrast").value }));
+  $("th-cancel").addEventListener("click", themeCancel);
+  $("th-default").addEventListener("click", () => {
+    if (TH.choices && TH.choices.defaults) pickTheme(TH.choices.defaults);  // the server's defaults (config.yaml)
+  });
+  $("th-save").addEventListener("click", async () => {
+    const t = TH.pick;
+    const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                body: JSON.stringify({ theme: t }) });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) { $("th-note").textContent = out.detail || "Couldn't save the colours."; return; }
+    TH.saved = { ...out.settings.theme }; TH.pick = { ...TH.saved };
+    applyTheme(null);  // the saved theme, fresh
+    $("th-note").textContent = "Saved.";
+    paintTheme();
   });
   $("s-save").addEventListener("click", async () => {
     const days = [...$("s-days").querySelectorAll("input:checked")].map((x) => x.value);
@@ -1772,7 +1919,7 @@
     const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const out = await res.json().catch(() => ({}));
     $("s-note").textContent = res.ok ? "Saved." : (out.detail || "Couldn't save that.");
-    if (res.ok) { host.classList.remove("lib-settings-open"); load(); }
+    if (res.ok) { host.classList.remove("lib-settings-open"); themeCancel(); load(); }  // closed: no preview left on
   });
   $("change").addEventListener("click", () => {
     if (!state) return;

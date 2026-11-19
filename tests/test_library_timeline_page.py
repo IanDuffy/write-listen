@@ -154,8 +154,8 @@ def test_opens_on_the_latest_and_up_next_is_the_rightmost_card(site, browser):  
     assert titles == [c[1] for c in CARDS] + ["Herons: Hunting"]  # oldest on the left
     st = pg.eval_on_selector_all("#strip .lt-ch .lt-cstatus", "els => els.map((e) => e.textContent)")
     assert st[0] == "Finished · 3 questions · 1 mention" and st[2] == "12 of 20 min" and st[1] == "Not started"
-    colours = pg.eval_on_selector_all("#strip .lt-ch", "els => els.map((e) => ['teal', 'coral', 'amber'].find((c) => e.classList.contains(c)))")
-    assert colours == ["teal", "teal", "coral", "amber", "amber", "teal"]
+    colours = pg.eval_on_selector_all("#strip .lt-ch", "els => els.map((e) => ['topic-1', 'topic-2', 'topic-3'].find((c) => e.classList.contains(c)))")
+    assert colours == ["topic-1", "topic-1", "topic-2", "topic-3", "topic-3", "topic-1"]
     assert page.errors == []
 
 

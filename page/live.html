@@ -11,11 +11,8 @@
   aloud paragraph by paragraph, questions mid-chapter and check-ins all happen in it, in one voice.
   A tap turns the mic on and off; nothing switches over. The logic is in page/live.js.
 -->
+<link rel="stylesheet" href="/theme.css" id="theme-css">  <!-- the colours: Material 3 roles from the listener's seed (theme/, docs/theming.md) -->
 <style>
-  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; }
-  }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--fg); font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -63,7 +60,7 @@
            border-radius: 999px; padding: 6px 16px; cursor: pointer; }
   body.problem #retry { display: inline-block; }
   #halt { display: none; font: inherit; font-size: 14px; color: var(--muted); background: none;
-          border: 1px solid var(--line); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
+          border: 1px solid var(--edge); border-radius: 999px; padding: 4px 14px; cursor: pointer; }
   body.making #halt { display: inline-block; }
   #halt:disabled { opacity: .5; cursor: default; }
   #reset { margin-left: 14px; font: inherit; font-size: 14px; color: var(--muted);
@@ -80,10 +77,10 @@
           background: none; color: var(--muted); cursor: pointer; }  /* the icon's edge lines up with the box's */
   #type:hover, body.typing #type { color: var(--accent); }
   #type svg { width: 100%; height: 100%; display: block; }
-  #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line);
+  #say { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--edge);
          border-radius: 999px; padding: 10px 16px; }
   #say:focus { outline: none; border-color: var(--accent); }
-  #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: #fff;
+  #send { font: inherit; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--accent); color: var(--on-accent);
           cursor: pointer; }
   #send:disabled, #say:disabled { opacity: .5; cursor: default; }
   #toggle { font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0;
@@ -112,7 +109,7 @@
      the lighter track, the part still being written the faint one. */
   #player { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 26em; }
   #player[hidden] { display: none; }
-  #play { flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 999px;
+  #play { flex: none; width: 36px; height: 36px; padding: 0; border: 1px solid var(--edge); border-radius: 999px;
           background: none; color: var(--fg); cursor: pointer; display: grid; place-items: center; }
   #play svg { width: 14px; height: 14px; fill: currentColor; display: block; }
   #play .pause, #play[data-state="pause"] .play { display: none; }

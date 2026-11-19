@@ -248,4 +248,6 @@ def test_the_library_never_reuses_an_id_of_the_pages_it_mounts_on():
         set(re.findall(r'\.id = "([\w-]+)"', (root / "library.js").read_text()))
     for page in ("live.html", "index.html"):
         theirs = set(re.findall(r'id="([\w-]+)"', (root / page).read_text()))
-        assert lib & theirs <= {"library"}, (page, sorted(lib & theirs))
+        # #library is the mount point; #theme-css the theme's stylesheet, which the page links and the library's colour
+        # picker swaps (docs/theming.md): both shared on purpose
+        assert lib & theirs <= {"library", "theme-css"}, (page, sorted(lib & theirs))

@@ -177,7 +177,7 @@ def test_state_lists_chapters_oldest_first_with_moments_status_and_colors(tmp_pa
     runs = [r["run"] for r in st["chapters"]]
     assert runs == [a.name, b.name, c.name]
     by = {r["run"]: r for r in st["chapters"]}
-    assert [by[x]["color"] for x in runs] == ["teal", "coral", "teal"]  # Birds, Beauty, Birds again
+    assert [by[x]["color"] for x in runs] == ["topic-1", "topic-2", "topic-1"]  # Birds, Beauty, Birds again
     assert by[a.name]["status_line"] == "5 of 20 min" and by[b.name]["status_line"] == "Finished"
     assert by[c.name]["status_line"] == "Not started"
     assert by[c.name]["counts"] == "1 question · 1 mention"
@@ -229,7 +229,7 @@ def test_colours_follow_dates_not_folder_names(tmp_path):
     profiles.write_json(late / "finished.json", {"t": "2026-11-14T06:00:00"})
     profiles.write_json(early / "finished.json", {"t": "2026-11-11T06:00:00"})
     st = timeline.state(lis, None, "none", None, None, today=date(2026, 11, 20))
-    assert [(r["title"], r["color"]) for r in st["chapters"]] == [("Beauty", "teal"), ("Herons", "coral")]
+    assert [(r["title"], r["color"]) for r in st["chapters"]] == [("Beauty", "topic-1"), ("Herons", "topic-2")]
 
 
 def test_a_days_chapters_keep_the_order_they_finished_in(tmp_path):

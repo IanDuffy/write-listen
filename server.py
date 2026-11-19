@@ -66,6 +66,7 @@ from faststart import guide_hooks as fast_hooks
 from faststart import routes as fast_routes
 from overnight import profiles
 from overnight import routes as overnight_routes
+from theme import routes as theme_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages import new as new_stage
@@ -560,6 +561,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
 
     ask_routes.mount(app, cfg, lambda: pipe.runs_dir)
     overnight_routes.mount(app, cfg, pipe, chat)
+    theme_routes.mount(app, cfg)  # /theme.css: the app's colours, Material 3 from the listener's seed
     live_routes.mount(app, cfg, pipe, SimpleNamespace(lock=chat["lock"], new_session=new_session, current=current))
     fast_routes.mount(app, cfg, pipe)
     app.mount("/episode", StaticFiles(directory=ROOT / "episode" / "page", html=True), name="episode")

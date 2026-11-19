@@ -508,6 +508,16 @@ plays. The library's Play is `#lib-play` (the orb page has its own `#play`).
   whose settings.json has `demo`.
 - Visual tokens: the app's own (system font, `--accent` orange, dark mode) where it sets one, per the spec's rule.
 
+## Colour theming: Material 3 (branch `feature/m3-theme`, 2026-11-18)
+
+Spec: Ian's ask (docs/theming.md opens with it). Every colour in the front end is a Material 3 role computed from
+one seed colour by Google's algorithm (`materialyoucolor` 3.0.4, a port of material-color-utilities; 2025 colour
+spec): `theme/` makes `/theme.css` (tonal palettes `--md-ref-palette-*`, roles `--md-sys-color-*` light and dark,
+the app's names `--accent`, `--bg`, `--lt-*` as aliases); the listener's `settings.json` `theme` holds
+`{seed, variant, contrast}` (defaults in config.yaml `listener_settings.theme`, checked by `profiles.save_settings`);
+Settings in the library has a picker (swatches, own colour, style, contrast) that previews live. The library's topic
+cards are topics 1-3 (primary, tertiary, secondary; containers in dark). Rules for new UI: docs/theming.md.
+
 ## Local setup
 
 ```bash
@@ -649,6 +659,8 @@ real key), so locally it must be in `.env`.
 - The transcript is copyrighted. Never commit `runs/` (gitignored); quote the
   episode sparingly.
 - Never put keys in code, logs, prompts or commits.
+- Colours come only from the theme (docs/theming.md): Material 3 roles (`--md-sys-color-*`) or the app's names for
+  them (`--accent`, `--bg`, ...), from `/theme.css`. No colour literal in `page/` or `episode/page/` (tested).
 - Prompts live only in `prompts/*.md` (the live guide's in `voice/gpt_live/instructions/`, per its spec), never inline in code. Inputs are listed
   above a `---` line, which `load_prompt` drops; `{{placeholders}}` below it
   must all be supplied, or it raises.

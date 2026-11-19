@@ -10,11 +10,8 @@
   chapter, the chapter view (#/chapter/<run>) and the mini player. This page is only a shell around it, in
   the same look as the rest of the app (system font, one accent colour).
 -->
+<link rel="stylesheet" href="/theme.css" id="theme-css">  <!-- the colours: Material 3 roles from the listener's seed (theme/, docs/theming.md) -->
 <style>
-  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; }
-  }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body { background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }

@@ -40,7 +40,7 @@ MOMENTS, PLAYBACK = "moments.jsonl", "playback.json"
 KINDS = ("question", "mention", "note")
 OUTCOMES = ("answered", "saved", "became_chapter", "in_library")
 FINISHED_AT = 0.95  # playback past this share of the chapter counts as finished
-TOPIC_COLORS = ("teal", "coral", "amber")  # in order of each main topic's first chapter
+TOPIC_COLORS = ("topic-1", "topic-2", "topic-3")  # the theme's primary, tertiary, secondary (docs/theming.md)
 _LOCK = threading.Lock()
 
 

@@ -165,7 +165,13 @@ def save_settings(cfg: dict, changes: dict, lid: str | None = None, *, listener:
         for k, v in vals.items():
             if k not in allowed[group]:
                 raise StageError(f"Unknown setting {group}.{k}.")
-            if k in ("start", "plan_at"):
+            if group == "theme":  # the app's colours (theme/): a hex seed, a known variant and contrast
+                from theme import check
+                try:
+                    v = check(k, v)
+                except ValueError as e:
+                    raise StageError(str(e)) from None
+            elif k in ("start", "plan_at"):
                 v = _hhmm(v)
             elif k == "days":
                 v = [str(x).lower()[:3] for x in (v or [])]
