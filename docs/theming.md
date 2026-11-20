@@ -2,7 +2,9 @@
 
 Ian, 2026-11-18: "a foundation of colour theming with Google's Material 3 colour system... the user can select a
 colour and the theming tool can cascade those variables through the front end." This is that foundation: what it
-is, how to use it in new UI, and how to extend it.
+is, how to use it in new UI, and how to extend it. Then, 2026-11-19: "a series of 5 different colors to choose from
+that could change out the whole look and feel of the site with a click... light and dark mode for each": the theme
+bar, top left on every page.
 
 ## How it works
 
@@ -15,21 +17,24 @@ and its "on" pair guaranteed. The server turns that into one stylesheet:
 
 ```
 GET /theme.css            the active listener's theme (settings.json "theme")
-GET /theme.css?seed=%233a6ea5&variant=vibrant&contrast=high  a preview, saved nowhere (the seed's # written
-                          %23, or left out: seed=3a6ea5; a bare # would start the URL's fragment)
-GET /api/theme            the same as data, with the choices (variants, contrasts, preset seeds)
-POST /api/settings {"theme": {"seed", "variant", "contrast"}}    save it
+GET /theme.css?seed=%233a6ea5&variant=vibrant&contrast=high&mode=dark  a preview, saved nowhere (the seed's #
+                          written %23, or left out: seed=3a6ea5; a bare # would start the URL's fragment)
+GET /api/theme            the same as data, with the choices (the five looks with their swatch colours, variants,
+                          contrasts, modes)
+GET /theme.js             page/theme.js: the theme bar and window.Theme
+POST /api/settings {"theme": {"seed", "variant", "contrast", "mode"}}    save it (any of the four)
 ```
 
 Code: `theme/__init__.py` (the scheme and the CSS), `theme/routes.py`; the defaults in `config.yaml`
-`listener_settings.theme`; the picker in `page/library.js` (Settings, "Colours").
+`listener_settings.theme`; the theme bar and `window.Theme` in `page/theme.js`; the picker in `page/library.js`
+(Settings, "Colours").
 
 ## The three layers
 
 | Layer | Names | What it is |
 | --- | --- | --- |
 | Reference | `--md-ref-palette-<palette><tone>` | The tonal palettes: `primary`, `secondary`, `tertiary`, `neutral`, `neutral-variant`, `error`, tones 0 (black) to 100 (white). Each scheme has its own (under the 2025 spec the dark palettes differ), so the dark values replace the light ones in dark. For rare cases; prefer roles. |
-| System | `--md-sys-color-<role>` | Material 3's roles. Light by default; dark under `prefers-color-scheme: dark`, or forced with `<html data-theme="dark">` / `"light"`. |
+| System | `--md-sys-color-<role>` | Material 3's roles, light or dark as the listener's mode says: `auto` follows `prefers-color-scheme`, `light` and `dark` are written into the stylesheet itself (so the first paint is right). `<html data-theme="dark">` / `"light"` still forces either. |
 | App | `--bg`, `--fg`, `--muted`, `--line`, `--edge`, `--accent`, `--on-accent`, `--card`, `--soft`, `--on-soft`, `--lt-*` | The names the pages use, each pointing at a role (`theme.ALIASES`; a few point at another role in dark, `theme.ALIASES_DARK`), and a few app colours made from the palettes (`theme.TOPICS`: the library's topic cards). |
 
 The roles, briefly (Material's guide: https://m3.material.io/styles/color/roles):
@@ -58,7 +63,10 @@ The roles, briefly (Material's guide: https://m3.material.io/styles/color/roles)
    that is an app name with a dark override (`--lt-surface`). Do the same rather than branching in page CSS.
 4. **Translucency from roles**: `color-mix(in srgb, var(--md-sys-color-shadow) 15%, transparent)`, never `rgba()`.
 5. **Link the theme first.** Every page's `<head>` has `<link rel="stylesheet" href="/theme.css" id="theme-css">`
-   before its `<style>` (tested); `page/library.js` adds it if a host page forgot. A page sets no `:root` colours.
+   then `<script src="/theme.js"></script>` before its `<style>` (tested); `page/library.js` adds either if a host
+   page forgot. A page sets no `:root` colours. A page with its own heading at the top left says
+   `<body data-theme-bar="inline">` and the palette button takes a row of its own instead of floating over it.
+   Swap the stylesheet only through `window.Theme.apply` (it keeps the latest request the winner).
 6. **A new app name** goes in `theme.ALIASES` (and `ALIASES_DARK` if dark needs another role), with a line in the
    readability test's pairs (`APP_PAIRS` in tests/test_theme.py) for each pair it is used in.
 7. **A colour of the app's own** (like the topic cards, which must stay rich in light and deep in dark for every
@@ -69,18 +77,31 @@ The roles, briefly (Material's guide: https://m3.material.io/styles/color/roles)
 
 ## Choices for the listener
 
-- **Seed**: any colour (`<input type=color>`), or a preset swatch (`theme.PRESETS`).
+**The theme bar** (`page/theme.js`, top left on every page): a palette button (Ian, 2026-11-20: "hide those color
+toggle buttons behind an icon button") that opens a panel with the five looks and Light / Dark / Auto. The panel
+stays open while you try them and closes on the button, Escape, a click elsewhere or focus moving away. One click
+changes the whole page and saves it (a failed save goes back and says why, opening the panel if it was closed; the
+last of fast clicks is what is saved). The looks are `theme.LOOKS`, each a seed and a style, picked to differ at a
+glance in light and dark (tested): Forest (tonal spot: vibrant turns it neon; the default, Ian 2026-11-20), Amber
+(vibrant: the app's first orange), Ocean (vibrant), Rose (vibrant), Slate (neutral). A swatch shows its look's
+primary in the scheme on screen.
+
+**Settings, Colours** (in the library) goes further:
+
+- **Seed**: any colour (`<input type=color>`), or one of the five looks (seed and style together).
 - **Style** (`variant`): `tonal_spot` (Material's default: calm, the seed softened), `vibrant`, `expressive`,
   `neutral`, `fidelity` and `content` (both keep close to the exact seed), `monochrome`.
 - **Contrast**: `standard`, `medium`, `high` (Material's levels 0, 0.5, 1).
 
 Choosing previews at once (the stylesheet link is swapped for a preview URL, the old one dropped once the new one
-has loaded, so nothing flashes); Save writes `settings.json`; Cancel, or closing Settings, goes back.
+has loaded, so nothing flashes); Save writes `settings.json`; Cancel, or closing Settings, goes back. The mode is
+the bar's: Settings follows it (a light/dark change keeps an unsaved pick; a look from the bar replaces it).
 
 ## Extending it
 
-- **Light or dark by choice**: set `document.documentElement.dataset.theme = "dark" | "light"` (the CSS already
-  handles it); store it as another `theme` setting if the listener should pick it.
+- **Another look**: add it to `theme.LOOKS` (the bar and Settings show it; the tests check it stays readable and
+  distinct from the others). The tests also name the five looks in order and count them (`test_theme.py`,
+  `test_theme_page.py`): change those lines with it.
 - **A colour from an image** (a chapter's artwork): `materialyoucolor` has quantize and score
   (`materialyoucolor.quantize`, `materialyoucolor.score`), which give the best seed in an image; pass it to
   `theme.css({"seed": ...})`.

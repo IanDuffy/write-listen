@@ -13,6 +13,7 @@
   Keys: space plays and pauses; left and right arrows move one sentence.
 -->
 <link rel="stylesheet" href="/theme.css" id="theme-css" onerror="this.onerror = null; this.href = 'theme.default.css'">  <!-- the colours: Material 3 roles from the listener's seed (theme/, docs/theming.md) -->
+<script src="/theme.js"></script>  <!-- the theme bar, top left: five looks, light or dark (page/theme.js) -->
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; }
@@ -58,7 +59,7 @@
   #problem { max-width: 1100px; margin: 40px auto; padding: 0 20px; color: var(--muted); display: none; }
 </style>
 </head>
-<body>
+<body data-theme-bar="inline">
 <header><h1 id="title">Loading…</h1><p id="angle"></p></header>
 <div id="player"><div class="inner">
   <button id="play" aria-label="Play">▶</button>
@@ -281,6 +282,8 @@ $("now").addEventListener("click", () => {
 addEventListener("keydown", (e) => {
   // Bare keys only (Alt/Cmd+arrow stay the browser's Back and Forward), and on the seek bar too.
   if (!ep || e.altKey || e.metaKey || e.ctrlKey || (e.target.tagName === "INPUT" && e.target.id !== "seek")) return;
+  // Keys in the theme bar are its own (Space opens the palette, arrows pick a look).
+  if (e.defaultPrevented || (e.target.closest && e.target.closest("#theme-bar"))) return;
   if (e.code === "Space") { e.preventDefault(); audio.paused ? audio.play() : audio.pause(); }
   else if (e.code === "ArrowRight" || e.code === "ArrowLeft") {
     e.preventDefault();

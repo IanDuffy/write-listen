@@ -73,7 +73,7 @@
   #settings .days label { display: inline-block; margin-right: 10px; }
   #settings input[type=time] { font: inherit; }
   #settings .note { font-size: 13px; color: var(--muted); }
-  /* Colours: the listener's seed, style and contrast (theme/, docs/theming.md). A swatch shows its seed. */
+  /* Colours: the listener's seed, style and contrast (theme/, docs/theming.md). A swatch shows its look's primary. */
   #theme-box { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 14px; }
   #th-swatches { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 4px; }
   .th-swatch { width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--line); padding: 0; cursor: pointer;
@@ -391,6 +391,11 @@
     const t = document.createElement("link");
     t.rel = "stylesheet"; t.href = "/theme.css"; t.id = "theme-css";
     document.head.prepend(t);
+  }
+  if (!window.Theme && !document.querySelector('script[src="/theme.js"]')) {  // and the theme bar (page/theme.js)
+    const t = document.createElement("script");
+    t.src = "/theme.js";
+    document.head.appendChild(t);
   }
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -1542,7 +1547,7 @@
   function render(s) {
     if (TH.listener && s.listener !== TH.listener) {  // another listener (Start fresh): their colours, no stale picks
       TH.saved = null; TH.pick = null;
-      applyTheme(null);
+      if (window.Theme) window.Theme.refresh();
       if (host.classList.contains("lib-settings-open")) loadTheme();
     }
     TH.listener = s.listener;
@@ -1810,47 +1815,54 @@
     if (host.classList.contains("lib-settings-open")) loadTheme(); else themeCancel();
   });
 
-  // --- colours: the listener's theme (theme/, /theme.css, docs/theming.md) ---------------------------------------
-  // Choosing previews at once (the stylesheet is swapped for /theme.css?seed=...); Save puts it in settings.json,
-  // Cancel (or closing Settings) goes back to the saved one. The swap loads the new sheet before dropping the old,
-  // so nothing flashes unstyled.
+  // --- colours: the listener's theme (theme/, /theme.css, page/theme.js, docs/theming.md) -------------------------
+  // The theme bar (page/theme.js, top left) switches between the five looks and light or dark, saving at once. Here
+  // the listener can go further: any colour, any style, a contrast level. Choosing previews at once (window.Theme
+  // swaps the stylesheet); Save puts it in settings.json, Cancel (or closing Settings) goes back to the saved one.
   const VARIANT_NAMES = { tonal_spot: "Tonal spot (Material's default)", vibrant: "Vibrant", expressive: "Expressive",
                           neutral: "Neutral", fidelity: "Fidelity (keeps your colour)", content: "Content", monochrome: "Monochrome" };
-  const TH = { saved: null, pick: null, choices: null, seq: 0, latest: null, listener: null };
+  const TH = { saved: null, pick: null, choices: null, listener: null };
   const sameTheme = (a, b) => !!a && !!b && a.seed === b.seed && a.variant === b.variant && a.contrast === b.contrast;
-  function applyTheme(t) {  // t: a theme to preview, or null for the saved one
-    const q = t ? `?seed=${encodeURIComponent(t.seed)}&variant=${t.variant}&contrast=${t.contrast}` : `?v=${++TH.seq}`;
-    const old = document.getElementById("theme-css");
-    const next = document.createElement("link");
-    next.rel = "stylesheet"; next.href = `/theme.css${q}`;
-    TH.latest = next;  // only the latest choice may win, whichever request finishes first
-    next.addEventListener("load", () => {
-      if (TH.latest !== next) { next.remove(); return; }
-      document.querySelectorAll('link[href^="/theme.css"]').forEach((l) => { if (l !== next) l.remove(); });
-      next.id = "theme-css";
-    }, { once: true });
-    next.addEventListener("error", () => {  // the colours on the page stay as they were
-      next.remove();
-      if (TH.latest === next) $("th-note").textContent = "Couldn't load those colours.";
-    }, { once: true });
-    if (old && old.parentNode) old.parentNode.insertBefore(next, old.nextSibling); else document.head.prepend(next);
+  async function applyTheme(t) {  // t: a theme to preview, or null for the saved one
+    if (!window.Theme) { $("th-note").textContent = "Couldn't load those colours."; return; }
+    if (await window.Theme.apply(t) === "failed") $("th-note").textContent = "Couldn't load those colours.";
+  }
+  function followBar(saved, change) {  // the theme bar saved a look or a mode: Settings shows what is saved now
+    const dirty = TH.pick && TH.saved && !sameTheme(TH.pick, TH.saved);
+    TH.saved = { ...saved };
+    if (dirty && Object.keys(change).every((k) => k === "mode")) {  // light or dark only: an unsaved pick stays
+      TH.pick = { ...TH.pick, mode: saved.mode };
+      applyTheme(TH.pick);
+    } else TH.pick = { ...saved };
+    if (TH.choices) TH.choices.settings = { ...saved };
+    paintTheme();
+  }
+  let followed = false;
+  function follow() {
+    if (followed) return;
+    if (window.Theme) { window.Theme.subscribe(followBar); followed = true; }
+  }
+  follow();
+  window.addEventListener("load", follow, { once: true });  // page/theme.js added by this module loads later
+  if (window.matchMedia) {  // auto mode: the system's light or dark changes the swatches' colours
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) mq.addEventListener("change", paintTheme);
   }
   // The controls are built once, when the choices arrive; a pick only updates them, so focus stays where it is.
   // The swatches are a radio group: one tab stop (the checked swatch, else the first), arrow keys move and pick.
   function buildTheme(c) {
-    $("th-swatches").replaceChildren(...c.presets.map((p, i) => {
+    $("th-swatches").replaceChildren(...c.looks.map((p, i) => {
       const b = el("button", "th-swatch");
       b.type = "button"; b.setAttribute("role", "radio"); b.setAttribute("aria-label", p.name);
-      b.dataset.seed = p.seed;
-      b.style.setProperty("--sw", p.seed);  // the swatch shows its seed: data from the server, not a page colour
-      b.addEventListener("click", () => pickTheme({ seed: p.seed }));
+      b.dataset.seed = p.seed; b.dataset.variant = p.variant;
+      b.addEventListener("click", () => pickTheme({ seed: p.seed, variant: p.variant }));
       b.addEventListener("keydown", (e) => {
         const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
         if (!step) return;
         e.preventDefault();
         const all = [...$("th-swatches").children], to = all[(i + step + all.length) % all.length];
         to.focus();
-        pickTheme({ seed: to.dataset.seed });
+        pickTheme({ seed: to.dataset.seed, variant: to.dataset.variant });
       });
       return b;
     }));
@@ -1861,8 +1873,11 @@
     const t = TH.pick, c = TH.choices;
     if (!t || !c) return;
     const sw = [...$("th-swatches").children];
-    const on = sw.findIndex((b) => b.dataset.seed === t.seed);
+    const on = sw.findIndex((b) => b.dataset.seed === t.seed && b.dataset.variant === t.variant);
+    const dark = window.Theme ? window.Theme.dark() : false;
     sw.forEach((b, i) => {
+      const look = c.looks[i];  // the swatch shows its look's primary: data from the server, not a page colour
+      if (look && look.swatch) b.style.setProperty("--sw", dark ? look.swatch.dark : look.swatch.light);
       b.setAttribute("aria-checked", String(i === on));
       b.tabIndex = i === (on < 0 ? 0 : on) ? 0 : -1;
     });
@@ -1900,18 +1915,21 @@
   $("th-contrast").addEventListener("change", () => pickTheme({ contrast: $("th-contrast").value }));
   $("th-cancel").addEventListener("click", themeCancel);
   $("th-default").addEventListener("click", () => {
-    if (TH.choices && TH.choices.defaults) pickTheme(TH.choices.defaults);  // the server's defaults (config.yaml)
+    const d = TH.choices && TH.choices.defaults;  // the server's defaults (config.yaml); the mode stays the bar's
+    if (d) pickTheme({ seed: d.seed, variant: d.variant, contrast: d.contrast });
   });
   $("th-save").addEventListener("click", async () => {
-    const t = TH.pick;
+    const t = TH.pick;  // the light or dark mode is the theme bar's: not saved from here
     const res = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
-                                                body: JSON.stringify({ theme: t }) });
+                                                body: JSON.stringify({ theme: { seed: t.seed, variant: t.variant, contrast: t.contrast } }) });
     const out = await res.json().catch(() => ({}));
     if (!res.ok) { $("th-note").textContent = out.detail || "Couldn't save the colours."; return; }
     TH.saved = { ...out.settings.theme }; TH.pick = { ...TH.saved };
+    if (window.Theme) window.Theme.saved_by(TH.saved);  // the bar shows it too
     applyTheme(null);  // the saved theme, fresh
     $("th-note").textContent = "Saved.";
     paintTheme();
+    loadTheme();  // the swatches' colours at the saved contrast
   });
   $("s-save").addEventListener("click", async () => {
     const days = [...$("s-days").querySelectorAll("input:checked")].map((x) => x.value);

@@ -63,7 +63,7 @@ def test_the_apps_names_stay_readable_at_every_style_and_contrast(variant, contr
     """What the pages actually pair (text on the page, on rows and cards, a highlight's text, each topic card's
     text), for every style and contrast a listener can pick, in both schemes. (Review: the read-along put plain text
     on --soft, unreadable at high contrast; it now uses --on-soft.)"""
-    for seed in SEEDS[:3]:
+    for seed in [*SEEDS[:3], *(x["seed"] for x in theme.LOOKS)]:
         t = theme.scheme(seed, variant, contrast)
         for mode in ("light", "dark"):
             c = app_colours(t, mode)
@@ -91,8 +91,8 @@ def test_higher_contrast_is_higher():
 
 
 def test_css_has_the_three_layers_and_both_schemes():
-    css = theme.css({"seed": "#24585b"})
-    assert "seed #24585b, tonal_spot, standard contrast" in css
+    css = theme.css({"seed": "#24585b", "variant": "tonal_spot"})
+    assert "seed #24585b, tonal_spot, standard contrast, auto mode" in css
     root = css.split("@media")[0]
     assert "--md-ref-palette-primary40:" in root and "--md-sys-color-primary:" in root
     for name, role in theme.ALIASES.items():
@@ -119,14 +119,15 @@ def test_the_header_names_the_spec_actually_used():
 
 
 def test_a_bad_setting_falls_back_and_a_check_says_why():
-    assert theme.clean({"seed": "nope", "variant": "loud", "contrast": 9}) == theme.DEFAULTS
+    assert theme.clean({"seed": "nope", "variant": "loud", "contrast": 9, "mode": "dim"}) == theme.DEFAULTS
     assert theme.clean({"variant": ["vibrant"], "contrast": {}, "seed": 12}) == theme.DEFAULTS  # never a TypeError
     assert theme.clean("junk") == theme.DEFAULTS
     assert theme.clean({}, defaults={"seed": "#3a6ea5"})["seed"] == "#3a6ea5"
     assert theme.clean({"seed": "24585B"})["seed"] == "#24585b"
     assert theme.check("seed", " #24585B ") == "#24585b"
+    assert theme.clean({"mode": ["dark"]})["mode"] == "auto" and theme.check("mode", "dark") == "dark"
     for k, v in (("seed", "red"), ("seed", "#12345"), ("variant", "loud"), ("contrast", "max"), ("size", 1),
-                 ("variant", ["x"]), ("contrast", {}), ("seed", None)):
+                 ("variant", ["x"]), ("contrast", {}), ("seed", None), ("mode", "system"), ("mode", None)):
         with pytest.raises(ValueError):
             theme.check(k, v)
 
@@ -148,7 +149,7 @@ def test_theme_css_follows_the_listeners_setting(client, cfg):
     assert f"seed {theme.DEFAULTS['seed']}" in r.text
     got = c.post("/api/settings", json={"theme": {"seed": "#3A6EA5", "variant": "vibrant", "contrast": "medium"}})
     assert got.status_code == 200 and got.json()["settings"]["theme"] == {"seed": "#3a6ea5", "variant": "vibrant",
-                                                                        "contrast": "medium"}
+                                                                        "contrast": "medium", "mode": "auto"}
     assert json.loads((lis / "settings.json").read_text())["theme"]["seed"] == "#3a6ea5"
     assert "seed #3a6ea5, vibrant, medium contrast" in c.get("/theme.css").text
     preview = c.get("/theme.css", params={"seed": "#4f7942"}).text  # a preview: not saved
@@ -185,7 +186,11 @@ def test_api_theme_has_the_choices(client):
     d = c.get("/api/theme").json()
     assert d["settings"] == theme.DEFAULTS and d["defaults"] == theme.DEFAULTS and d["spec"] == "2025"
     assert d["variants"][0] == "tonal_spot" and d["contrasts"] == ["standard", "medium", "high"]
-    assert {p["seed"] for p in d["presets"]} >= {"#d9822b", "#24585b"} and d["light"]["primary"].startswith("#")
+    assert [x["name"] for x in d["looks"]] == ["Forest", "Amber", "Ocean", "Rose", "Slate"]
+    assert d["modes"] == ["auto", "light", "dark"] and d["light"]["primary"].startswith("#")
+    for look in d["looks"]:  # each swatch shows its look's primary, light and dark
+        t = theme.scheme(look["seed"], look["variant"])
+        assert look["swatch"] == {"light": t["light"]["primary"], "dark": t["dark"]["primary"]}
 
 
 def test_save_settings_checks_the_theme(tmp_path, cfg):
@@ -220,6 +225,79 @@ def test_every_page_links_the_theme_before_its_own_styles():
         assert '<link rel="stylesheet" href="/theme.css"' in text, p
         assert text.index("/theme.css") < text.index("<style>"), p
     assert 'link[href^="/theme.css"]' in (ROOT / "page" / "library.js").read_text()  # and the library makes sure
+
+
+def test_every_page_has_the_theme_bar():
+    """page/theme.js (the five looks; light, dark or auto) right after the stylesheet on every page, so window.Theme
+    exists before the page's own scripts; a page with a heading at the top left puts the bar in a row of its own."""
+    for p in sorted([*ROOT.glob("page/*.html"), *ROOT.glob("episode/page/*.html")]):
+        text = p.read_text(encoding="utf-8")
+        assert '<script src="/theme.js"></script>' in text, p
+        assert text.index("/theme.css") < text.index("/theme.js") < text.index("<style>"), p
+    for p in ("page/library.html", "episode/page/index.html"):
+        assert '<body data-theme-bar="inline">' in (ROOT / p).read_text(encoding="utf-8"), p
+    assert 'script[src="/theme.js"]' in (ROOT / "page" / "library.js").read_text()  # the library makes sure
+
+
+# --- the five looks and light or dark (the theme bar, Ian 2026-11-19) -------------------------------------------
+
+def test_five_looks_that_differ_at_a_glance():
+    assert len(theme.LOOKS) == 5 and len({x["name"] for x in theme.LOOKS}) == 5
+    assert all(x["variant"] in theme.VARIANTS and theme.check("seed", x["seed"]) == x["seed"] for x in theme.LOOKS)
+    assert {"seed": theme.DEFAULTS["seed"], "variant": theme.DEFAULTS["variant"]} in [
+        {"seed": x["seed"], "variant": x["variant"]} for x in theme.LOOKS]  # the default is one of them
+
+    def rgb(h):
+        return [int(h[i:i + 2], 16) for i in (1, 3, 5)]
+    for mode in ("light", "dark"):
+        prim = [rgb(theme.scheme(x["seed"], x["variant"])[mode]["primary"]) for x in theme.LOOKS]
+        for i in range(5):
+            for j in range(i + 1, 5):
+                dist = sum((a - b) ** 2 for a, b in zip(prim[i], prim[j])) ** .5
+                assert dist > 40, (mode, theme.LOOKS[i]["name"], theme.LOOKS[j]["name"], dist)
+
+
+def _dark_block_outside_media(css):
+    """The dark scheme's block when it is not inside @media: the mode forces it."""
+    top = css.split("@media")[0]
+    return ':root:not([data-theme="light"]) {' in top
+
+
+def test_the_mode_is_in_the_stylesheet():
+    t = theme.scheme(theme.DEFAULTS["seed"], theme.DEFAULTS["variant"])
+    auto, light, dark = (theme.css({"mode": m}) for m in ("auto", "light", "dark"))
+    assert "@media (prefers-color-scheme: dark)" in auto and not _dark_block_outside_media(auto)
+    assert "color-scheme: light dark;" in auto and "auto mode" in auto
+    # light: the system's dark is ignored; only an explicit data-theme="dark" brings the dark scheme
+    assert "prefers-color-scheme" not in light and not _dark_block_outside_media(light)
+    assert light.split(":root {")[1].split("}")[0].count("color-scheme: light;") == 1 and "light mode" in light
+    assert ':root[data-theme="dark"]' in light
+    # dark: the dark scheme whatever the system says, unless data-theme="light"
+    assert "prefers-color-scheme" not in dark and _dark_block_outside_media(dark) and "dark mode" in dark
+    forced = dark.split(':root:not([data-theme="light"]) {')[1].split("}")[0]
+    assert f"--md-sys-color-surface: {t['dark']['surface']};" in forced and "color-scheme: dark;" in forced
+    assert dark.index(":root {") < dark.index(':root:not([data-theme="light"]) {')  # later wins over the light
+
+
+def test_the_mode_is_saved_and_previewed(client):
+    c, lis = client
+    assert "light mode" in c.get("/theme.css", params={"mode": "light"}).text  # a preview
+    saved = lis / "settings.json"
+    assert not saved.exists() or "theme" not in json.loads(saved.read_text())
+    assert c.get("/theme.css", params={"mode": "dim"}).status_code == 400
+    got = c.post("/api/settings", json={"theme": {"seed": "#2f6db5", "variant": "vibrant", "mode": "dark"}})
+    assert got.status_code == 200 and got.json()["settings"]["theme"]["mode"] == "dark"
+    assert "seed #2f6db5, vibrant, standard contrast, dark mode" in c.get("/theme.css").text
+    assert c.get("/api/theme").json()["settings"]["mode"] == "dark"
+    assert c.post("/api/settings", json={"theme": {"mode": "system"}}).status_code == 400
+    assert c.post("/api/settings", json={"theme": {"mode": "light"}}).json()["settings"]["theme"]["seed"] == "#2f6db5"
+
+
+def test_theme_js_is_served(client):
+    c, _ = client
+    r = c.get("/theme.js")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/javascript")
+    assert "window.Theme" in r.text and "no-cache" in r.headers["cache-control"]
 
 
 def test_the_episode_pages_fallback_is_the_default_theme():

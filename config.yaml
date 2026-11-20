@@ -287,9 +287,10 @@ listener_settings:
   playback:
     read_live: false                  # true: after the intro the guide reads the chapter live
   theme:                              # the app's colours: Material 3 from one seed (theme/, docs/theming.md)
-    seed: "#d9822b"                   # any #rrggbb; the listener picks it in Settings
-    variant: tonal_spot               # tonal_spot | vibrant | expressive | neutral | fidelity | content | monochrome
+    seed: "#3f7d4e"                   # any #rrggbb (Forest, the default look); the listener picks in Settings
+    variant: tonal_spot                 # tonal_spot | vibrant | expressive | neutral | fidelity | content | monochrome
     contrast: standard                # standard | medium | high
+    mode: auto                        # auto (follows the system) | light | dark
 
 # One live voice (voice/gpt_live/, Spec "One Live Voice", Ian 2026-11-13): the guide's conversation and
 # the chapter's reading in one OpenAI GPT-Live session, in one voice. The page (page/live.html) opens

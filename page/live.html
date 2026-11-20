@@ -12,6 +12,7 @@
   A tap turns the mic on and off; nothing switches over. The logic is in page/live.js.
 -->
 <link rel="stylesheet" href="/theme.css" id="theme-css">  <!-- the colours: Material 3 roles from the listener's seed (theme/, docs/theming.md) -->
+<script src="/theme.js"></script>  <!-- the theme bar, top left: five looks, light or dark (page/theme.js) -->
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
@@ -20,6 +21,8 @@
   /* The orb's screen fills the first screen; the library (page/library.js) sits below it, as you scroll. */
   #screen { flex: none; width: 100%; min-height: calc(100vh - var(--lib-player-h, 0px));
             display: flex; flex-direction: column; align-items: center; }
+  /* The theme bar (page/theme.js) floats at the top left: on a phone or a short screen, keep the orb clear of it. */
+  @media (max-width: 600px), (max-height: 700px) { #screen { padding-top: 56px; } }
   #toggle[hidden] { display: none; }  /* nothing said yet: no transcript to show */
   main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
          gap: 22px; width: 100%; padding: 16px; }

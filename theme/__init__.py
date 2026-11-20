@@ -13,7 +13,7 @@ each role and its "on" pair. This module makes that one CSS file, /theme.css, in
                                                     names the pages already use, each pointing at a role, so the
                                                     pages follow the theme without knowing it is Material
 
-A listener's choice lives in their settings.json group `theme` ({"seed", "variant", "contrast"}); config.yaml
+A listener's choice lives in their settings.json group `theme` ({"seed", "variant", "contrast", "mode"}); config.yaml
 listener_settings.theme has the defaults. A page links /theme.css before its own styles and never sets a colour of
 its own: tests/test_theme.py fails on a colour literal in page/ outside the allowed few.
 """
@@ -40,16 +40,21 @@ VARIANTS = {  # what the listener picks between; tonal_spot is Android's default
     "neutral": SchemeNeutral, "fidelity": SchemeFidelity, "content": SchemeContent, "monochrome": SchemeMonochrome,
 }
 CONTRASTS = {"standard": 0.0, "medium": 0.5, "high": 1.0}  # Material 3's contrast levels
+MODES = ("auto", "light", "dark")  # light or dark: auto follows the system (prefers-color-scheme)
 PALETTES = ("primary", "secondary", "tertiary", "neutral", "neutral_variant", "error")
 TONES = (0, 4, 6, 10, 12, 17, 20, 22, 24, 30, 40, 50, 60, 70, 80, 87, 90, 92, 94, 95, 96, 98, 99, 100)
 SKIP = {"primaryPaletteKeyColor", "secondaryPaletteKeyColor", "tertiaryPaletteKeyColor", "neutralPaletteKeyColor",
         "neutralVariantPaletteKeyColor", "errorPaletteKeyColor"}  # inputs to the algorithm, not roles to style with
 HEX = re.compile(r"#?([0-9a-fA-F]{6})")
-DEFAULTS = {"seed": "#d9822b", "variant": "tonal_spot", "contrast": "standard"}  # also config.yaml
-PRESETS = [  # the picker's swatches: the app's first orange, the library sketches' three, and a few more
-    {"name": "Amber", "seed": "#d9822b"}, {"name": "Coral", "seed": "#c8553d"}, {"name": "Rose", "seed": "#b5485d"},
-    {"name": "Violet", "seed": "#6b5b95"}, {"name": "Blue", "seed": "#3a6ea5"}, {"name": "Teal", "seed": "#24585b"},
-    {"name": "Green", "seed": "#4f7942"}, {"name": "Ochre", "seed": "#b7791f"},
+DEFAULTS = {"seed": "#3f7d4e", "variant": "tonal_spot", "contrast": "standard", "mode": "auto"}  # also config.yaml
+LOOKS = [  # five looks, one click each (the theme bar, page/theme.js; Settings' swatches): a seed and a style, each
+    # in light and dark. Picked to differ at a glance (Ian, 2026-11-19): green, warm, blue, pink, quiet grey.
+    # Forest is the default (Ian, 2026-11-20), so it comes first.
+    {"name": "Forest", "seed": "#3f7d4e", "variant": "tonal_spot"},  # vibrant turns it neon
+    {"name": "Amber", "seed": "#d9822b", "variant": "vibrant"},   # the app's first orange
+    {"name": "Ocean", "seed": "#2f6db5", "variant": "vibrant"},
+    {"name": "Rose", "seed": "#c0446a", "variant": "vibrant"},
+    {"name": "Slate", "seed": "#4a5d73", "variant": "neutral"},
 ]
 
 # The app's own names for the roles: what page/*.html and page/library.js use. A new page should use the roles
@@ -87,7 +92,7 @@ def _seed(value) -> str | None:
 
 
 def clean(settings: dict | None, defaults: dict | None = None) -> dict:
-    """A theme setting made safe: a #rrggbb seed, a known variant and contrast; anything else falls back to
+    """A theme setting made safe: a #rrggbb seed, a known variant, contrast and mode; anything else falls back to
     `defaults` (config.yaml's, when the caller has them) or DEFAULTS. Never raises, whatever settings.json holds."""
     base = DEFAULTS if defaults is None else clean(defaults)
     got = settings if isinstance(settings, dict) else {}
@@ -95,7 +100,8 @@ def clean(settings: dict | None, defaults: dict | None = None) -> dict:
             "variant": got.get("variant") if isinstance(got.get("variant"), str) and got["variant"] in VARIANTS
             else base["variant"],
             "contrast": got.get("contrast") if isinstance(got.get("contrast"), str) and got["contrast"] in CONTRASTS
-            else base["contrast"]}
+            else base["contrast"],
+            "mode": got.get("mode") if isinstance(got.get("mode"), str) and got["mode"] in MODES else base["mode"]}
 
 
 def check(key: str, value) -> str:
@@ -112,6 +118,10 @@ def check(key: str, value) -> str:
     if key == "contrast":
         if not isinstance(value, str) or value not in CONTRASTS:
             raise ValueError(f"The contrast must be one of {', '.join(CONTRASTS)}.")
+        return value
+    if key == "mode":
+        if not isinstance(value, str) or value not in MODES:
+            raise ValueError(f"The mode must be one of {', '.join(MODES)}.")
         return value
     raise ValueError(f"Unknown theme setting {key}.")
 
@@ -160,14 +170,24 @@ def css(settings: dict | None = None, defaults: dict | None = None) -> str:
 
     dark = {"color-scheme": "dark", **layer("dark")}
     head = (f"/* write-listen theme: Material 3 ({t['spec']} colour spec), seed {s['seed']}, {s['variant']}, "
-            f"{s['contrast']} contrast. Generated by theme/__init__.py; see docs/theming.md. */")
-    return "\n\n".join([
+            f"{s['contrast']} contrast, {s['mode']} mode. Generated by theme/__init__.py; see docs/theming.md. */")
+    # The mode is in the stylesheet itself, so a page is in the listener's light or dark from its first paint:
+    # auto follows the system; light or dark is that scheme whatever the system says. data-theme on <html> still
+    # forces either (a page's own override wins over the setting).
+    if s["mode"] == "auto":
+        follow = "@media (prefers-color-scheme: dark) {\n" + _block(':root:not([data-theme="light"])', dark, "  ") + "\n}"
+    elif s["mode"] == "dark":
+        follow = _block(':root:not([data-theme="light"])', dark)
+    else:
+        follow = None
+    scheme_of = {"auto": "light dark", "light": "light", "dark": "light"}[s["mode"]]  # dark's own block says dark
+    return "\n\n".join(b for b in [
         head,
-        _block(":root", {"color-scheme": "light dark", **layer("light")}),
-        "@media (prefers-color-scheme: dark) {\n" + _block(':root:not([data-theme="light"])', dark, "  ") + "\n}",
+        _block(":root", {"color-scheme": scheme_of, **layer("light")}),
+        follow,
         _block(':root[data-theme="dark"]', dark),
         _block(':root[data-theme="light"]', {"color-scheme": "light"}),
-    ]) + "\n"
+    ] if b) + "\n"
 
 
 def contrast_ratio(a: str, b: str) -> float:

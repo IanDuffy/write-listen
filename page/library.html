@@ -11,13 +11,14 @@
   the same look as the rest of the app (system font, one accent colour).
 -->
 <link rel="stylesheet" href="/theme.css" id="theme-css">  <!-- the colours: Material 3 roles from the listener's seed (theme/, docs/theming.md) -->
+<script src="/theme.js"></script>  <!-- the theme bar, top left: five looks, light or dark (page/theme.js) -->
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   body { background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 </style>
 </head>
-<body>
+<body data-theme-bar="inline">
 <section id="library"></section>
 <script src="/library.js"></script>
 </body>

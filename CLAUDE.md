@@ -506,7 +506,8 @@ plays. The library's Play is `#lib-play` (the orb page has its own `#play`).
 - Demo: `wl demo seed [--use]` rebuilds `listeners/demo-library/` from `demo/library_demo.json` (filler cards from
   the real planner; the Beauty and Herons chapters copied from `listeners/ian`, read only). The tick skips a listener
   whose settings.json has `demo`.
-- Visual tokens: the app's own (system font, `--accent` orange, dark mode) where it sets one, per the spec's rule.
+- Visual tokens: the app's own (system font, `--accent`, dark mode) where it sets one, per the spec's rule; `--accent`
+  is the theme's primary (Material 3 section below).
 
 ## Colour theming: Material 3 (branch `feature/m3-theme`, 2026-11-18)
 
@@ -517,6 +518,9 @@ the app's names `--accent`, `--bg`, `--lt-*` as aliases); the listener's `settin
 `{seed, variant, contrast}` (defaults in config.yaml `listener_settings.theme`, checked by `profiles.save_settings`);
 Settings in the library has a picker (swatches, own colour, style, contrast) that previews live. The library's topic
 cards are topics 1-3 (primary, tertiary, secondary; containers in dark). Rules for new UI: docs/theming.md.
+The theme bar (Ian, 2026-11-19; `page/theme.js`, on every page, top left; behind a palette button since 2026-11-20):
+five looks (`theme.LOOKS`, a seed and a style each; Forest is the default, 2026-11-20) and Light / Dark / Auto (`theme.mode`, written into /theme.css so the first paint
+is right), one click each, saved at once. `window.Theme` is the only code that swaps the stylesheet.
 
 ## Local setup
 
