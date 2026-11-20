@@ -631,6 +631,23 @@ Deploy: `DEPLOY.md`, `deploy/`.
     (`dirForget`); a quiet whisper no longer rests the page (the guide's parting words or `step_back` do); the
     default plan says what it does before finding the spark; the persona mirrors the page's turn count, the
     guide's own offer line, a plain no to chat and the clocks coming back when the earpiece is down.
+    **The earpiece view** (branch `feature/earpiece-view`, 2026-11-20; Ian: "see what the director is feeding to the
+    narrator in real time ... just for me ... retain a history with timestamps"; design `docs/earpiece-view-design.txt`).
+    A per-tester flag, off by default: tester.json `earpiece_view` (admin "Earpiece view: on/off", the create form's
+    checkbox, `wl study create ... --earpiece-view`; kept over a reset); off demo mode `live.director.view`.
+    `director.view_on` reads it per request; it never goes in the global /live.js settings. `/api/live/start` answers
+    `earpiece_view`, and only then does the page load `/earpiece.js` (404 for anyone without the flag). `page/earpiece.js`
+    is a floating panel fed by a hook in live.js (`dirEmit`, `L.dirEvents`; it changes no decision). Newest first, it
+    shows each look (trigger, who was speaking, the read, the plan as a checklist with changes marked, next), each
+    note's fate and the guide's next line. It never covers the circle, End demo, the play bar or the text box. Every
+    tester's page posts each whisper's fate (`POST /api/live/direct/fate`: sent, held, or dropped with a reason from
+    `director.FATE_REASONS`, which `directorWhy`/`dirHereWhy` name on the page), panel or not. Fates are recorded as
+    `director_fate` rows with no text or note, so nothing that reads the conversation reads them. The admin's
+    "Earpiece history" (`/admin/earpiece?lid=<lid|own>`, `voice/gpt_live/earpiece_history.py`) lists conversations
+    and shows one as a timeline: lines, looks with plan changes, notes and their fates, when each reached the guide and
+    the guide's next line ("ended +N s": rows are written when a line ends). Older conversations without fate rows
+    infer "sent" from the delivered note. Checked offline in demo mode (two testers, fake GPT-Live, a fake model behind
+    the real director route); Ian has not seen it yet.
   - **The guide's warmth** is 720f7d5's again (Pooja's and Purnima's conversations): conversation not interview,
     "Mix your moves", about a third of turns a question, the pause left to them, a few exchanges about them before
     the offer, stay on what lights them up, then pitch. The pace (what it does by about a minute, the pitch within

@@ -11,6 +11,7 @@ pass is off, and no model is reached. The page's timings are shortened in the te
 
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -202,7 +203,9 @@ def site(cfg, tmp_path, monkeypatch):
     while not srv.started and time.monotonic() < deadline:
         time.sleep(0.05)
     base = f"http://127.0.0.1:{port}"
-    yield base, World(runs, base), offers
+    w = World(runs, base)
+    w.cfg = cfg  # the server's own: a test can turn live.director.view on (director.view_on reads it per request)
+    yield base, w, offers
     srv.should_exit = True
 
 
@@ -3524,3 +3527,336 @@ def test_the_started_note_names_the_topic(world):
     assert "{topic}" not in note and "{when}" not in note
     if "{topic}" in w.notes["started_company"]:
         assert "Peregrine falcons and speed" in note
+
+
+# --- the earpiece view (Ian, 2026-11-20): a floating panel of what the earpiece whispers, and each whisper's fate ----
+# The panel (page/earpiece.js) loads only when /api/live/start says this listener has the view on (here, off demo
+# mode: live.director.view); the fates are posted to /api/live/direct/fate (the real route) whether it shows or not.
+
+PLAN1 = [{"item": "Say what it does", "state": "open"}, {"item": "Find the spark", "state": "open"}]
+PLAN2 = [{"item": "Say what it does", "state": "done"}, {"item": "Find the spark", "state": "open"},
+         {"item": "Pitch a chapter", "state": "open"}]
+PLAN3 = [{"item": "Say what it does", "state": "done"}, {"item": "Pitch a chapter", "state": "open"}]
+
+
+def viewing(w, on=True):
+    w.cfg["live"]["director"]["view"] = on
+
+
+def ep_open(w, on=True):
+    """A page with the view on or off, its requests' URLs recorded, the session started and the guide's hello said."""
+    viewing(w, on)
+    p = w.open()
+    p.urls = []
+    p.page.on("request", lambda r: p.urls.append(r.url))
+    p.page.click("#orb")
+    p.wait("L.started && L.phase === 'talk'")
+    if on:
+        p.page.wait_for_function("window.Earpiece && document.getElementById('earpiece')")
+    return p
+
+
+def fates(p):
+    return p.post_bodies("api/live/direct/fate")
+
+
+def wait_fates(p, n, timeout=6):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(fates(p)) >= n:
+            return fates(p)
+        p.page.wait_for_timeout(50)
+    raise AssertionError(f"{len(fates(p))} fate posts, wanted {n}: {fates(p)}")
+
+
+def deferred_director(p, **knobs):
+    """The director on, its looks answered only when the test says (answer())."""
+    routes = []
+    p.page.route("**/api/live/direct", lambda route: routes.append(route))
+    cue(p, "director", {**DIRECTOR, **knobs})
+    return routes
+
+
+def answer(p, routes, n, a):
+    for _ in range(200):
+        if len(routes) >= n:
+            break
+        p.page.wait_for_timeout(50)
+    assert len(routes) >= n, f"look {n} was never asked"
+    body = json.loads(routes[n - 1].request.post_data)
+    routes[n - 1].fulfill(status=200, content_type="application/json", body=json.dumps({"id": body["id"], **NO_CHANGE, **a}))
+    return body["id"]
+
+
+def talking(p, ms):
+    """The mic hears the listener for `ms` (no words yet): a "now" whisper is held meanwhile."""
+    p.js(f"() => {{ window.Live.L.micVoiceAt = Date.now() + {ms}; }}")
+
+
+def test_without_the_flag_the_earpiece_is_never_loaded(world):
+    w = world
+    p = ep_open(w, on=False)
+    director_on(p, [whisper("When the salmon story winds down, ask what they read.", about="interest")])
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Hi, I'm making salmon tonight.")
+    p.wait(logged(p, "direct-sent", "interest"), timeout=6000)
+    assert w.notes["direct"].replace("{note}", "When the salmon story winds down, ask what they read.") in instructions(p)
+    assert not any(u.endswith("/earpiece.js") for u in p.urls)
+    assert p.js("document.getElementById('earpiece') === null && typeof window.Earpiece === 'undefined'")
+
+
+def test_with_the_flag_the_panel_shows_each_look_newest_first(world):
+    w = world
+    p = ep_open(w)
+    director_on(p, [
+        {**whisper("When the salmon winds down, ask what they read.", about="interest"), "read": "They're cooking.",
+         "plan": PLAN1, "next": "Say what it does"},
+        {"read": "It told them what it does.", "plan": PLAN2, "next": "Find the spark"},
+        {**whisper("Pitch a chapter on salmon runs.", about="pitch"), "read": "Salmon lit them up.", "plan": PLAN3,
+         "next": "Pitch a chapter"},
+    ])
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    for i, line in enumerate(["Hi, I'm making salmon tonight.", "Oh, nice.", "I love how they swim upstream."]):
+        p.hear(line)
+        p.wait(f"window.Live.L.log.filter((m) => m[1] === 'direct').length >= {i + 1}", timeout=6000)
+        if i < 2:
+            p.say("Go on.")
+            p.wait("L.lastGuideAt > L.turnEnd")
+    p.wait(logged(p, "direct-sent", "pitch"), timeout=4000)
+    looks = p.js("""[...document.querySelectorAll('#earpiece-list > li.look')].map((li) => ({
+        id: li.dataset.id, text: li.textContent,
+        plan: [...li.querySelectorAll('.plan li')].map((x) => [x.firstChild.textContent, x.dataset.state, x.dataset.change]),
+        removed: (li.querySelector('.removed') || {}).textContent || '',
+        fate: (li.querySelector('.fate') || {}).textContent || '', fateKind: li.querySelector('.fate') ? li.querySelector('.fate').dataset.fate : null }))""")
+    assert [x["id"] for x in looks] == ["3", "2", "1"]  # newest first
+    first, second, third = looks[2], looks[1], looks[0]
+    assert "turn_end" in first["text"] and "speaking" in first["text"] and "They're cooking." in first["text"]
+    assert first["plan"] == [["Say what it does", "open", ""], ["Find the spark", "open", ""]]
+    assert "Next: Say what it does" in first["text"]
+    assert first["fateKind"] == "sent" and re.match(r"Sent to the guide at \d+:\d\d", first["fate"])
+    assert second["plan"] == [["Say what it does", "done", "done"], ["Find the spark", "open", ""],
+                              ["Pitch a chapter", "open", "new"]]
+    assert second["fateKind"] is None  # no note
+    assert third["removed"] == "removed: Find the spark"
+    assert "Pitch a chapter on salmon runs." in third["text"] and third["fateKind"] == "sent"
+    head = p.js("document.getElementById('earpiece-head').textContent")
+    assert "3 looks" in head and "2 sent" in head and p.L("L.session") in head
+    p.say("Have you ever heard about the salmon runs in Alaska?")
+    assert "“Go on.”" in p.js("document.querySelector('#earpiece-list > li.look[data-id=\"1\"] .reply').textContent")
+    p.page.wait_for_function("document.querySelector('#earpiece-list > li.look[data-id=\"3\"] .reply')", timeout=5000)
+    reply = p.js("document.querySelector('#earpiece-list > li.look[data-id=\"3\"] .reply').textContent")
+    assert re.match(r"Guide began \d+\.\d s after: “Have you ever heard about the salmon runs in Alaska\?”", reply)
+    # the server has each fate, in the shape the history reads
+    assert [(f["id"], f["fate"]) for f in wait_fates(p, 2)] == [(1, "sent"), (3, "sent")]
+
+
+def test_held_dropped_replaced_and_forgotten_fates_are_shown_and_posted(world):
+    w = world
+    p = ep_open(w)
+    routes = deferred_director(p, every_secs=1, every_lines=1000)
+    p.say("Hi there!")
+    # a "now" whisper while the listener is mid-line: held, then sent once they stop (one held post)
+    p.wait("L.dir.ctl", timeout=5000)
+    talking(p, 1500)
+    a = answer(p, routes, 1, whisper("They asked what it is: answer that.", about="unanswered", kind="now"))
+    p.wait(logged(p, "direct-sent", "unanswered"), timeout=6000)
+    got = wait_fates(p, 2)
+    assert [(f["id"], f["fate"]) for f in got] == [(a, "held"), (a, "sent")]
+    assert got[1]["held_ms"] > 0 and got[0]["held_ms"] is None and got[1]["session"] == p.L("L.session")
+    # within min_gap_secs of the last whisper: dropped, "gap", with how long after
+    cue(p, "director", {**DIRECTOR, "every_secs": 1, "every_lines": 1000, "min_gap_secs": 30})
+    p.say("Mm.")
+    b = answer(p, routes, 2, whisper("Ask what they read.", about="interest"))
+    gap = wait_fates(p, 3)[2]
+    assert gap["id"] == b and gap["fate"] == "dropped" and gap["reason"] == "gap"
+    assert re.fullmatch(r"\d+\.\d s after the last", gap["detail"])
+    # a held note a newer look replaces
+    cue(p, "director", {**DIRECTOR, "every_secs": 1, "every_lines": 1000, "min_gap_secs": 0})
+    p.say("Right.")
+    p.wait("L.dir.ctl", timeout=5000)
+    talking(p, 8000)
+    c = answer(p, routes, 3, whisper("They said yes: start it.", about="start", kind="now"))
+    wait_fates(p, 4)
+    p.say("Okay.")
+    d = answer(p, routes, 4, whisper("Ask about the boys.", about="interest"))
+    got = wait_fates(p, 6)
+    replaced = next(f for f in got if f["id"] == c and f["fate"] == "dropped")
+    assert replaced["reason"] == "replaced" and replaced["held_ms"] > 0
+    assert any(f["id"] == d and f["fate"] == "sent" for f in got)
+    # a rest with a note pending: forgotten, "rest"
+    p.say("Hmm.")
+    p.wait("L.dir.ctl", timeout=5000)
+    talking(p, 8000)
+    e = answer(p, routes, 5, whisper("Quiet now: they asked.", about="quiet", kind="now"))
+    p.wait("L.dir.next && L.dir.next.heldAt", timeout=4000)
+    p.page.click("#orb")  # a tap in talk rests
+    got = wait_fates(p, 8)
+    forgot = next(f for f in got if f["id"] == e and f["fate"] == "dropped")
+    assert forgot["reason"] == "forgotten" and forgot["detail"] == "rest"
+    assert sum(1 for f in got if f["fate"] == "held") == 3  # once per note, never every tick
+    # the panel shows each
+    shown = p.js("Object.fromEntries([...document.querySelectorAll('#earpiece-list > li.look .fate')]"
+                 ".map((f) => [f.closest('li').dataset.id, [f.dataset.fate, f.dataset.reason, f.textContent]]))")
+    assert shown[str(a)][0] == "sent" and shown[str(a)][2].startswith("Held ")
+    assert shown[str(b)][:2] == ["dropped", "gap"] and "after the last" in shown[str(b)][2]
+    assert shown[str(c)][:2] == ["dropped", "replaced"]
+    assert shown[str(d)][0] == "sent"
+    assert shown[str(e)][:2] == ["dropped", "forgotten"] and "(rest)" in shown[str(e)][2]
+    assert p.js("[...document.querySelectorAll('#earpiece-list > li.forget')].some((x) => /Pending note forgotten \\(rest\\)/.test(x.textContent))")
+
+
+def test_fates_are_posted_without_the_panel(world):
+    w = world
+    p = ep_open(w, on=False)
+    director_on(p, [whisper("Ask what they read.", about="interest"), whisper("Pitch salmon runs.", about="pitch")],
+                min_gap_secs=30)
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Hi, I'm making salmon tonight.")
+    p.wait(logged(p, "direct-sent", "interest"), timeout=6000)
+    p.say("Nice.")
+    p.wait("L.lastGuideAt > L.turnEnd")
+    p.hear("Yeah, with dill.")
+    p.wait(logged(p, "direct-drop", "pitch"), timeout=6000)
+    got = wait_fates(p, 2)
+    assert [(f["id"], f["fate"], f["reason"]) for f in got] == [(1, "sent", None), (2, "dropped", "gap")]
+    assert not any(u.endswith("/earpiece.js") for u in p.urls)
+
+
+def test_errors_and_the_earpiece_going_down_show_plainly(world):
+    w = world
+    p = ep_open(w)
+    director_on(p, ["error", "error"])
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Hi.")
+    p.wait(logged(p, "direct-fail"), timeout=6000)
+    p.say("How are you?")
+    p.wait("L.lastGuideAt > L.turnEnd")
+    p.hear("Fine.")
+    p.wait(logged(p, "director-down"), timeout=6000)
+    p.page.wait_for_function("document.querySelectorAll('#earpiece-list > li.fail').length === 2")
+    assert p.js("[...document.querySelectorAll('#earpiece-list > li.fail')].every((x) => /Look failed: /.test(x.textContent))")
+    assert p.js("/Earpiece down: the page's clocks have taken over/.test(document.querySelector('#earpiece .down').textContent)")
+    assert "down" in p.js("document.getElementById('earpiece-head').textContent")
+
+
+def overlaps(p, a, b):
+    return p.js("([a, b]) => { const r = document.getElementById(a).getBoundingClientRect(), s = document.getElementById(b).getBoundingClientRect();"
+                " return !(r.right <= s.left || s.right <= r.left || r.bottom <= s.top || s.bottom <= r.top); }", [a, b])
+
+
+def test_the_panel_folds_and_never_covers_the_circle_end_demo_or_the_play_bar(world):
+    w = world
+    p = ep_open(w)
+    p.js("""() => { for (let i = 1; i <= 30; i++) {
+        const base = {session: window.Live.L.session, at: Date.now(), secs: i};
+        Earpiece.event({...base, type: 'ask', id: 100 + i, trigger: 'cadence', speaking: 'none'});
+        Earpiece.event({...base, type: 'look', id: 100 + i, got: {read: 'A fairly long read of the moment, number ' + i,
+          plan: [{item: 'Say what it does', state: 'done'}, {item: 'Find the spark', state: 'open'}], next: 'Find the spark',
+          changed: true, kind: 'when_it_fits', about: 'interest', note: 'Ask what they read when it fits.'}});
+      }
+      const pl = document.getElementById('player'); pl.hidden = false; pl.style.display = 'block';  // render() may re-hide
+      document.getElementById('end-demo').style.display = 'inline-block'; }""")
+    for size in ({"width": 375, "height": 812}, {"width": 1280, "height": 800}):
+        p.page.set_viewport_size(size)
+        p.js("() => window.dispatchEvent(new Event('resize'))")
+        p.page.wait_for_timeout(100)
+        for other in ("orb", "end-demo", "player"):
+            assert p.js(f"!!document.getElementById('{other}').getBoundingClientRect().height"), other
+            assert not overlaps(p, "earpiece", other), (size, other)
+        r = p.js("(() => { const r = document.getElementById('earpiece').getBoundingClientRect(); return [r.left, r.right, innerWidth]; })()")
+        assert r[0] >= 0 and r[1] <= r[2] - 11, r  # inside the screen, a gutter on each side
+        widths = p.js("""(() => { const e = document.getElementById('earpiece'), d = document.documentElement;
+            const w = d.scrollWidth; e.style.display = 'none'; const w0 = d.scrollWidth; e.style.display = ''; return [w, w0]; })()""")
+        assert widths[0] == widths[1]  # it adds no horizontal scroll
+        assert p.js("document.querySelectorAll('#earpiece-list > li.look').length") == 30
+    head = "#earpiece-head"
+    assert p.js(f"document.querySelector('{head}').getAttribute('aria-expanded')") == "true"
+    p.page.click(head)
+    assert p.js(f"document.querySelector('{head}').getAttribute('aria-expanded')") == "false"
+    assert p.js("getComputedStyle(document.getElementById('earpiece-list')).display") == "none"
+    p.page.click(head)
+    assert p.js("getComputedStyle(document.getElementById('earpiece-list')).display") != "none"
+
+
+def _scenario(p, w, on, throwing=False):
+    """One conversation on this page (one browser per test: a second sync Playwright can't start), the view on or
+    off; what it sent and marked, from its start."""
+    viewing(w, on)
+    if p.phase() != "idle":
+        p.js("() => window.Live.endConversation()")
+        p.wait("L.phase === 'idle'")
+    k_log, k_sent, k_fates = len(p.L("L.log")), len(instructions(p)), len(fates(p))
+    p.page.click("#orb")
+    p.wait("L.started && L.phase === 'talk'")
+    if on:
+        p.page.wait_for_function("window.Earpiece && document.getElementById('earpiece')")
+    else:
+        p.page.wait_for_function("!window.Earpiece && !document.getElementById('earpiece')")
+    if throwing:
+        p.js("() => { window.Earpiece.event = () => { throw new Error('the panel broke'); }; }")
+    p.page.unroute("**/api/live/direct")
+    director_on(p, [whisper("Ask what they read.", about="interest"), {"read": "Fine.", "plan": PLAN1},
+                    whisper("Pitch salmon runs.", about="pitch")], min_gap_secs=30)
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    for i, line in enumerate(["Hi, I'm making salmon tonight.", "With dill.", "And lemon."]):
+        p.hear(line)
+        p.wait(f"window.Live.L.log.slice({k_log}).filter((m) => m[1] === 'direct').length >= {i + 1}", timeout=6000)
+        p.page.wait_for_timeout(400)
+        if i < 2:
+            p.say("Mm.")
+            p.wait("L.lastGuideAt > L.turnEnd")
+    marks = [(m[1], m[2]) for m in p.L("L.log")[k_log:] if str(m[1]).startswith("direct")]
+    wait_fates(p, k_fates + 2)
+    return instructions(p)[k_sent:], marks, [(f["id"], f["fate"], f["reason"]) for f in fates(p)[k_fates:]]
+
+
+def test_the_panel_changes_nothing(world):
+    w = world
+    p = w.open()
+    p.urls = []
+    off = _scenario(p, w, False)
+    on = _scenario(p, w, True)
+    assert on == off
+    assert ("direct-sent", "interest") in on[1] and ("direct-drop", "pitch") in on[1]
+    assert on[2] == [(1, "sent", None), (3, "dropped", "gap")]
+    assert _scenario(p, w, True, throwing=True) == off  # a throwing panel: the whisper still goes
+    assert _scenario(p, w, False) == off  # and turned off again, the panel is gone
+
+
+def test_directorWhy_names_each_drop_and_nothing_else(world):
+    w = world
+    p = connect(w, start=False)
+    t = 100000
+    base = {"here": True, "heardAt": 0, "listenerSpeaking": False, "sentAt": 0, "explained": False, "started": False,
+            "offered": False}
+    C = {"min_gap_secs": 20}
+    table = [
+        ({"about": "pitch", "kind": "when_it_fits", "askedAt": t}, {}, "send", None),
+        ({"about": "pitch", "kind": "when_it_fits", "askedAt": t}, {"here": False}, "drop", "not_here"),
+        ({"about": "pitch", "kind": "when_it_fits", "askedAt": t}, {"started": True}, "drop", "stale_after_start"),
+        ({"about": "start", "kind": "now", "askedAt": t}, {"started": True}, "drop", "stale_after_start"),
+        ({"about": "habit", "kind": "when_it_fits", "askedAt": t}, {"started": True}, "send", None),
+        ({"about": "offer", "kind": "when_it_fits", "askedAt": t}, {"explained": True}, "drop", "explained"),
+        ({"about": "offer", "kind": "when_it_fits", "askedAt": t}, {"offered": True}, "drop", "explained"),
+        ({"about": "unanswered", "kind": "now", "askedAt": t - 10}, {"heardAt": t - 5}, "drop", "listener_spoke"),
+        ({"about": "unanswered", "kind": "now", "askedAt": t}, {"listenerSpeaking": True}, "hold", None),
+        ({"about": "unanswered", "kind": "now", "askedAt": t}, {"sentAt": t - 1000}, "send", None),
+        ({"about": "interest", "kind": "when_it_fits", "askedAt": t}, {"sentAt": t - 1000}, "drop", "gap"),
+        ({"about": "interest", "kind": "when_it_fits", "askedAt": t}, {"sentAt": t - 30000}, "send", None),
+    ]
+    for n, st, verdict, why in table:
+        got = p.js("([n, t, st, C]) => [window.Live.directorVerdict(n, t, st, C), window.Live.directorWhy(n, t, st, C)]",
+                   [n, t, {**base, **st}, C])
+        assert got == [verdict, why], (n, st, got)
+    cue(p, "director", DIRECTOR)
+    p.wait("L.lastGuideAt && L.dc && L.dc.readyState === 'open'")
+    assert p.js("[window.Live.dirHere(), window.Live.dirHereWhy()]") == [True, ""]
+    p.js("() => { window.Live.L.muted = true; }")
+    assert p.js("[window.Live.dirHere(), window.Live.dirHereWhy()]") == [False, "muted"]
+    p.js("() => { window.Live.L.muted = false; window.Live.L.phase = 'resting'; }")
+    assert p.js("[window.Live.dirHere(), window.Live.dirHereWhy()]") == [False, "phase resting"]

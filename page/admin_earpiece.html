@@ -154,7 +154,8 @@ async function one() {
   $("crumb").innerHTML = `· <a href="?lid=${encodeURIComponent(lid)}">${esc(got.label)}</a>`;
   $("title").textContent = `Conversation ${when(got.started)}`;
   const D = got.director;
-  $("summary").textContent = `${D.looks} looks · ${D.notes} notes · ${D.sent} sent · ${D.held} held · ${D.dropped} dropped`
+  const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  $("summary").textContent = `${n(D.looks, "look", "looks")} · ${n(D.notes, "note", "notes")} · ${D.sent} sent · ${D.held} held · ${D.dropped} dropped`
     + (D.errors ? ` · ${D.errors} failed` : "") + ` · earpiece ${money(D.cost_usd)}. Times: m:ss since the start, and the clock. A line's time is when it ended.`;
   $("msg").textContent = got.items.length ? "" : "Nothing in this conversation.";
   $("content").innerHTML = `<ol id="timeline">${got.items.map(itemHtml).join("")}</ol>`;

@@ -309,6 +309,7 @@ def _conversation(folder, sid="20261120-100000", fates=True):
     plan2 = [{"item": "say  what it does", "state": "done"}, {"item": "Find the spark", "state": "open"},
              {"item": "Pitch a chapter", "state": "open"}]
     rows = [
+        {"t": "2026-11-20T10:00:00", "who": "session", "names": ["Nilo", "Hale"], "returning": False},
         {"t": "2026-11-20T10:00:00", "who": "session", "live_id": "sess_1"},
         {"t": "2026-11-20T10:00:02", "who": "guide", "text": "Hi there.", "mode": "live"},
         {"t": "2026-11-20T10:00:06", "who": "listener", "text": "Hi, I just got back from a walk.", "mode": "live"},

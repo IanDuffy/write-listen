@@ -111,6 +111,9 @@
     recent: [],             // the last few lines ({who, text}) for the director (any the transcript lacks yet)
     turnWords: [], turnEnd: 0, inStart: 0,  // the listener's turns for engaged(): fragments merged, words per turn
     replyWait: null,        // the guide offered to chat before stepping back: {at} its line ended; the page waits for a reply
+    // The earpiece view (Ian, 2026-11-20): what the earpiece did, for the panel (page/earpiece.js, loaded only when
+    // /api/live/start says this listener has it on). Kept across conversations, the newest 500. Nothing reads it back.
+    dirEvents: [], earpieceLoaded: false,
   };
   if (L.tester) L.skin.add("tester");
   window.Live = { L, S, state: () => L.phase };  // S: tests turn the clock-driven cues on
@@ -160,6 +163,7 @@
     mute(false);
     send("session.instructions.append", { delegation_id: null, content: text });
     mark("instruct", text.slice(0, 80));
+    dirEmit("note", { text });
     remember("page", text);
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "page", text });  // in the transcript, so a line has its cause
   }
@@ -194,7 +198,7 @@
     // back up, the reading goes on from that sentence rather than its paragraph's start.
     const stoppedAt = !resume && L.dropAt && L.run ? { run: L.run, ...L.dropAt } : null;
     if (!resume) newConversation();
-    else dirForget();
+    else dirForget("new session: " + resume);
     L.phase = "connecting";
     render();
     const sayOnly = resume === "ready";  // only to say the chapter is ready: no mic, never on (Ian asked for it off)
@@ -264,6 +268,7 @@
       L.session = got.session; L.liveId = got.live_id;
       if (!resume && got.handoff && L.handoff) { L.handoffOpen = L.handoff; L.handoff = null; }  // kept for a retry until it opens
       if (!resume) { L.debriefDone = !!got.debrief_done; L.demoBegun = true; }
+      if (!resume) { if (got.earpiece_view) loadEarpiece(); else if (window.Earpiece) { try { Earpiece.remove(); } catch (e) {} } }
       if (L.tester && !L.handedOver && !L.demo) loadDemo();  // the load-time ask failed: asked again at a start
       if (!resume && got.continue) {
         L.cont = { ...got.continue };
@@ -325,6 +330,8 @@
       mark("released");
     }
     if (!resume) L.convAt = now();
+    if (!resume) dirEmit("conversation", { handoff: !!L.handoffOpen });
+    else dirEmit("session", { reason: resume });
     L.wokeAt = 0; L.stepBackAt = 0; L.restFrom = null;
     L.phase = resume && resume.startsWith("paused") ? "paused" : resume === "ready" ? "resting" : L.chapter && L.readStarted && (!L.finished || L.replaying) ? "aside" : "talk";
     if (L.phase === "paused") L.pauseAt = now();
@@ -381,6 +388,10 @@
 
   // A new conversation: nothing of an earlier one's chapter is carried over (the page may have stayed open).
   function newConversation() {
+    if (L.dir && L.dir.next) {  // a whisper never sent: for the panel only (the conversation is over, nothing posted)
+      const n = L.dir.next;
+      dirEmit("fate", { id: n.id, fate: "dropped", reason: "ended", note: n.note, kind: n.kind, about: n.about });
+    }
     L.own = null; L.cont = null; L.startCalled = false; L.promiseAt = 0; L.nudges = 0; L.outFirst = 0;
     L.run = null; L.chapter = null; L.chapterAt = ""; L.feed = { items: [], next: 0, cur: null, ahead: null };
     L.readStarted = false; L.finished = false; L.archived = false; L.aside = null; L.wait = null; L.dropAt = null;
@@ -554,6 +565,7 @@
         L.lastGuideLine = text; L.lastGuideAt = t; L.lineEndAt = Math.max(L.lineEndAt || 0, L.outAt || t);  // its last word
         remember("guide", text);
         directorLine(false);  // the earpiece counts lines for its cadence
+        dirEmit("line", { who: "guide", text, began: L.lineAt || t });
         guideSaid(text, t, L.lineAt || t);
         if (!L.explainedAt && EXPLAINED.test(text)) L.explainedAt = t;  // the pitch nudge waits for these (conversationCues)
         if (text.includes("?")) L.askedAt = t;
@@ -586,6 +598,7 @@
         countLine(text, L.inStart || L.inAt, L.inAt);
         remember("listener", text);
         directorLine(true);
+        dirEmit("line", { who: "listener", text, began: L.inStart || L.inAt });
         listenerSaid(text, t);
         if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
         if (L.aside || L.wait) (L.aside || L.wait).lines.push({ who: "listener", text });
@@ -773,6 +786,26 @@
       && !L.handingBack && !L.debriefing && !L.hold && !L.readStarted && !L.offer && !offerShown() && !L.stepBackAt
       && !L.replyWait && !L.wokeAt && !L.thinking && !!L.lastGuideAt;
   }
+  // Why dirHere() is false, in its order ("" when it is true): for the panel and the history only, never a decision.
+  function dirHereWhy() {
+    if (!dirOn()) return "off";
+    if (L.phase !== "talk") return "phase " + L.phase;
+    if (!L.session) return "no session";
+    if (!L.dc || L.dc.readyState !== "open") return "channel closed";
+    if (L.muted) return "muted";
+    if (L.pending) return "waiting on the guide";
+    if (L.handingBack) return "handing back";
+    if (L.debriefing) return "debrief";
+    if (L.hold) return "held";
+    if (L.readStarted) return "reading started";
+    if (L.offer || offerShown()) return "chapter offered";
+    if (L.stepBackAt) return "stepping back";
+    if (L.replyWait) return "reply wait";
+    if (L.wokeAt) return "after a sound wake";
+    if (L.thinking) return "tool call in flight";
+    if (!L.lastGuideAt) return "guide not yet spoken";
+    return "";
+  }
   const dirSecs = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);  // silence_secs: 12 or [12]
   // Who is speaking, from the audio as well as the words (review, 2026-11-20). GPT-Live's input transcript runs
   // seconds behind the voice (run 3's fragments came 2-3 s apart while Ian was mid-sentence), so the words alone
@@ -796,12 +829,46 @@
   // The page stopped being here without having looked (a rest, a session coming back): a started event, a queued
   // trigger, an open turn, a look in flight or a whisper not yet sent would fire on the first tick back, minutes
   // stale (review, 2026-11-20: a "started" look after a step back and a tap said the guide had "just" started).
-  function dirForget() {
+  function dirForget(why = "") {
     const D = L.dir;
     if (!D) return;
+    if (D.next) dirFate(D.next, "dropped", "forgotten", why);
+    dirEmit("forget", { why });
     if (D.ctl) { D.ctl.abort(); D.ctl = null; }
     D.id++;  // a look still on its way is ignored when it comes
     D.event = null; D.queued = null; D.turnOpen = false; D.next = null;
+  }
+
+  // --- the earpiece view (Ian, 2026-11-20: "see what the director is feeding to the narrator in real time ... retain
+  // a history with timestamps"). dirEmit feeds the panel (page/earpiece.js) and never throws, awaits or reads anything
+  // back; dirFate also posts each whisper's fate (sent, held, dropped and why) for the admin's history, whether or not
+  // the panel is shown, fire-and-forget. Neither changes a decision.
+  function dirEmit(type, fields = {}) {
+    try {
+      const at = now();
+      const ev = { type, at, secs: L.convAt ? Math.round((at - L.convAt) / 100) / 10 : null, session: L.session, ...fields };
+      L.dirEvents.push(ev);
+      if (L.dirEvents.length > 500) L.dirEvents.splice(0, L.dirEvents.length - 500);
+      try { if (window.Earpiece) window.Earpiece.event(ev); } catch (e) { /* the panel's trouble is its own */ }
+    } catch (e) { /* never */ }
+  }
+  function dirFate(n, fate, reason = null, detail = null, extra = {}) {
+    try {
+      const t = now();
+      const body = { session: L.session, id: n.id == null ? null : n.id, fate, reason, detail: detail ? String(detail).slice(0, 200) : null,
+                     secs: L.convAt ? Math.round((t - L.convAt) / 100) / 10 : null,
+                     held_ms: n.heldAt && fate !== "held" ? t - n.heldAt : null };
+      if (reason !== "ended" && L.session && n.id != null) quietPost("/api/live/direct/fate", body);
+      dirEmit("fate", { ...body, note: n.note, kind: n.kind, about: n.about, ...extra });
+    } catch (e) { /* never */ }
+  }
+  function loadEarpiece() {
+    if (L.earpieceLoaded) return;
+    L.earpieceLoaded = true;
+    const el = document.createElement("script");
+    el.src = "/earpiece.js"; el.async = true;
+    el.onerror = () => { L.earpieceLoaded = false; el.remove(); };
+    document.head.appendChild(el);
   }
 
   // A line ended (the guide's, theirs spoken or typed): it counts toward the cadence, and starts a new silence stretch.
@@ -858,29 +925,39 @@
               started: !!(L.own || L.startCalled), turns: turns().length },
     };
     mark("direct-ask", trigger);
+    dirEmit("ask", { id, trigger, speaking: body.speaking, silence_ms: body.silence_ms, last_who: body.last_who, page: body.page });
     const timer = setTimeout(() => ctl.abort(), (C.timeout_ms || 6000) + 1500);
     fetch("/api/live/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
                                 signal: ctl.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
       .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t); } })
-      .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e)); } })
+      .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e), id); } })
       .finally(() => clearTimeout(timer));
   }
 
   function directorGot(got, askedAt) {
+    dirEmit("look", { id: got && got.id, got });
     const D = L.dir;
-    if (!got || got.error) return directorFailed((got && got.error) || "no answer");
+    if (!got || got.error) return directorFailed((got && got.error) || "no answer", got && got.id);
     D.fails = 0;
     mark("direct", got.changed && got.note ? `${got.kind || "when_it_fits"} ${got.about || ""}`.trim() : "no change");
     // A whisper only when its advice changed; the newest replaces one not yet delivered.
-    if (got.changed && got.note) D.next = { kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now() };
+    if (got.changed && got.note) {
+      if (D.next) dirFate(D.next, "dropped", "replaced");
+      D.next = { id: got.id, kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now() };
+    }
   }
 
-  function directorFailed(why) {
+  function directorFailed(why, id = null) {
     const D = L.dir;
     D.fails++;
     mark("direct-fail", why);
-    if (D.fails >= 2 && !D.down) { D.down = true; D.next = null; D.queued = null; mark("director-down"); }  // the clocks take over
+    dirEmit("fail", { id, why, fails: D.fails });
+    if (D.fails >= 2 && !D.down) {  // the clocks take over
+      if (D.next) dirFate(D.next, "dropped", "down");
+      D.down = true; D.next = null; D.queued = null; mark("director-down");
+      dirEmit("down", {});
+    }
   }
 
   // Whether a whisper goes now: "send", "hold" or "drop". Pure: tested with any state. A when_it_fits whisper goes at
@@ -900,24 +977,44 @@
     if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000) return "drop";
     return "send";
   }
+  // Why directorVerdict drops a whisper, in its order (null exactly when it doesn't): for the panel and the history.
+  function directorWhy(n, t, st, C) {
+    if (!st.here) return "not_here";
+    if (st.started && ["offer", "pitch", "interest", "start"].includes(n.about)) return "stale_after_start";
+    if (n.about === "offer" && (st.explained || st.offered)) return "explained";
+    if (n.kind === "now") return st.heardAt > n.askedAt ? "listener_spoke" : null;
+    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000) return "gap";
+    return null;
+  }
 
   function directorDeliver(t) {
     const D = L.dir, n = D.next, C = S.director || {};
     const O = S.offer_nudge || {};
-    const verdict = directorVerdict(n, t, {
+    const st = {
       here: dirHere(), heardAt: L.heardAt, listenerSpeaking: dirSpeaking(t) === "listener", sentAt: D.sentAt,
       explained: !!L.explainedAt, started: !!(L.own || L.startCalled),
       offered: D.offered || !!(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || "")),
-    }, C);
-    if (verdict === "hold") return;
+    };
+    const verdict = directorVerdict(n, t, st, C);
+    if (verdict === "hold") {
+      if (!n.heldAt) { n.heldAt = t; dirFate(n, "held"); }  // once per note, not every tick
+      return;
+    }
     D.next = null;
     const what = n.about || n.kind;
-    if (verdict === "drop") return mark("direct-drop", what);
+    if (verdict === "drop") {
+      const why = directorWhy(n, t, st, C);
+      const detail = why === "not_here" ? dirHereWhy() : why === "gap" ? `${((t - st.sentAt) / 1000).toFixed(1)} s after the last` : null;
+      dirFate(n, "dropped", why, detail);
+      return mark("direct-drop", what);
+    }
     D.sentAt = t;
     if (n.about === "offer") D.offered = true;
     mark("direct-sent", what);
     const tpl = n.kind === "now" ? (n.about === "start" ? N.direct_start : N.direct_now || N.direct) : N.direct;
-    instruct((tpl || "[{note}]").replace("{note}", n.note));
+    const text = (tpl || "[{note}]").replace("{note}", n.note);
+    dirFate(n, "sent", null, null, { text });
+    instruct(text);
     // A quiet whisper never rests the page itself (DESIGN: the earpiece does not drive restSoon; review,
     // 2026-11-20): it would rest after whatever line the guide was saying, a question left hanging. The guide's
     // parting words, read by guideSaid (STEP_BACK), or its step_back call rest it as before.
@@ -1190,7 +1287,7 @@
       return setTimeout(rest, 400);
     }
     L.restWaitAt = 0; L.stepBackAt = 0; L.replyWait = null;
-    dirForget();  // nothing of the earpiece's carries over a rest
+    dirForget("rest");  // nothing of the earpiece's carries over a rest
     // It said it would start the chapter and hasn't: remind it while the session is still open, then rest.
     if (L.promiseAt && !L.startCalled && !L.own && L.nudges < 2 && L.dc && L.dc.readyState === "open") {
       L.promiseAt = 0; L.nudges++;
@@ -1294,7 +1391,7 @@
   function wake() {
     W.sounds = 0; W.total = 0; W.off = false; L.wokeAt = 0;  // a tap: sounds may wake it again
     L.phase = "talk"; L.restAt = 0;
-    dirForget();
+    dirForget("wake");
     instruct(N.wake);
     render();
   }
@@ -2624,6 +2721,7 @@
     countLine(text);
     remember("listener", text);
     directorLine(true);
+    dirEmit("line", { who: "listener", text, typed: true, began: now() });
     listenerSaid(text, now());
     if (L.phase === "waiting" && L.wait) { L.wait.checkedIn = true; L.phase = "checkin"; }
     if (L.phase === "reading") ask();
@@ -2727,7 +2825,7 @@
     if (L.session) navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: L.session })], { type: "application/json" }));
   });
 
-  Object.assign(window.Live, { handoff, spot, handback, debrief, endDemo, endDemoShown, loadDemo, directorVerdict, declinesChat, engaged, turns,
+  Object.assign(window.Live, { handoff, spot, handback, debrief, endDemo, endDemoShown, loadDemo, directorVerdict, directorWhy, dirHere, dirHereWhy, declinesChat, engaged, turns,
                                onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
                                pauseReading, play, seek, timeline, placeAt, playedSecs: () => { const tl = timeline(); return tl ? playedSecs(tl) : null; } });
 })();

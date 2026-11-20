@@ -128,7 +128,7 @@ def timeline(folder: Path, session: str) -> dict:
             items.append({**stamp(rec), "kind": "note", "text": text, "whisper": bool(got), "look": look_id})
         elif who == "tool" and rec.get("name"):
             items.append({**stamp(rec), "kind": "tool", "name": str(rec["name"])})
-        elif who == "session":
+        elif who == "session" and rec.get("live_id"):  # a GPT-Live session (the conversation's own start row has none)
             items.append({**stamp(rec), "kind": "session", "live_id": rec.get("live_id")})
         elif who == "director":
             st = stamp(rec)
