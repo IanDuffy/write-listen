@@ -380,3 +380,31 @@ def test_chapter_choice_survives_reset_and_rebuild(dcfg, tmp_path):
     assert testers.chapter_of(dcfg, testers.record(plain["lid"])) == "real"
     dcfg["demo"]["chapter"] = "rehearsal"
     assert testers.chapter_of(dcfg, testers.record(plain["lid"])) == "rehearsal"
+
+
+def test_earpiece_view_is_off_unless_asked_and_survives_reset_and_rebuild(dcfg):
+    """The earpiece view (Ian, 2026-11-20): tester.json and the registry carry it only when on; the admin's toggle
+    sets both; a reset and a folder rebuilt on first open keep it."""
+    plain = testers.create(dcfg, "Pilot 1")
+    assert "earpiece_view" not in plain and "earpiece_view" not in testers.record(plain["lid"])
+    reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
+    assert "earpiece_view" not in reg["tokens"][plain["token"]]
+    assert testers.earpiece_view(testers.record(plain["lid"])) is False
+
+    got = testers.create(dcfg, "Ian Run", earpiece_view=True)
+    lid = got["lid"]
+    assert got["earpiece_view"] is True and testers.record(lid)["earpiece_view"] is True
+    reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
+    assert reg["tokens"][got["token"]]["earpiece_view"] is True
+    testers.reset(lid, dcfg)
+    assert testers.earpiece_view(testers.record(lid)) is True
+    import shutil
+    shutil.rmtree(common.LISTENERS_DIR / lid)
+    assert testers.open_link(dcfg, got["token"])["earpiece_view"] is True
+
+    assert testers.set_earpiece_view(lid, False)["earpiece_view"] is False
+    assert json.loads((common.SHARED_DIR / "testers.json").read_text())["tokens"][got["token"]]["earpiece_view"] is False
+    testers.reset(lid, dcfg)
+    assert "earpiece_view" not in testers.record(lid)
+    assert testers.set_earpiece_view(plain["lid"], True)["earpiece_view"] is True
+    assert testers.earpiece_view(testers.record(plain["lid"])) is True

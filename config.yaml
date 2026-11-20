@@ -357,6 +357,8 @@ live:
     max_usd: 0.50               # per conversation, likewise (and guide.max_session_usd over everything)
     fallback:                   # the page's nudges while the earpiece is up: late, and only in a lull
       pitch_nudge_secs: [150, 240]
+    view: false                 # the earpiece panel (page/earpiece.js) on Ian's own page when demo mode is off; in
+                                # demo mode it is per tester (tester.json earpiece_view, the admin page) and this is ignored
   continue_minutes: 15          # a page reopened this soon after the reading stopped picks the chapter back up
   unread_ready_minutes: 120     # a chapter written but never begun (they went away while it was made) is offered this long
   page:                         # page/live.js

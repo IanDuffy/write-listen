@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Earpiece history</title>
+<!--
+  The earpiece's history (Ian, 2026-11-20), served at /admin/earpiece by demo/routes.py and guarded there like
+  /admin. ?lid=<tester id or own> lists that listener's conversations; &session=<id> shows one as a timeline:
+  the listener's and the guide's lines, each look by the earpiece (its read, plan and next), each note with its
+  fate on the page and when it reached the guide, and the guide's next line after it.
+  Data: /api/admin/earpiece/<lid>[/<session>] (voice/gpt_live/earpiece_history.py).
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; --warn: #b3412e; --soft: #f1efe9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; --warn: #e07a66; --soft: #1f1e1c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  a { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; }
+  #msg { min-height: 1.4em; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; }
+  ol#timeline { list-style: none; margin: 12px 0 0; padding: 0; }
+  #timeline > li { display: grid; grid-template-columns: 62px 1fr; gap: 4px 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .when { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .when b { color: var(--fg); font-weight: 600; display: block; }
+  .body { min-width: 0; overflow-wrap: anywhere; }
+  .who { font-weight: 600; }
+  li.line.guide .who { color: var(--accent); }
+  li.note .body, li.tool .body, li.session .body { color: var(--muted); font-size: 13px; }
+  li.note.whisper .body { color: var(--fg); }
+  li.look .body { background: var(--soft); border-left: 3px solid var(--accent); border-radius: 6px; padding: 6px 10px; }
+  li.look.error .body { border-left-color: var(--warn); }
+  .read { color: var(--muted); font-size: 13px; margin: 2px 0; }
+  ul.plan { margin: 4px 0; padding: 0 0 0 4px; list-style: none; font-size: 14px; }
+  ul.plan li::before { content: "○ "; color: var(--muted); }
+  ul.plan li[data-state=done]::before { content: "● "; color: var(--accent); }
+  ul.plan li[data-state=dropped] { text-decoration: line-through; color: var(--muted); }
+  ul.plan li[data-state=dropped]::before { content: "× "; }
+  .chg { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); margin-left: 4px; text-decoration: none; display: inline-block; }
+  .whisper-note { margin: 6px 0 2px; font-weight: 600; }
+  .fate { font-size: 13px; }
+  .fate[data-fate=dropped] { color: var(--warn); }
+  .reply { font-size: 13px; color: var(--muted); }
+  .err { color: var(--warn); font-size: 13px; }
+  @media (max-width: 600px) {
+    #timeline > li { grid-template-columns: 52px 1fr; }
+    thead { display: none; }
+    tr { display: block; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 10px; padding: 4px 0; }
+    td { display: flex; gap: 10px; border: 0; padding: 3px 10px; }
+    td::before { content: attr(data-label); flex: 0 0 84px; color: var(--muted); font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="sub"><a href="/admin">Testers</a> <span id="crumb"></span></p>
+  <h1 id="title">Earpiece history</h1>
+  <p id="summary" class="sub"></p>
+  <div id="msg" aria-live="polite">Loading…</div>
+  <div id="content"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const q = new URLSearchParams(location.search);
+const lid = q.get("lid") || "own", session = q.get("session");
+const mss = (s) => (s == null || s < 0) ? "?" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const money = (x) => "$" + (x || 0).toFixed(2);
+const when = (iso) => {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+const REASONS = {
+  not_here: "the page wasn't in a state to send", stale_after_start: "the chapter had started",
+  explained: "the guide had already said what it does", listener_spoke: "the listener spoke after the look was asked",
+  gap: "too soon after the last whisper", replaced: "a newer note replaced it",
+  forgotten: "a rest, a wake or a new session cleared it", down: "the earpiece went down", ended: "the conversation ended",
+};
+
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+function stamp(x) { return `<div class="when"><b>${mss(x.secs)}</b>${esc(x.clock || "")}</div>`; }
+
+function fateText(f) {
+  if (!f) return "No fate recorded (the page had moved on or closed)";
+  const at = mss(f.secs);
+  if (f.fate === "sent") {
+    if (f.inferred) return `Sent at ${at} (from the note in the transcript)`;
+    return f.held_secs ? `Held ${f.held_secs} s, sent at ${at}` : `Sent to the guide at ${at}`;
+  }
+  if (f.fate === "held") return `Held at ${at}, no later fate recorded`;
+  const why = REASONS[f.reason] || f.reason || "";
+  return `Dropped at ${at}: ${esc(why)}${f.detail ? ` (${esc(f.detail)})` : ""}`;
+}
+
+function lookHtml(x) {
+  const head = `<div><span class="who">Look ${esc(x.id)}</span> <span class="sub">· ${esc(x.trigger || "")} · `
+    + `${esc(x.speaking || "none")} speaking · asked ${mss(x.asked_secs)} · ${x.ms != null ? (x.ms / 1000).toFixed(1) + " s" : ""}</span></div>`;
+  if (x.error) return head + `<div class="err">Failed: ${esc(x.error)}</div>`;
+  const plan = (x.plan || []).map((p) => `<li data-state="${esc(p.state)}" data-change="${esc(p.change || "")}">${esc(p.item)}`
+    + (p.change ? `<span class="chg">${esc(p.change)}</span>` : "") + "</li>").join("");
+  let out = head + (x.read ? `<div class="read">${esc(x.read)}</div>` : "")
+    + (plan ? `<ul class="plan">${plan}</ul>` : "")
+    + ((x.removed || []).length ? `<div class="sub">Removed: ${x.removed.map(esc).join("; ")}</div>` : "")
+    + (x.next ? `<div class="sub">Next: ${esc(x.next)}</div>` : "");
+  if (x.note) {
+    out += `<div class="whisper-note">“${esc(x.note)}”</div><div class="sub">${esc(x.note_kind || "")}${x.about ? " · " + esc(x.about) : ""}</div>`
+      + `<div class="fate" data-fate="${esc(x.fate ? x.fate.fate : "")}" data-reason="${esc(x.fate && x.fate.reason || "")}">${fateText(x.fate)}</div>`;
+    if (x.delivered && x.reply) {
+      out += `<div class="reply">Guide's next line ended +${x.reply.after_secs} s after it reached the guide: “${esc(x.reply.text.slice(0, 240))}”</div>`;
+    }
+  }
+  return out;
+}
+
+function itemHtml(x) {
+  if (x.kind === "line") return `<li class="line ${esc(x.who)}">${stamp(x)}<div class="body"><span class="who">${x.who === "guide" ? "Guide" : "Listener"}</span> ${esc(x.text)}</div></li>`;
+  if (x.kind === "look") return `<li class="look${x.error ? " error" : ""}" data-id="${esc(x.id)}">${stamp(x)}<div class="body">${lookHtml(x)}</div></li>`;
+  if (x.kind === "note") return `<li class="note${x.whisper ? " whisper" : ""}">${stamp(x)}<div class="body">${x.whisper ? `Whisper reached the guide (look ${esc(x.look)})` : "App note"}: ${esc(x.text)}</div></li>`;
+  if (x.kind === "tool") return `<li class="tool">${stamp(x)}<div class="body">Tool: ${esc(x.name)}</div></li>`;
+  if (x.kind === "session") return `<li class="session">${stamp(x)}<div class="body">New voice session</div></li>`;
+  return "";
+}
+
+async function list() {
+  const got = await api(`/api/admin/earpiece/${encodeURIComponent(lid)}`);
+  $("title").textContent = `Earpiece history: ${got.label}`;
+  $("crumb").textContent = "";
+  $("msg").textContent = got.conversations.length ? "" : "No conversations yet.";
+  if (!got.conversations.length) return;
+  const rows = got.conversations.map((c) => `<tr><td data-label="Conversation"><a href="?lid=${encodeURIComponent(lid)}&session=${encodeURIComponent(c.session)}">${esc(when(c.started))}</a><div class="sub">${esc(c.session)}</div></td>`
+    + `<td data-label="Length">${c.minutes} min · ${c.lines} lines</td>`
+    + `<td data-label="Earpiece">${c.looks} looks · ${c.notes} notes · ${c.sent} sent · ${c.dropped} dropped${c.errors ? ` · ${c.errors} failed` : ""}</td>`
+    + `<td data-label="Cost">${money(c.cost_usd)}</td></tr>`).join("");
+  $("content").innerHTML = `<table><thead><tr><th>Conversation</th><th>Length</th><th>Earpiece</th><th>Cost</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function one() {
+  const got = await api(`/api/admin/earpiece/${encodeURIComponent(lid)}/${encodeURIComponent(session)}`);
+  $("crumb").innerHTML = `· <a href="?lid=${encodeURIComponent(lid)}">${esc(got.label)}</a>`;
+  $("title").textContent = `Conversation ${when(got.started)}`;
+  const D = got.director;
+  $("summary").textContent = `${D.looks} looks · ${D.notes} notes · ${D.sent} sent · ${D.held} held · ${D.dropped} dropped`
+    + (D.errors ? ` · ${D.errors} failed` : "") + ` · earpiece ${money(D.cost_usd)}. Times: m:ss since the start, and the clock. A line's time is when it ended.`;
+  $("msg").textContent = got.items.length ? "" : "Nothing in this conversation.";
+  $("content").innerHTML = `<ol id="timeline">${got.items.map(itemHtml).join("")}</ol>`;
+}
+
+(session ? one() : list()).catch((e) => { $("msg").textContent = "Couldn't load: " + e.message; });
+</script>
+</body>
+</html>

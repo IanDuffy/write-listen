@@ -27,6 +27,14 @@
                                     tester.json's, else demo.chapter), rehearsal (their newest chapter was one)
                                     and chapter_default (demo.chapter)
     GET  /api/admin/testers/{lid}/study/{name}   the debrief summary, or a transcript as plain text
+    POST /api/admin/testers/{lid}/earpiece {value: on|off}: tester.json's earpiece_view: their page shows the
+                                    earpiece panel (page/earpiece.js; Ian, 2026-11-20). GET rows carry earpiece_view,
+                                    and the list `demo` (whether tester mode is on)
+    GET  /admin/earpiece            page/admin_earpiece.html (?lid=<lid or own>&session=<id>): the earpiece history
+    GET  /api/admin/earpiece/{lid}  a listener's conversations with their earpiece's counts, newest first
+                                    (voice/gpt_live/earpiece_history.py); lid "own" is the active listener
+                                    (Ian's own when demo mode is off)
+    GET  /api/admin/earpiece/{lid}/{session}   one conversation's timeline: lines, looks, notes and their fates
 
 The admin routes answer on loopback (no forwarding headers: behind Caddy every request comes from
 127.0.0.1) or with HTTP basic auth matching ADMIN_USER / ADMIN_PASSWORD from the environment; otherwise 401
@@ -53,6 +61,7 @@ from . import debrief, state, testers
 BLANK = ROOT / "page" / "blank.html"
 GATE = ROOT / "page" / "gate.html"   # part C's
 ADMIN = ROOT / "page" / "admin.html"
+ADMIN_EARPIECE = ROOT / "page" / "admin_earpiece.html"
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 FORWARDED = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "forwarded", "x-real-ip")
 STUDY_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(md|jsonl|json)")
@@ -63,6 +72,7 @@ class NewTester(BaseModel):
     label: str
     name: str | None = None   # what the interviewer greets them by (optional)
     rehearsal: bool = False   # their chapters are rehearsals (faststart/rehearsal.py): replayed, nothing paid
+    earpiece_view: bool = False   # their page shows the earpiece panel (page/earpiece.js)
 
 
 class Card(BaseModel):
@@ -255,14 +265,14 @@ def mount(app: FastAPI, cfg: dict) -> None:
         for r in rows:
             r["link"] = testers.link(cfg, r["token"], base) if r.get("token") else None
             r["chapter_default"] = default
-        return {"testers": rows, "totals": state.totals(rows)}
+        return {"testers": rows, "totals": state.totals(rows), "demo": demo_on(cfg)}
 
     @app.post("/api/admin/testers")
     def admin_create(req: NewTester, request: Request) -> dict:
         guard(request)
         try:
             return testers.create(cfg, req.label, base=base_of(request), name=req.name,
-                                  chapter="rehearsal" if req.rehearsal else None)
+                                  chapter="rehearsal" if req.rehearsal else None, earpiece_view=req.earpiece_view)
         except StageError as e:
             raise HTTPException(400, str(e)) from None
 
@@ -314,6 +324,46 @@ def mount(app: FastAPI, cfg: dict) -> None:
             return {"chapter": testers.set_chapter(cfg, lid, req.value)["chapter"]}
         except StageError as e:
             raise HTTPException(400, str(e)) from None
+
+    @app.post("/api/admin/testers/{lid}/earpiece")
+    def admin_earpiece_view(lid: str, req: Card, request: Request) -> dict:
+        guard(request)
+        _tester_or_404(lid)
+        if req.value not in ("on", "off"):
+            raise HTTPException(400, "earpiece must be on or off.")
+        return {"earpiece_view": testers.earpiece_view(testers.set_earpiece_view(lid, req.value == "on"))}
+
+    @app.get("/admin/earpiece", response_class=HTMLResponse)
+    def admin_earpiece_page(request: Request) -> Response:
+        guard(request)
+        return HTMLResponse(ADMIN_EARPIECE.read_text(encoding="utf-8"), headers=NO_STORE)
+
+    def earpiece_folder(lid: str) -> tuple:
+        """(folder, label) for a tester's id, or "own": the active listener (after guard(), so never a tester's
+        cookie scope)."""
+        if lid == "own":
+            return common.listener_dir(cfg), "Your own"
+        rec = _tester_or_404(lid)
+        return testers.folder(lid), rec.get("label") or lid
+
+    @app.get("/api/admin/earpiece/{lid}")
+    def admin_earpiece_list(lid: str, request: Request) -> JSONResponse:
+        guard(request)
+        from voice.gpt_live import earpiece_history
+        d, label = earpiece_folder(lid)
+        return JSONResponse({"lid": lid, "label": label, "conversations": earpiece_history.conversations(d)},
+                            headers=NO_STORE)
+
+    @app.get("/api/admin/earpiece/{lid}/{session}")
+    def admin_earpiece_timeline(lid: str, session: str, request: Request) -> JSONResponse:
+        guard(request)
+        from voice.gpt_live import earpiece_history
+        d, label = earpiece_folder(lid)
+        try:
+            got = earpiece_history.timeline(d, session)
+        except FileNotFoundError:
+            raise HTTPException(404, "No such conversation.") from None
+        return JSONResponse({**got, "lid": lid, "label": label}, headers=NO_STORE)
 
     @app.get("/api/admin/testers/{lid}/study/{name}")
     def admin_study(lid: str, name: str, request: Request) -> Response:

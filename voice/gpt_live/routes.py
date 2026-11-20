@@ -17,6 +17,10 @@
                               one look by the earpiece (voice/gpt_live/director.py; Ian, 2026-11-19): {"id", "read",
                               "plan", "next", "changed", "kind", "about", "note", "ms", "cost_usd"}; on any failure
                               no whisper (changed false, note and kind null) and an "error"
+    POST /api/live/direct/fate {"session", "id", "fate", "reason"?, "detail"?, "secs"?, "held_ms"?}: what became of
+                              a look's whisper on the page (sent, held, dropped and why; director.FATES,
+                              FATE_REASONS), recorded as a "director_fate" row for the admin's earpiece history
+                              (voice/gpt_live/earpiece_history.py); 409 for a conversation that has ended
     GET  /api/live/chapter/{run}            the chapter as paragraphs (voice/gpt_live/chapter.py)
     GET  /api/live/card/{run}               the chapter card (faststart/card.py), with the outline's title once
                                             there is one; 404 until it is written
@@ -29,6 +33,9 @@
                               chapter, in the background (voice/gpt_live/archive.py; progress in
                               runs/<run>/live/archive.json): {"started": true} or {"started": false, "reason"}
     GET  /live.js                            the page's script, with config live.page and the notes
+    GET  /earpiece.js                        the earpiece panel (page/earpiece.js), only for a listener with the view
+                                             on (director.view_on: their tester.json, or live.director.view off demo);
+                                             404 otherwise. /api/live/start's answer carries `earpiece_view`
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from faststart import base as fast_base
 from stages import common, guide
@@ -55,6 +62,7 @@ from . import session as live_session
 LIVE_JS = ROOT / "page" / "live.js"
 ALIGN_JS = ROOT / "page" / "align.js"
 LIVE_PAGE = ROOT / "page" / "live.html"
+EARPIECE_JS = ROOT / "page" / "earpiece.js"
 
 
 class Start(BaseModel):
@@ -91,6 +99,16 @@ class Direct(BaseModel):
     last_who: str | None = None   # whose line ended last: guide or listener
     recent: list[dict] = []       # the page's last few lines ({who, text}): any the transcript lacks yet are added
     page: dict = {}               # {seconds, explained, started, turns}: what the page knows of the conversation
+
+
+class Fate(BaseModel):
+    session: str
+    id: int                                          # the look's id
+    fate: str                                        # sent, held or dropped (director.FATES)
+    reason: str | None = None                        # why it was dropped (director.FATE_REASONS)
+    detail: str | None = Field(None, max_length=200)
+    secs: float | None = None                        # the page's clock since the conversation started
+    held_ms: int | None = None                       # how long it was held before this
 
 
 class Usage(BaseModel):
@@ -142,7 +160,9 @@ LINE_WHO = ("listener", "guide", "page", "event")
 def page_settings(cfg: dict) -> dict:
     return {**cfg["live"]["page"], "notes": live_session.notes(), "restart_bands_secs": cfg["live"]["restart_bands_secs"],
             "opening": str(cfg["live"].get("opening") or "").strip(),
-            "director": live_director.settings(cfg),  # the earpiece's page side (live.director): off, today's cues
+            # the earpiece's page side (live.director): off, today's cues. Never the panel's flag ("view"): the page
+            # learns that per listener from /api/live/start, so a friend's page never sees it
+            "director": {k: v for k, v in live_director.settings(cfg).items() if k != "view"},
             # the local listener's settings (page/wake.js): voice.wake, with live.page.wake over them
             "wake": {**((cfg.get("voice") or {}).get("wake") or {}), **(cfg["live"]["page"].get("wake") or {})}}
 
@@ -272,6 +292,14 @@ def mount(app, cfg: dict, pipe, chat) -> None:
         text = LIVE_JS.read_text(encoding="utf-8").replace("__LIVE_SETTINGS__", json.dumps(page_settings(cfg)))
         return Response(text, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/earpiece.js")
+    def earpiece_js() -> Response:
+        """The earpiece panel, for a listener with the view on; nobody else's page can load it."""
+        if not live_director.view_on(cfg) or not EARPIECE_JS.is_file():
+            return Response(status_code=404)
+        return Response(EARPIECE_JS.read_text(encoding="utf-8"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
     @app.get("/align.js")
     def align_js() -> Response:
         return Response(ALIGN_JS.read_text(encoding="utf-8"), media_type="text/javascript",
@@ -308,7 +336,8 @@ def mount(app, cfg: dict, pipe, chat) -> None:
                 session.record("page", text=notes["opening_words"].replace("{words}", words) if words else notes["opened"],
                                mode="live")
         return {"session": session.id, "live_id": got["id"], "sdp": got["sdp"], "continue": cont,
-                "handoff": bool(handoff), "debrief_done": debrief_done(cfg)}
+                "handoff": bool(handoff), "debrief_done": debrief_done(cfg),
+                "earpiece_view": live_director.view_on(cfg)}
 
     @app.post("/api/live/resume")
     def resume(req: Resume) -> dict:
@@ -389,6 +418,22 @@ def mount(app, cfg: dict, pipe, chat) -> None:
         with chat.lock:
             session = chat.current(req.session)
         return live_director.ask(cfg, session, req.model_dump(), lock=chat.lock)
+
+    @app.post("/api/live/direct/fate")
+    def direct_fate(req: Fate) -> dict:
+        """What became of a look's whisper on the page, for the admin's earpiece history. Never a "text" or
+        "note" field: nothing that reads the conversation (earlier_text, memory, explained, whisper_in) reads it."""
+        if req.fate not in live_director.FATES:
+            raise HTTPException(400, "Unknown fate.")
+        if req.reason is not None and req.reason not in live_director.FATE_REASONS:
+            raise HTTPException(400, "Unknown reason.")
+        if req.fate == "dropped" and not req.reason:
+            raise HTTPException(400, "A dropped note needs a reason.")
+        with chat.lock:
+            session = chat.current(req.session)
+            session.record("director_fate", id=req.id, fate=req.fate, reason=req.reason, detail=req.detail,
+                           page_secs=req.secs, held_ms=req.held_ms)
+        return {"ok": True}
 
     @app.post("/api/live/usage")
     def usage(req: Usage) -> dict:

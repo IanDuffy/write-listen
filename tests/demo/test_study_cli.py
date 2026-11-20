@@ -29,3 +29,17 @@ def test_a_variable_already_set_wins_over_dot_env(cfg, tmp_path, monkeypatch, ca
     monkeypatch.setattr(cli, "load_config", lambda: demo_cfg(cfg))
     assert cli.main(["create", "Sam"]) == 0
     assert "https://other.example.com/t/" in capsys.readouterr().out
+
+
+def test_create_with_the_earpiece_view(cfg, tmp_path, monkeypatch, capsys):
+    from demo import testers
+    monkeypatch.setenv("WL_BASE_URL", "https://listen.example.com")
+    monkeypatch.setattr(cli, "ROOT", tmp_path)
+    monkeypatch.setattr(cli, "load_config", lambda: demo_cfg(cfg))
+    assert cli.main(["create", "Ian", "Run", "--earpiece-view"]) == 0
+    out = capsys.readouterr().out
+    assert ", earpiece view)" in out and testers.record("t-ian-run")["earpiece_view"] is True
+    assert cli.main(["testers"]) == 0
+    assert "earpiece view" in capsys.readouterr().out
+    assert cli.main(["create", "Sam"]) == 0
+    assert "earpiece view" not in capsys.readouterr().out

@@ -89,6 +89,9 @@ def test_all_states_and_totals(dcfg):
     rows = state.all_states(dcfg)
     assert [r["lid"] for r in rows] == ["t-a", "t-b"]
     assert rows[0]["revoked"] is True and rows[1]["revoked"] is False and rows[1]["token"]
+    assert rows[0]["earpiece_view"] is False
+    testers.set_earpiece_view("t-b", True)
+    assert [r["earpiece_view"] for r in state.all_states(dcfg)] == [False, True]
     assert state.totals(rows) == {"claude": 1.62, "gpt_live": 0.45, "total": 2.07, "estimated": 0.1}
 
 

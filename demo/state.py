@@ -15,7 +15,8 @@ is right whoever's request (or none) is in scope.
 - questions: that chapter's asides of kind ask in which the listener said something.
 - all_states adds the tester's record, with debrief_card (auto/on/off): whether a tester who comes back with
   the debrief not done sees the End demo button (demo/testers.py), and chapter_kind (real/rehearsal): what
-  their chapters are, tester.json's chapter else config demo.chapter ("chapter" is the newest chapter's folder).
+  their chapters are, tester.json's chapter else config demo.chapter ("chapter" is the newest chapter's folder),
+  and earpiece_view: their page shows the earpiece panel (the admin's toggle).
 - rehearsal: the newest chapter is a rehearsal (fast.json, faststart/rehearsal.py), and rehearsal_source the
   chapter it replays. Its cost is $0: a rehearsal logs none.
 - The tester's button presses (study/events.jsonl, POST /api/demo/event) count as activity for last_active,
@@ -233,7 +234,7 @@ def all_states(cfg: dict) -> list[dict]:
         out.append({"lid": rec["lid"], "label": rec.get("label"), "token": rec.get("token"),
                     "name": rec.get("name"), "created": rec.get("created"), "opened_at": rec.get("opened_at"),
                     "consent_at": rec.get("consent_at"), "debrief_card": rec.get("debrief_card") or "auto",
-                    "chapter_kind": testers.chapter_of(cfg, rec),
+                    "chapter_kind": testers.chapter_of(cfg, rec), "earpiece_view": testers.earpiece_view(rec),
                     "revoked": not rec.get("token"), **tester_state(cfg, rec["lid"])})
     return out
 

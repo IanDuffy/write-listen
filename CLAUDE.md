@@ -683,9 +683,9 @@ brew install ffmpeg poppler  # macOS; on Linux: apt install ffmpeg poppler-utils
 cp .env.example .env         # fill in ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
 
-`.env` is gitignored. The code reads `ARTICLE_PIPELINE_ANTHROPIC_API_KEY` first (Ian's cloud
-environment holds the key under that name, 2026-11-20, so a session never sees it), then
-`WRITE_LISTEN_ANTHROPIC_API_KEY`, then `ANTHROPIC_API_KEY` (from `.env`; `llm.KEY_VARS`), and passes the key and
+`.env` is gitignored. The code reads `ARTICLE_PIPELINE_ANTHROPIC_API_KEY` first, then
+`WRITE_LISTEN_ANTHROPIC_API_KEY` (Ian's cloud environment holds the key under that name since 2026-11-20, so a
+session never needs to see it), then `ANTHROPIC_API_KEY` (from `.env`; `llm.KEY_VARS`), and passes the key and
 `https://api.anthropic.com` to the client explicitly. The dedicated variable
 exists so the pipeline never uses or overrides a key that Claude Code itself
 relies on. Without `ELEVENLABS_API_KEY` the ElevenLabs client sends a
@@ -890,6 +890,6 @@ A personal Claude Code cloud environment `write-listen` exists, with the
 ElevenLabs key saved as a network secret for `api.elevenlabs.io`. Anthropic
 keys can't be added there (Anthropic hosts bypass the proxy), and elevenlabs.io's
 docs site was not reachable from it, so Phase 1 development continues locally
-(Ian, 2026-11-12). Since 2026-11-20 the Anthropic key can be there as the environment variable
-`ARTICLE_PIPELINE_ANTHROPIC_API_KEY` (read first, above). Gitignored state (`listeners/`, `shared/`,
+(Ian, 2026-11-12). Since 2026-11-20 the Anthropic key is there as the environment variable
+`WRITE_LISTEN_ANTHROPIC_API_KEY` (above), and the OpenAI key as a network secret. Gitignored state (`listeners/`, `shared/`,
 including `shared/rehearsal/`, `runs/`, `.env`) is not in a cloud checkout.

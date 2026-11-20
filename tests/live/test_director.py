@@ -390,3 +390,83 @@ def test_the_prompt_keeps_the_judges_rules_its_arc_and_names_only_known_abouts()
     assert re.search(r'"start" \(a clear yes the guide moved past', para) and re.search(r'"quiet" \(quiet they asked', para)
     for gone in ("draw_out", "check_in", "step_back\"", "offer clock", "seconds in"):
         assert gone not in body, gone
+
+
+# --- the earpiece view (Ian, 2026-11-20) ------------------------------------------------------------
+
+def test_the_view_follows_the_config_off_demo_and_never_reaches_the_page_settings(cfg):
+    cfg.pop("demo", None)
+    cfg["live"]["director"] = {**cfg["live"]["director"], "enabled": True}
+    cfg["live"]["director"].pop("view", None)
+    assert D.view_on(cfg) is False and D.settings(cfg)["view"] is False
+    cfg["live"]["director"]["view"] = True
+    assert D.view_on(cfg) is True
+    assert "view" not in live_routes.page_settings(cfg)["director"]
+    cfg["live"]["director"]["view"] = False
+    assert D.view_on(cfg) is False
+
+
+def test_the_view_in_demo_mode_is_the_testers_own(cfg, tmp_path):
+    cfg["listener_dir"] = str(tmp_path / "t-ian")
+    cfg["demo"] = {**cfg.get("demo", {}), "enabled": True}
+    cfg["live"]["director"] = {**cfg["live"]["director"], "view": True}
+    assert D.view_on(cfg) is False                       # no tester.json: the config key is ignored
+    (tmp_path / "t-ian").mkdir()
+    (tmp_path / "t-ian" / "tester.json").write_text(json.dumps({"lid": "t-ian", "earpiece_view": True}))
+    cfg["live"]["director"]["view"] = False
+    assert D.view_on(cfg) is True
+    (tmp_path / "t-ian" / "tester.json").write_text(json.dumps({"lid": "t-ian"}))
+    assert D.view_on(cfg) is False
+
+
+def test_the_fate_route_records_its_row_and_nothing_reads_it(app, cfg):
+    c = app
+    sid = started(c)
+    lines(c, sid, ("guide", "Hey!"), ("listener", "Hi."))
+    assert c.post("/api/live/direct/fate", json={"session": sid, "id": 3, "fate": "held", "secs": 11.2}).json() == \
+        {"ok": True}
+    assert c.post("/api/live/direct/fate", json={"session": sid, "id": 3, "fate": "dropped", "reason": "gap",
+                                                 "detail": "audio chapters 18 s after the last", "secs": 14.0,
+                                                 "held_ms": 2800}).json() == {"ok": True}
+    p, rows = transcript(cfg, sid)
+    fates = [r for r in rows if r["who"] == "director_fate"]
+    assert [set(r) for r in fates] == [{"t", "who", "id", "fate", "reason", "detail", "page_secs", "held_ms"}] * 2
+    assert fates[1] == {**fates[1], "id": 3, "fate": "dropped", "reason": "gap", "page_secs": 14.0, "held_ms": 2800}
+    assert "audio chapters" not in guide.earlier_text(p)
+    assert "audio chapters" not in memory.transcript_text(p)
+    assert not S.explained(p)
+    got = D.lines_from_transcript(p)
+    assert [x["who"] for x in got] == ["app", "guide", "listener"] and "audio chapters" not in json.dumps(got)
+    assert D.memory(p) == (None, "(first look)")
+    assert "audio chapters" not in D.notes_text(got)
+
+
+def test_the_fate_route_refuses_what_it_doesnt_know(app):
+    c = app
+    sid = started(c)
+    post = lambda **kw: c.post("/api/live/direct/fate", json={"session": sid, "id": 1, **kw}).status_code  # noqa: E731
+    assert post(fate="lost") == 400
+    assert post(fate="dropped") == 400
+    assert post(fate="dropped", reason="bored") == 400
+    assert post(fate="dropped", reason="x" * 10, detail="d") == 400
+    assert post(fate="sent", detail="x" * 201) == 422
+    for reason in D.FATE_REASONS:
+        assert post(fate="dropped", reason=reason) == 200
+    assert c.post("/api/live/direct/fate", json={"session": "nope", "id": 1, "fate": "sent"}).status_code == 409
+
+
+def test_start_says_whether_to_show_the_panel_and_the_script_follows(app, cfg, tmp_path, monkeypatch):
+    c = app
+    script = tmp_path / "earpiece.js"
+    script.write_text("window.Earpiece = {};")
+    monkeypatch.setattr(live_routes, "EARPIECE_JS", script)
+    assert c.post("/api/live/start", json={"sdp": "OFFER"}).json()["earpiece_view"] is False
+    assert c.get("/earpiece.js").status_code == 404
+    assert '"view"' not in c.get("/live.js").text
+    cfg["live"]["director"]["view"] = True
+    assert c.post("/api/live/start", json={"sdp": "OFFER"}).json()["earpiece_view"] is True
+    r = c.get("/earpiece.js")
+    assert r.status_code == 200 and r.text == "window.Earpiece = {};" and "javascript" in r.headers["content-type"]
+    assert '"view"' not in c.get("/live.js").text
+    monkeypatch.setattr(live_routes, "EARPIECE_JS", tmp_path / "missing.js")
+    assert c.get("/earpiece.js").status_code == 404

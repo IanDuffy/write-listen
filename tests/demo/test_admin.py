@@ -35,7 +35,7 @@ def test_loopback_is_allowed_without_a_password(dcfg, tmp_path, no_admin_env):
     c = client(dcfg, tmp_path)
     assert c.get("/admin").status_code == 200 and "Testers" in c.get("/admin").text
     assert c.get("/api/admin/testers").json() == {"testers": [], "totals": {"claude": 0, "gpt_live": 0, "total": 0,
-                                                                            "estimated": 0}}
+                                                                            "estimated": 0}, "demo": True}
 
 
 def test_elsewhere_without_credentials_configured_is_refused(dcfg, tmp_path, no_admin_env):
@@ -266,3 +266,161 @@ def test_rehearsal_through_the_api(dcfg, tmp_path, no_admin_env):
     assert c.post(url, json={"value": "real"}).json() == {"chapter": "real"}
     page = c.get("/admin").text
     assert 'data-do="chapter"' in page and 'id="rehearsal"' in page and 'id="default-chapter"' in page
+
+
+
+# --- the earpiece view (Ian, 2026-11-20) ------------------------------------------------------------
+
+def test_earpiece_view_through_the_api(dcfg, tmp_path, no_admin_env):
+    c = client(dcfg, tmp_path)
+    on = c.post("/api/admin/testers", json={"label": "Ian Run", "earpiece_view": True}).json()
+    off = c.post("/api/admin/testers", json={"label": "Pilot 1"}).json()
+    assert on["earpiece_view"] is True and testers.record(on["lid"])["earpiece_view"] is True
+    assert "earpiece_view" not in testers.record(off["lid"])
+    got = c.get("/api/admin/testers").json()
+    rows = {r["lid"]: r for r in got["testers"]}
+    assert got["demo"] is True
+    assert rows[on["lid"]]["earpiece_view"] is True and rows[off["lid"]]["earpiece_view"] is False
+    url = f"/api/admin/testers/{off['lid']}/earpiece"
+    assert c.post(url, json={"value": "on"}).json() == {"earpiece_view": True}
+    assert testers.record(off["lid"])["earpiece_view"] is True
+    assert c.post(url, json={"value": "off"}).json() == {"earpiece_view": False}
+    assert c.post(url, json={"value": "yes"}).status_code == 400
+    assert c.post("/api/admin/testers/t-nobody/earpiece", json={"value": "on"}).status_code == 404
+    page = c.get("/admin").text
+    assert 'data-do="earpiece"' in page and 'id="earpiece-view"' in page and "/admin/earpiece?lid=" in page
+
+
+def test_earpiece_history_is_guarded(dcfg, tmp_path, no_admin_env):
+    lid = seed(dcfg, "Pilot 1", "chapter")
+    c = client(dcfg, tmp_path, host="203.0.113.5")
+    for path in ("/admin/earpiece", f"/api/admin/earpiece/{lid}", f"/api/admin/earpiece/{lid}/20261120-100000",
+                 "/api/admin/earpiece/own"):
+        assert c.get(path).status_code in (401, 403), path
+
+
+def _conversation(folder, sid="20261120-100000", fates=True):
+    """A conversation with lines, two looks (plan: one done, one new, one removed), a held then sent note and a
+    note dropped for the gap."""
+    from voice.gpt_live import session as live_session
+    direct = live_session.notes()["direct"]
+    plan1 = [{"item": "Say what it does", "state": "open"}, {"item": "Find the spark", "state": "open"},
+             {"item": "Ask about the weekend", "state": "open"}]
+    plan2 = [{"item": "say  what it does", "state": "done"}, {"item": "Find the spark", "state": "open"},
+             {"item": "Pitch a chapter", "state": "open"}]
+    rows = [
+        {"t": "2026-11-20T10:00:00", "who": "session", "live_id": "sess_1"},
+        {"t": "2026-11-20T10:00:02", "who": "guide", "text": "Hi there.", "mode": "live"},
+        {"t": "2026-11-20T10:00:06", "who": "listener", "text": "Hi, I just got back from a walk.", "mode": "live"},
+        {"t": "2026-11-20T10:00:10", "who": "director", "id": 1, "trigger": "turn_end", "speaking": "none",
+         "read": "Warm, early.", "plan": plan1, "next": "Say what it does", "changed": True, "kind": "now",
+         "about": "offer", "note": "Offer to say what you do.", "ms": 2000, "cost_usd": 0.01},
+        {"t": "2026-11-20T10:00:14", "who": "page", "text": direct.replace("{note}", "Offer to say what you do."),
+         "mode": "live"},
+        {"t": "2026-11-20T10:00:20", "who": "guide", "text": "Want to hear what I do?", "mode": "live"},
+        {"t": "2026-11-20T10:00:25", "who": "tool", "name": "get_status"},
+        {"t": "2026-11-20T10:00:30", "who": "director", "id": 2, "trigger": "cadence", "speaking": "guide",
+         "read": "Explained.", "plan": plan2, "next": "Pitch a chapter", "changed": True, "kind": "when_it_fits",
+         "about": "pitch", "note": "Pitch the walk.", "ms": 1500, "cost_usd": 0.02},
+        {"t": "2026-11-20T10:00:31", "who": "director", "id": 3, "trigger": "silence", "speaking": "none",
+         "error": "timeout", "ms": 6000, "cost_usd": 0.0},
+    ]
+    if fates:
+        rows[4:4] = [{"t": "2026-11-20T10:00:11", "who": "director_fate", "id": 1, "fate": "held", "reason": None,
+                      "detail": None, "page_secs": 11.0, "held_ms": None},
+                     {"t": "2026-11-20T10:00:14", "who": "director_fate", "id": 1, "fate": "sent", "reason": None,
+                      "detail": None, "page_secs": 14.2, "held_ms": 3200}]
+        rows.append({"t": "2026-11-20T10:00:32", "who": "director_fate", "id": 2, "fate": "dropped", "reason": "gap",
+                     "detail": "18 s after the last", "page_secs": 32.0, "held_ms": None})
+    from tester_fakes import jsonl
+    jsonl(folder / "sessions" / f"{sid}.jsonl", rows)
+
+
+def test_earpiece_history_list_and_timeline(dcfg, tmp_path, no_admin_env):
+    lid = seed(dcfg, "Pilot 1", "chapter")
+    folder = testers.folder(lid)
+    _conversation(folder)
+    _conversation(folder, "20261119-090000-2", fates=False)
+    (folder / "sessions" / "log.jsonl").write_text("", encoding="utf-8")   # not a conversation
+    c = client(dcfg, tmp_path)
+
+    got = c.get(f"/api/admin/earpiece/{lid}").json()
+    assert got["label"] == "Pilot 1"
+    sessions = [x["session"] for x in got["conversations"]]
+    assert sessions[:2] == ["20261120-100000", "20261119-090000-2"] and "log" not in sessions
+    first = got["conversations"][0]
+    assert (first["lines"], first["looks"], first["notes"], first["sent"], first["dropped"], first["errors"]) == \
+        (3, 3, 2, 1, 1, 1)
+    assert first["cost_usd"] == 0.03 and first["minutes"] == 0.5
+
+    t = c.get(f"/api/admin/earpiece/{lid}/20261120-100000").json()
+    kinds = [x["kind"] for x in t["items"]]
+    assert kinds == ["session", "line", "line", "look", "note", "line", "tool", "look", "look"]
+    assert t["director"] == {"looks": 3, "notes": 2, "sent": 1, "dropped": 1, "held": 1, "errors": 1,
+                             "cost_usd": 0.03}
+    look1, look2, look3 = [x for x in t["items"] if x["kind"] == "look"]
+    assert all(p["change"] is None for p in look1["plan"]) and look1["removed"] == []
+    assert [(p["item"], p["change"]) for p in look2["plan"]] == [
+        ("say  what it does", "done"), ("Find the spark", None), ("Pitch a chapter", "new")]
+    assert look2["removed"] == ["Ask about the weekend"]
+    assert look1["asked_secs"] == 8 and look1["secs"] == 10 and look1["clock"] == "10:00:10"
+    assert look1["fate"]["fate"] == "sent" and look1["fate"]["held_secs"] == 3.2 and look1["fate"]["inferred"] is False
+    assert look1["delivered"]["secs"] == 14
+    assert look1["reply"]["after_secs"] == 6 and look1["reply"]["text"] == "Want to hear what I do?"
+    note = next(x for x in t["items"] if x["kind"] == "note")
+    assert note["whisper"] is True and note["look"] == 1
+    assert look2["fate"]["fate"] == "dropped" and look2["fate"]["reason"] == "gap"
+    assert look2["fate"]["detail"] == "18 s after the last" and look2["delivered"] is None
+    assert look3["error"] == "timeout" and look3["fate"] is None
+    assert not any(x["kind"] == "director_fate" for x in t["items"])
+
+    old = c.get(f"/api/admin/earpiece/{lid}/20261119-090000-2").json()
+    o1 = next(x for x in old["items"] if x["kind"] == "look")
+    assert o1["fate"]["fate"] == "sent" and o1["fate"]["inferred"] is True and o1["fate"]["secs"] == 14
+    assert c.get(f"/api/admin/earpiece/{lid}/log").status_code == 404
+    assert c.get(f"/api/admin/earpiece/{lid}/20261101-000000").status_code == 404
+    assert c.get(f"/api/admin/earpiece/{lid}/..%2Ftester").status_code == 404
+    assert c.get("/api/admin/earpiece/t-nobody").status_code == 404
+
+
+def test_earpiece_history_of_your_own_with_demo_off(cfg, tmp_path, no_admin_env):
+    from tester_fakes import demo_cfg
+    ocfg = demo_cfg(cfg, enabled=False)
+    own = common.listener_dir(ocfg)
+    _conversation(own)
+    c = client(ocfg, tmp_path)
+    assert c.get("/api/admin/testers").json()["demo"] is False
+    got = c.get("/api/admin/earpiece/own").json()
+    assert got["label"] == "Your own" and got["conversations"][0]["session"] == "20261120-100000"
+    assert c.get("/api/admin/earpiece/own/20261120-100000").json()["director"]["sent"] == 1
+
+
+def test_the_admin_page_earpiece_controls_and_history(dcfg, site):
+    base, browser = site
+    lid = seed(dcfg, "Pilot 1", "chapter")
+    _conversation(testers.folder(lid))
+    page = browser.new_page()
+    page.goto(base + "/admin")
+    sel = f"tr[data-lid='{lid}'] select[data-do='earpiece']"
+    page.wait_for_selector(sel)
+    assert page.input_value(sel) == "off"
+    page.select_option(sel, "on")
+    deadline = time.monotonic() + 5
+    while not testers.record(lid).get("earpiece_view") and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert testers.record(lid)["earpiece_view"] is True
+    page.wait_for_function("document.getElementById('msg').innerText.includes('earpiece view on')")
+    assert page.get_attribute(f"tr[data-lid='{lid}'] a[href^='/admin/earpiece']", "href") == f"/admin/earpiece?lid={lid}"
+    assert page.is_hidden("#own-earpiece")
+
+    phone = browser.new_page(viewport={"width": 375, "height": 812})
+    phone.goto(base + f"/admin/earpiece?lid={lid}")
+    phone.wait_for_selector("a[href*='session=20261120-100000']")
+    phone.click("a[href*='session=20261120-100000']")
+    phone.wait_for_selector("#timeline li.look")
+    text = phone.inner_text("#timeline")
+    for want in ("Hi, I just got back from a walk.", "Offer to say what you do.", "Held 3.2 s, sent at 0:14",
+                 "Dropped at 0:32: too soon after the last whisper", "ended +6 s", "Failed: timeout"):
+        assert want in text, want
+    assert phone.get_attribute("li.look[data-id='2'] li[data-change='new']", "data-state") == "open"
+    assert phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

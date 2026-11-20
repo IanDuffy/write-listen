@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from .common import ROOT, Run, StageError
 
 _client = None
-# Read in order; the first set wins. ARTICLE_PIPELINE_... is the one in Ian's cloud environment (2026-11-20).
+# Read in order; the first set wins. WRITE_LISTEN_... is the one in Ian's cloud environment (2026-11-20).
 KEY_VARS = ("ARTICLE_PIPELINE_ANTHROPIC_API_KEY", "WRITE_LISTEN_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
 
 

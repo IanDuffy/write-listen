@@ -1,12 +1,13 @@
 """`wl study ...`: the Tester Demo from the terminal (docs/tester-demo.md).
 
     wl study testers          every tester: stage, chapter, questions, debrief, cost
-    wl study create <label> [--name Rolando] [--rehearsal]
+    wl study create <label> [--name Rolando] [--rehearsal] [--earpiece-view]
                               a new tester; prints the link (origin from WL_BASE_URL or demo.base_url). The
                               interviewer greets them by the name (a label that reads as a first name is used
                               when none is given). --rehearsal: their chapters replay a finished one
                               (faststart/rehearsal.py: no research, writing or model calls), for voice tests;
-                              refused when there is nothing to replay
+                              refused when there is nothing to replay. --earpiece-view: their page shows the
+                              earpiece panel (what the earpiece whispers the guide, live; Ian's view)
     wl study report [--yes]   study/report.md from every tester's debrief (one Claude call; --yes passes
                               the cost guard)
 """
@@ -29,7 +30,8 @@ def _testers(cfg: dict) -> None:
         return
     for s in rows:
         flags = [x for x in ("revoked" if s["revoked"] else "", "left early" if s["left_early"] else "",
-                             "rehearsal" if s.get("chapter_kind") == "rehearsal" else "") if x]
+                             "rehearsal" if s.get("chapter_kind") == "rehearsal" else "",
+                             "earpiece view" if s.get("earpiece_view") else "") if x]
         chapter = f"\"{s['title']}\", {s['minutes_heard']} of {s['chapter_minutes']} min" if s.get("title") else "-"
         debrief = "done" if s["debrief"]["done"] else "-"
         print(f"  {s['label']:<18} {s['lid']:<22} {s['stage']:<11}{' (' + ', '.join(flags) + ')' if flags else ''}")
@@ -49,6 +51,7 @@ def main(argv: list[str]) -> int:
     c.add_argument("label", nargs="+")
     c.add_argument("--name", help="the name the interviewer greets them by")
     c.add_argument("--rehearsal", action="store_true", help="their chapters replay a finished one (nothing paid)")
+    c.add_argument("--earpiece-view", action="store_true", help="their page shows the earpiece panel")
     r = sub.add_parser("report", help="write study/report.md")
     r.add_argument("--yes", action="store_true", help="pass the cost guard")
     args = ap.parse_args(argv)
@@ -62,10 +65,12 @@ def main(argv: list[str]) -> int:
             _testers(cfg)
         elif args.cmd == "create":
             got = testers.create(cfg, " ".join(args.label), name=args.name,
-                                 chapter="rehearsal" if args.rehearsal else None)
+                                 chapter="rehearsal" if args.rehearsal else None,
+                                 earpiece_view=args.earpiece_view)
             who = f", greeted as {got['name']}" if got.get("name") else ", no name: the interviewer asks"
             kind = ", rehearsal chapters" if got.get("chapter") == "rehearsal" else ""
-            print(f"  {got['label']} ({got['lid']}{who}{kind}): {got['link']}")
+            view = ", earpiece view" if got.get("earpiece_view") else ""
+            print(f"  {got['label']} ({got['lid']}{who}{kind}{view}): {got['link']}")
         elif args.cmd == "report":
             out = report.build(cfg, yes=args.yes)
             print(f"  Wrote {out}")

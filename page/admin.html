@@ -31,7 +31,7 @@
   th, td { text-align: left; vertical-align: top; padding: 9px 8px; border-bottom: 1px solid var(--line); }
   th { font-weight: 600; color: var(--muted); font-size: 13px; }
   .sub { color: var(--muted); font-size: 13px; }
-  .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   a { color: var(--accent); }
   #greet { min-height: 1.4em; margin: 0 0 6px; }
   #msg { min-height: 1.4em; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
@@ -48,11 +48,13 @@
 <main>
   <h1>Testers</h1>
   <p id="total">Loading…</p>
+  <p id="own-earpiece" class="sub" hidden>Your own conversations: <a href="/admin/earpiece?lid=own">earpiece history</a></p>
   <p id="default-chapter" class="sub" hidden>Every tester without their own setting gets rehearsal chapters (demo.chapter).</p>
   <form id="new" autocomplete="off">
     <input id="label" placeholder="Label for a new tester (e.g. Pilot 1)" aria-label="Label" required>
     <input id="name" placeholder="First name to greet them by (optional)" aria-label="Name">
     <label class="sub"><input type="checkbox" id="rehearsal"> Rehearsal chapters</label>
+    <label class="sub"><input type="checkbox" id="earpiece-view"> Earpiece view</label>
     <button class="primary">Create link</button>
   </form>
   <div id="greet" class="sub" aria-live="polite"></div>
@@ -118,8 +120,12 @@ function row(t) {
   // Rehearsal: their chapters replay a finished one (faststart/rehearsal.py), for testing the voices at no cost.
   const kind = `<select data-do="chapter" aria-label="Chapters" title="Real chapters, or a finished one replayed (nothing paid)">${["real", "rehearsal"].map((v) =>
     `<option value="${v}"${t.chapter_kind === v ? " selected" : ""}>Chapter: ${v}</option>`).join("")}</select>`;
+  // The earpiece panel on their page: what the earpiece whispers the guide, live (for Ian's own test runs).
+  const ear = `<select data-do="earpiece" aria-label="Earpiece view" title="Show the earpiece panel on their page">${["off", "on"].map((v) =>
+    `<option value="${v}"${(t.earpiece_view ? "on" : "off") === v ? " selected" : ""}>Earpiece view: ${v}</option>`).join("")}</select>`;
+  const history = `<a href="/admin/earpiece?lid=${encodeURIComponent(t.lid)}">Earpiece history</a>`;
   const actions = `<div class="actions">${t.link ? '<button data-do="revoke">Revoke</button>' : ""}
-    <button data-do="reset">Reset</button>${card}${kind}<button class="warn" data-do="delete">Delete all data</button></div>`;
+    <button data-do="reset">Reset</button>${card}${kind}${ear}${history}<button class="warn" data-do="delete">Delete all data</button></div>`;
   return `<tr data-lid="${esc(t.lid)}" data-label="${esc(t.label)}">${cell("Tester", tester)}${cell("Stage", stage)}`
        + `${cell("Last active", when(t.last_active))}${cell("Chapter", chapter)}${cell("Questions", t.questions)}`
        + `${cell("Debrief", debrief)}${cell("Cost", cost)}${cell("Actions", actions)}</tr>`;
@@ -133,6 +139,7 @@ async function load() {
       + (t.estimated ? ` (${money(t.estimated)} estimated)` : "") + ` · ${got.testers.length} tester${got.testers.length === 1 ? "" : "s"}`;
     $("rows").innerHTML = got.testers.map(row).join("");
     $("default-chapter").hidden = !got.testers.some((x) => x.chapter_default === "rehearsal");
+    $("own-earpiece").hidden = got.demo !== false;
   } catch (e) { say("Couldn't load: " + e.message); }
 }
 
@@ -160,8 +167,9 @@ $("new").addEventListener("submit", async (ev) => {
   if (!label) return;
   try {
     const got = await api("/api/admin/testers", { label, name: $("name").value.trim() || null,
-                                                   rehearsal: $("rehearsal").checked });
-    $("label").value = ""; $("name").value = ""; $("rehearsal").checked = false; greetSeq++; $("greet").textContent = "";
+                                                   rehearsal: $("rehearsal").checked,
+                                                   earpiece_view: $("earpiece-view").checked });
+    $("label").value = ""; $("name").value = ""; $("rehearsal").checked = false; $("earpiece-view").checked = false; greetSeq++; $("greet").textContent = "";
     await load();
     await copy(got.link, `Created ${got.label}` + (got.name ? `, greeted as ${got.name}.` : "."));
   } catch (e) { say("Couldn't create: " + e.message); }
@@ -185,6 +193,13 @@ $("rows").addEventListener("click", async (ev) => {
 });
 
 $("rows").addEventListener("change", async (ev) => {
+  const e = ev.target.closest("select[data-do=earpiece]");
+  if (e) {
+    const tr = e.closest("tr");
+    try { await api(`/api/admin/testers/${encodeURIComponent(tr.dataset.lid)}/earpiece`, { value: e.value }); say(`${tr.dataset.label}: earpiece view ${e.value}.`); }
+    catch (err) { say("Couldn't change the earpiece view: " + err.message); }
+    return load();
+  }
   const k = ev.target.closest("select[data-do=chapter]");
   if (k) {
     const tr = k.closest("tr");

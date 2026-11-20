@@ -511,3 +511,35 @@ def test_rehearsal_without_source_is_409(demo, rehearsing, tmp_path):
         server.state_for("t-alice").pipe.start_seed("Roman concrete", mode="fast", live=True)
     assert e.value.status_code == 409 and "not there" in e.value.detail
     assert demo.launched == []
+
+
+def test_the_earpiece_view_is_each_testers_own(cfg, monkeypatch, tmp_path):
+    """The earpiece panel (Ian, 2026-11-20): a tester without the flag gets earpiece_view false and no script; one
+    with it gets both; in demo mode live.director.view is ignored."""
+    from voice.gpt_live import routes as live_routes
+    from voice.gpt_live import session as live_session
+
+    cfg["live"]["provider"] = "gpt_live"
+    cfg["live"]["director"] = {**cfg["live"]["director"], "view": True}
+    monkeypatch.setattr(live_session, "create_webrtc", lambda cfg, sc, sdp, client=None: {"id": "live_1", "sdp": "A"})
+    monkeypatch.setattr(server.memory, "after_session", lambda *a, **k: False)
+    script = tmp_path / "earpiece.js"
+    script.write_text("window.Earpiece = {};")
+    monkeypatch.setattr(live_routes, "EARPIECE_JS", script)
+    cfg["demo"] = {"enabled": True, "max_builds": 3}
+    cfg.pop("listener_dir", None)
+    for lid in set(TOKENS.values()):
+        d = profiles.create(lid)
+        profiles.write_json(d / "tester.json", {"lid": lid, "label": lid[2:].title(),
+                                                **({"earpiece_view": True} if lid == "t-bob" else {})})
+    install_testers(monkeypatch)
+    monkeypatch.setattr(server, "QUEUE_WATCH_SECONDS", 3600)
+    app = server.create_app(cfg=cfg, remember_on_start=False)
+    alice = TestClient(app, headers={"cookie": "wl_tester=tokA"})
+    bob = TestClient(app, headers={"cookie": "wl_tester=tokB"})
+    assert alice.post("/api/live/start", json={"sdp": "OFFER"}).json()["earpiece_view"] is False
+    assert alice.get("/earpiece.js").status_code == 404
+    assert bob.post("/api/live/start", json={"sdp": "OFFER"}).json()["earpiece_view"] is True
+    r = bob.get("/earpiece.js")
+    assert r.status_code == 200 and r.text == "window.Earpiece = {};"
+    assert TestClient(app).get("/earpiece.js").status_code == 404   # no tester: nothing

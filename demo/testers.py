@@ -1,9 +1,14 @@
 """Testers: the link is the tester (docs/tester-demo.md, "Tester links and consent").
 
-    shared/testers.json            {"tokens": {token: {"lid", "label", "created", "given_name", "chapter"}}}: the only way in
+    shared/testers.json            {"tokens": {token: {"lid", "label", "created", "given_name", "chapter",
+                                    "earpiece_view"}}}: the only way in
     listeners/<lid>/tester.json    {label, lid, token, created, opened_at, consent_at, name, given_name,
                                     debrief_card: "auto"|"on"|"off", chapter: "real"|"rehearsal" (absent: config
-                                    demo.chapter), stage_hint, intro_done, ...}
+                                    demo.chapter), earpiece_view: true (absent: off), stage_hint, intro_done, ...}
+
+earpiece_view (Ian, 2026-11-20: "see what the director is feeding to the narrator in real time ... just for me"):
+on, this tester's page loads the earpiece panel (page/earpiece.js; voice/gpt_live/director.view_on). Off by
+default; set on the admin page or with `wl study create ... --earpiece-view`, and kept over a reset.
 
 chapter (Ian, 2026-11-20): "rehearsal" replays a finished chapter when this tester starts one
 (faststart/rehearsal.py: no research, writing or model calls), for testing the voices. It is checked against a
@@ -175,30 +180,32 @@ def _check_chapter(cfg: dict, value: str) -> None:
 
 
 def create(cfg: dict, label: str, base: str | None = None, name: str | None = None,
-           chapter: str | None = None) -> dict:
+           chapter: str | None = None, earpiece_view: bool = False) -> dict:
     """A new tester: a token, its registry entry and its folder. {token, lid, label, name, link}. `name` is
     what the interviewer greets them by; without one, a label that reads as a first name is used. `chapter`:
-    "real" or "rehearsal" for this tester (None: config demo.chapter decides)."""
+    "real" or "rehearsal" for this tester (None: config demo.chapter decides). `earpiece_view`: their page shows
+    the earpiece panel (absent from the records when off)."""
     label = " ".join(str(label or "").split())
     if not label:
         raise StageError("A tester needs a label.")
     if chapter is not None:
         _check_chapter(cfg, chapter)
     given = greeting_name(label, name)
+    view = {"earpiece_view": True} if earpiece_view else {}
     with _LOCK:
         lid = _new_lid(label)
         token = secrets.token_urlsafe(24)  # 32 characters
         created = now()
         rec = {"label": label, "lid": lid, "token": token, "created": created, "opened_at": None,
                "consent_at": None, "name": None, "given_name": given, "debrief_card": "auto", "stage_hint": None,
-               **({"chapter": chapter} if chapter else {})}
+               **({"chapter": chapter} if chapter else {}), **view}
         _make_folder(cfg, rec)
         reg = _registry()
         tokens = {**reg["tokens"], token: {"lid": lid, "label": label, "created": created, "given_name": given,
-                                           **({"chapter": chapter} if chapter else {})}}
+                                           **({"chapter": chapter} if chapter else {}), **view}}
         _save_registry({**reg, "tokens": tokens})
     return {"token": token, "lid": lid, "label": label, "name": given, "link": link(cfg, token, base),
-            **({"chapter": chapter} if chapter else {})}
+            **({"chapter": chapter} if chapter else {}), **view}
 
 
 def lookup(token: str | None) -> dict | None:
@@ -221,7 +228,8 @@ def open_link(cfg: dict, token: str) -> dict | None:
             _make_folder(cfg, {"label": rec["label"], "lid": rec["lid"], "token": token, "created": rec["created"],
                                "opened_at": None, "consent_at": None, "name": None,
                                "given_name": rec.get("given_name"), "debrief_card": "auto", "stage_hint": None,
-                               **({"chapter": rec["chapter"]} if rec.get("chapter") else {})})
+                               **({"chapter": rec["chapter"]} if rec.get("chapter") else {}),
+                               **({"earpiece_view": True} if earpiece_view(rec) else {})})
         return mark_opened(rec["lid"])
 
 
@@ -308,6 +316,7 @@ def reset(lid: str, cfg: dict | None = None) -> Path:
                            "given_name": rec.get("given_name"),
                            "debrief_card": rec.get("debrief_card") or "auto", "stage_hint": None,
                            **({"chapter": rec["chapter"]} if rec.get("chapter") else {}),
+                           **({"earpiece_view": True} if earpiece_view(rec) else {}),
                            **({"revoked_at": rec["revoked_at"]} if rec.get("revoked_at") else {}),
                            "reset_at": now()})
         return dest
@@ -374,6 +383,23 @@ def set_chapter(cfg: dict, lid: str, value: str) -> dict:
             tokens = {t: ({**v, "chapter": value} if v.get("lid") == lid else v) for t, v in reg["tokens"].items()}
             _save_registry({**reg, "tokens": tokens})
         return rec
+
+
+def set_earpiece_view(lid: str, on: bool) -> dict:
+    """The admin's toggle: this tester's page shows the earpiece panel. Mirrored into the registry, as chapter is
+    (open_link remakes a missing folder from it)."""
+    on = bool(on)
+    with _LOCK:
+        rec = update(lid, earpiece_view=on)
+        reg = _registry()
+        if any(v.get("lid") == lid for v in reg["tokens"].values()):
+            tokens = {t: ({**v, "earpiece_view": on} if v.get("lid") == lid else v) for t, v in reg["tokens"].items()}
+            _save_registry({**reg, "tokens": tokens})
+        return rec
+
+
+def earpiece_view(rec: dict | None) -> bool:
+    return bool((rec or {}).get("earpiece_view") is True)
 
 
 def chapter_of(cfg: dict, rec: dict | None) -> str:

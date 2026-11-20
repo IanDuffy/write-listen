@@ -41,6 +41,10 @@ around the handover or handback, or in the step-back reply wait. It delivers a w
 session.instructions.append (notes.md `direct`, `direct_now`, `direct_start`), dropping only stale kinds after
 the start, an offer once explained, a "now" note the listener has spoken since, and a whisper within
 min_gap_secs of the last whisper.
+
+The earpiece view (Ian, 2026-11-20): `view_on` says whether this listener's page loads the panel
+(page/earpiece.js); the page posts each whisper's fate (FATES, FATE_REASONS) as a "director_fate" row, and
+voice/gpt_live/earpiece_history.py builds the admin's timeline from the transcript.
 """
 
 from __future__ import annotations
@@ -92,8 +96,39 @@ CLEARED = "Any earlier earpiece note is done."   # in notes.md started_step_back
 def settings(cfg: dict) -> dict:
     return {"enabled": False, "every_secs": 15, "every_words": 12, "every_lines": 4, "company_every_secs": 30,
             "silence_secs": [12], "min_gap_secs": 20, "timeout_ms": 6000, "max_calls": 150, "max_usd": 0.5,
-            "audio": {"window_ms": 600, "out_rms": 0.01, "min_rms": 0.02, "floor_x": 4},
+            "audio": {"window_ms": 600, "out_rms": 0.01, "min_rms": 0.02, "floor_x": 4}, "view": False,
             **(cfg["live"].get("director") or {})}
+
+
+def view_on(cfg: dict) -> bool:
+    """The earpiece panel for this request's listener (Ian, 2026-11-20: "a floating window ... just for me").
+    Demo mode: that tester's tester.json `earpiece_view` (the admin page's toggle; the config key is ignored).
+    Otherwise config live.director.view. Read on every call, never cached."""
+    from stages import common
+
+    if (cfg.get("demo") or {}).get("enabled"):
+        try:
+            rec = json.loads((common.listener_dir(cfg) / "tester.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(rec, dict) and rec.get("earpiece_view") is True
+    return bool(settings(cfg).get("view"))
+
+
+# A whisper's fate on the page (POST /api/live/direct/fate), for the admin's earpiece history. Recorded as a
+# "director_fate" row: never a "text" or "note" field, so nothing that reads the conversation reads it.
+FATES = ("sent", "held", "dropped")
+FATE_REASONS = {
+    "not_here": "the page wasn't in a state to send",
+    "stale_after_start": "the chapter had started",
+    "explained": "the guide had already said what it does",
+    "listener_spoke": "the listener spoke after the look was asked",
+    "gap": "too soon after the last whisper",
+    "replaced": "a newer note replaced it",
+    "forgotten": "a rest, a wake or a new session cleared it",
+    "down": "the earpiece went down",
+    "ended": "the conversation ended",
+}
 
 
 def _secs(t0: datetime | None, stamp: str | None) -> int | None:
