@@ -71,13 +71,14 @@
     started: false, muted: false, typing: false, epoch: 0,
     out: "", outAt: 0, outFirst: 0,   // the guide's words since its line began; when the last one came
     inp: "", inAt: 0,                 // the listener's
-    spokeAt: 0, heardAt: 0,           // the last guide word, the last listener word (any phase)
+    spokeAt: 0, heardAt: 0,
+    micVoiceAt: 0, outVoiceAt: 0, micFloor: null,  // voice heard on the mic, sound from the guide (the meters: dirAudio)           // the last guide word, the last listener word (any phase)
     seconds: 0, ratio: 0, backend: { model: null, input: 0, output: 0, cached: 0 },
     run: null, chapter: null, chapterAt: "",
     own: null,              // the run this conversation may read (start_chapter's, or the one picked back up)
     cont: null,             // /api/live/start's `continue`: {run, title, id, sentence, waiting}
     startCalled: false, promiseAt: 0, nudges: 0,  // start_chapter in this conversation; a promise without it
-    lastGuideLine: "", lastGuideAt: 0, lastListenerAt: 0,  // the last whole lines (a question waiting for its answer)
+    lastGuideLine: "", lastGuideAt: 0, lastListenerAt: 0, lineEndAt: 0,  // the last whole lines (a question waiting for its answer)
     feed: { items: [], next: 0, cur: null, ahead: null },
     readStarted: false, finished: false,
     offer: null,            // the ready chapter offered in conversation: {at, askedAt, reminded}
@@ -103,8 +104,9 @@
     demo: null,             // /api/live/demo {show, done, setting}: End demo for a tester back on a page of their own
     demoBegun: false,       // ... who has started a conversation here
     micRefused: false,      // a tester's mic was refused: the line asks for it, a tap or Try again asks again
-    // The director (voice/gpt_live/director.py, config live.director; Ian, 2026-11-19): a model that reads the
-    // conversation and decides the guide's next move. {fails, down, ctl, id, next, want, silenceIx, noteAt, offered}
+    // The director, an earpiece (voice/gpt_live/director.py, config live.director; Ian, 2026-11-19): a model that
+    // looks at the conversation on a cadence, keeps a plan, and whispers the guide's next move when its advice changes.
+    // {fails, down, ctl, id, next, lines, askedAt, event, queued, turnOpen, silenceIx, sentAt, offered}
     dir: null,
     recent: [],             // the last few lines ({who, text}) for the director (any the transcript lacks yet)
     turnWords: [], turnEnd: 0, inStart: 0,  // the listener's turns for engaged(): fragments merged, words per turn
@@ -154,9 +156,8 @@
     if (L.mic) L.mic.enabled = !on;  // nothing leaves the laptop while muted
     send(on ? "session.input_audio.mute" : "session.input_audio.unmute");
   }
-  function instruct(text, stamp = true) {  // a note from the page; GPT-Live only acts on it with the mic open
+  function instruct(text) {  // a note from the page; GPT-Live only acts on it with the mic open
     mute(false);
-    if (stamp) L.noteAt = now();  // the director's min gap counts from any page note (its own, a clock's, a started note)
     send("session.instructions.append", { delegation_id: null, content: text });
     mark("instruct", text.slice(0, 80));
     remember("page", text);
@@ -193,6 +194,7 @@
     // back up, the reading goes on from that sentence rather than its paragraph's start.
     const stoppedAt = !resume && L.dropAt && L.run ? { run: L.run, ...L.dropAt } : null;
     if (!resume) newConversation();
+    else dirForget();
     L.phase = "connecting";
     render();
     const sayOnly = resume === "ready";  // only to say the chapter is ready: no mic, never on (Ian asked for it off)
@@ -382,14 +384,14 @@
     L.own = null; L.cont = null; L.startCalled = false; L.promiseAt = 0; L.nudges = 0; L.outFirst = 0;
     L.run = null; L.chapter = null; L.chapterAt = ""; L.feed = { items: [], next: 0, cur: null, ahead: null };
     L.readStarted = false; L.finished = false; L.archived = false; L.aside = null; L.wait = null; L.dropAt = null;
-    L.runEnded = false; L.leading = false; L.lastAt = null; L.stalled = null; L.lastGuideLine = ""; L.lastGuideAt = 0; L.lastListenerAt = 0;
+    L.runEnded = false; L.leading = false; L.lastAt = null; L.stalled = null; L.lastGuideLine = ""; L.lastGuideAt = 0; L.lastListenerAt = 0; L.lineEndAt = 0;
     L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.pitchSent = 0; L.explainedAt = 0; L.askedAt = 0; L.pitchNudgeAt = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
     L.turnWords = []; L.turnEnd = 0; L.stepBackAt = 0; L.replyWait = null;
     L.handoffOpen = null; L.handingBack = null;
     if (L.dir && L.dir.ctl) L.dir.ctl.abort();
-    L.dir = { fails: 0, down: false, ctl: null, id: 0, next: null, want: false, silenceIx: 0, offered: false, checkedIn: false };
-    L.noteAt = 0;
+    L.dir = { fails: 0, down: false, ctl: null, id: 0, next: null, lines: 0, askedAt: 0, event: null, queued: null,
+              turnOpen: false, silenceIx: 0, sentAt: 0, offered: false };
     L.recent = [];
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
@@ -549,9 +551,9 @@
       if (tail) { mark("tail", text.slice(0, 60)); if (L.session) quietPost("/api/live/line", { session: L.session, who: "guide", text }); }
       if (text && !tail) {
         note(text, "guide");
-        L.lastGuideLine = text; L.lastGuideAt = t;
+        L.lastGuideLine = text; L.lastGuideAt = t; L.lineEndAt = Math.max(L.lineEndAt || 0, L.outAt || t);  // its last word
         remember("guide", text);
-        if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }  // the director is asked at the lull after it
+        directorLine(false);  // the earpiece counts lines for its cadence
         guideSaid(text, t, L.lineAt || t);
         if (!L.explainedAt && EXPLAINED.test(text)) L.explainedAt = t;  // the pitch nudge waits for these (conversationCues)
         if (text.includes("?")) L.askedAt = t;
@@ -580,10 +582,10 @@
       const text = L.inp.trim(); L.inp = "";
       if (text) {
         note("You: " + text, "you");
-        L.lastListenerAt = t;
+        L.lastListenerAt = t; L.lineEndAt = Math.max(L.lineEndAt || 0, L.inAt || t);
         countLine(text, L.inStart || L.inAt, L.inAt);
         remember("listener", text);
-        if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }
+        directorLine(true);
         listenerSaid(text, t);
         if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
         if (L.aside || L.wait) (L.aside || L.wait).lines.push({ who: "listener", text });
@@ -647,6 +649,7 @@
     // from here. Without it a tap after 90 s of rest rested again within a second, the last words being that old
     // (Ian's tester run, 2026-11-16: "Tap to talk doesn't work once turned off").
     if (L.phase !== L.wasPhase) { if (L.phase === "talk") L.talkAt = t; L.wasPhase = L.phase; }
+    if (dirOn()) dirAudio(t);
     if (L.dir && L.dir.next) directorDeliver(t);
     if (L.dir && dirHere()) directorTick(t);
     if (L.dc && L.dc.readyState === "open") conversationCues(t);
@@ -671,19 +674,20 @@
   // Notes the page sends into the conversation on a clock: a hello nobody answered, a conversation running
   // long with no chapter, a ready chapter not taken up. A note goes while the listener is speaking (the
   // guide's reply to them takes it in) or after a few seconds' quiet, never on top of the guide.
-  // With the director up (dirOn), it reads the conversation instead of these clocks: no offer cue, no hello check
-  // (its silence check), and the pitch nudges are late fallbacks (live.director.fallback) that go only in a lull,
-  // never while they talk, and not within min_gap_secs of the director's last note (Ian's third tester run: the
-  // offer cue went 50 s in, mid-sentence). With it off, exactly the clocks as they were; gone down mid-conversation
-  // (two failures in a row), the same clocks but in a lull only (fb): by then they are long overdue, and would go
-  // into the listener's sentence on the next tick.
+  // With the director up (dirOn), its earpiece reads the conversation instead of most of these clocks: no offer cue
+  // (Ian's third tester run: it went 50 s in, mid-sentence), and the pitch nudges are late fallbacks
+  // (live.director.fallback) that go only in a lull, never while they talk, and not within min_gap_secs of the
+  // earpiece's last whisper; the first of them is the offer cue if the guide hasn't said what it does (the earpiece
+  // was never seen to whisper an offer in the replay). The hello check-in stays the page's own clock. With it off,
+  // exactly the clocks as they were; gone down mid-conversation (two failures in a row), the same clocks but in a
+  // lull only (fb): by then they are long overdue, and would go into the listener's sentence on the next tick.
   function conversationCues(t) {
     if (L.phase !== "talk" || L.pending) return;
     const dir = dirOn(), DC = S.director || {};
     const fb = !dir && !!(DC.enabled && L.dir && L.dir.down);
     const theyTalk = L.inp && t - L.inAt < 600 && !L.out && t - L.spokeAt > 1500;
     const lull = !L.inp && !L.out && t - L.spokeAt > 4000 && t - L.heardAt > 4000;
-    if (!dir && !L.cont && !L.helloChecked && L.sessionWord && L.lastGuideAt && !(L.heardAt > L.convAt) && !L.inp
+    if (!L.cont && !L.helloChecked && L.sessionWord && L.lastGuideAt && !(L.heardAt > L.convAt) && !L.inp
         && t - L.spokeAt > S.hello_silence_secs * 1000) {
       L.helloChecked = true;
       mark("hello-silence");
@@ -714,7 +718,7 @@
       ? Math.max(L.convAt + nudges[n] * 1000, n ? L.pitchNudgeAt + (nudges[n] - nudges[n - 1]) * 1000 : 0) : 0;
     const held = (L.explainedAt && t - L.explainedAt < (H.explained_secs || 0) * 1000)
       || (L.askedAt && t - L.askedAt < (H.question_secs || 0) * 1000 && t - due < (H.max_secs || 0) * 1000);
-    const opening = dir ? lull && !(L.noteAt && t - L.noteAt < (DC.min_gap_secs || 0) * 1000)
+    const opening = dir ? lull && !(L.dir.sentAt && t - L.dir.sentAt < (DC.min_gap_secs || 0) * 1000)
       : fb ? lull : lull || (theyTalk && t - due >= (H.max_secs || 0) * 1000);
     if (!L.own && !L.startCalled && !L.cont && due && t > due && !held && opening) {
       // The director has no offer clock, so with it up nothing has made sure the guide said what it does: the first
@@ -743,89 +747,157 @@
     }
   }
 
-  // --- the director (voice/gpt_live/director.py; Ian, 2026-11-19) -------------------------------------------
-  // "A listening agent on top of the gptlive model, in order to direct it when to do things." A Claude call reads
-  // the conversation and decides the guide's next move (wait, draw_out, offer_what_i_do, ask_interest, pitch,
-  // answer, start_chapter, step_back, check_in) and a note for it. Asked in conversation only (before a chapter
-  // starts, and while it is made: company), never while reading, in an aside or check-in, resting, after a sound
-  // wake, while the guide offers to chat before stepping back, or around the handover and handback; asked once a
-  // line has ended and nobody has spoken for min_quiet_ms, and at each of silence_secs of silence. One request at a
-  // time: a newer one aborts the older. A decision lands about 2 s later, after GPT-Live has already answered the
-  // line (it replies in about 0.9 s), so it steers the next opening: it is delivered only in a real lull, and
-  // dropped if anyone has spoken since it was asked for, the move is already done, or it is too old. Two failures in
-  // a row (an error, a timeout, a cap) and the clocks take over for the rest of the conversation.
+  // --- the director: an earpiece with a plan (voice/gpt_live/director.py; Ian, 2026-11-19) -------------------
+  // "A listening agent on top of the gptlive model, in order to direct it when to do things", then (the same day)
+  // "constantly evaluate the conversation and provide updated notes ... with a plan". A Claude call looks at the
+  // conversation in the background, keeps a plan for it on the server (checked off, reordered, changed as the guide
+  // improvises), and answers with a whisper only when its advice changes (`changed` and a `note`). It never blocks a
+  // turn: it may look while someone is talking (the request says who, `speaking`), and a whisper goes at once as an
+  // instruction (notes.md `direct`, `direct_now`, `direct_start`), worded for its moment by the director, never as
+  // speakable context. It looks:
+  //   cadence   every every_secs (company_every_secs once a chapter is started) with a new line since the last look;
+  //   turn_end  when a listener turn ends (no line of theirs for engaged_merge_ms) that had every_words words, or
+  //             with every_lines new lines since the last look;
+  //   started   once after the started note;
+  //   silence   once a stretch, after silence_secs with nobody speaking.
+  // One look in flight; a newer trigger waits for it (never an abort: it would throw the analysis away). Asked in
+  // conversation only (before a chapter starts, and while it is made: company), never while reading, in an aside or
+  // check-in, resting, muted, after a sound wake, while the guide offers to chat before stepping back, or around the
+  // handover and handback. Two failures in a row (an error, a timeout, a cap) and the clocks take over for the rest
+  // of the conversation, in a lull only.
   function dirOn() { return !!((S.director || {}).enabled && L.dir && !L.dir.down); }
+  // Not while a tool call is in flight either (review, 2026-11-20): start_chapter's delegation takes seconds before
+  // the page knows the chapter started, and a "start" whisper in that window invited a second start_chapter.
   function dirHere() {
     return dirOn() && L.phase === "talk" && !!L.session && !!L.dc && L.dc.readyState === "open" && !L.muted && !L.pending
       && !L.handingBack && !L.debriefing && !L.hold && !L.readStarted && !L.offer && !offerShown() && !L.stepBackAt
-      && !L.replyWait && !L.wokeAt && !!L.lastGuideAt;
+      && !L.replyWait && !L.wokeAt && !L.thinking && !!L.lastGuideAt;
+  }
+  const dirSecs = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);  // silence_secs: 12 or [12]
+  // Who is speaking, from the audio as well as the words (review, 2026-11-20). GPT-Live's input transcript runs
+  // seconds behind the voice (run 3's fragments came 2-3 s apart while Ian was mid-sentence), so the words alone
+  // read a pause in the transcript as nobody speaking. Each tick (dirAudio) notes when the guide's audio was last
+  // above live.director.audio.out_rms, and when the mic last carried a sound floor_x times the room's level and
+  // above min_rms while the guide was quiet (its voice from the speakers is not the listener); either counts for
+  // window_ms. Muted, the mic counts for nothing.
+  function dirAudio(t) {
+    const A = (S.director || {}).audio || {};
+    if (meters.level(meters.out) >= (A.out_rms || 0.01)) L.outVoiceAt = t;
+    if (L.muted || !meters.inp) return;
+    const v = meters.level(meters.inp);
+    L.micFloor = L.micFloor == null || v < L.micFloor ? v : L.micFloor * 0.998 + v * 0.002;  // the room: falls at once, rises slowly
+    if (v >= Math.max(A.min_rms || 0.02, (A.floor_x || 4) * L.micFloor) && t - L.outVoiceAt > (A.window_ms || 600)) L.micVoiceAt = t;
+  }
+  function dirSpeaking(t = now()) {
+    const w = ((S.director || {}).audio || {}).window_ms || 600;
+    if (L.inp || t - L.micVoiceAt < w) return "listener";
+    return L.out || t - L.outVoiceAt < w ? "guide" : "none";
+  }
+  // The page stopped being here without having looked (a rest, a session coming back): a started event, a queued
+  // trigger, an open turn, a look in flight or a whisper not yet sent would fire on the first tick back, minutes
+  // stale (review, 2026-11-20: a "started" look after a step back and a tap said the guide had "just" started).
+  function dirForget() {
+    const D = L.dir;
+    if (!D) return;
+    if (D.ctl) { D.ctl.abort(); D.ctl = null; }
+    D.id++;  // a look still on its way is ignored when it comes
+    D.event = null; D.queued = null; D.turnOpen = false; D.next = null;
+  }
+
+  // A line ended (the guide's, theirs spoken or typed): it counts toward the cadence, and starts a new silence stretch.
+  function directorLine(listener) {
+    const D = L.dir;
+    if (!D) return;
+    D.lines++; D.silenceIx = 0;
+    if (listener) D.turnOpen = true;  // turn_end is judged once their turn is over (engaged_merge_ms)
+  }
+
+  // Which trigger is due, if any. One-shot triggers (started, a turn's end, a silence) are used up here.
+  function directorDue(t) {
+    const D = L.dir, C = S.director || {};
+    if (D.event) { const e = D.event; D.event = null; return e; }
+    const merge = S.engaged_merge_ms || 1500;
+    if (D.turnOpen && !L.inp && t - L.turnEnd >= merge && t - L.micVoiceAt >= merge) {
+      D.turnOpen = false;
+      const w = L.turnWords.length ? L.turnWords[L.turnWords.length - 1] : 0;
+      if (w >= (C.every_words || 12) || D.lines >= (C.every_lines || 4)) return "turn_end";
+    }
+    const started = !!(L.own || L.startCalled);
+    const every = (started ? C.company_every_secs || 30 : C.every_secs || 15) * 1000;
+    if (D.lines && t - (D.askedAt || L.convAt || t) >= every) return "cadence";
+    const secs = dirSecs(C.silence_secs == null ? 12 : C.silence_secs);
+    if (D.silenceIx < secs.length && dirSpeaking(t) === "none"
+        && t - Math.max(L.spokeAt, L.heardAt, L.micVoiceAt, L.outVoiceAt) >= secs[D.silenceIx] * 1000) {
+      D.silenceIx++;
+      return "silence";
+    }
+    return null;
   }
 
   function directorTick(t) {
-    const D = L.dir, C = S.director || {};
-    if (L.inp || L.out) return;
-    const quietFor = t - Math.max(L.spokeAt, L.heardAt);
-    if (D.want && quietFor >= (C.min_quiet_ms || 1000)) { D.want = false; return directorAsk(t, "line"); }
-    const secs = C.silence_secs || [];
-    if (!D.want && D.silenceIx < secs.length && quietFor >= secs[D.silenceIx] * 1000) {
-      D.silenceIx++;
-      directorAsk(t, "silence");
-    }
+    const D = L.dir;
+    const due = directorDue(t);
+    if (due && (!D.queued || D.queued !== "started")) D.queued = due;  // the newest waits; "started" is never lost
+    if (D.ctl || !D.queued) return;  // one look in flight
+    const trigger = D.queued;
+    D.queued = null;
+    directorAsk(t, trigger);
   }
 
   function directorAsk(t, trigger) {
     const D = L.dir, C = S.director || {};
-    if (D.ctl) D.ctl.abort();
     const ctl = new AbortController(), id = ++D.id;
-    D.ctl = ctl;
+    D.ctl = ctl; D.lines = 0; D.askedAt = t;
     const body = {
-      session: L.session, id, trigger, silence_ms: t - Math.max(L.spokeAt, L.heardAt),
-      last_who: L.lastListenerAt > L.lastGuideAt ? "listener" : "guide", recent: L.recent.slice(-8),
+      // silence_ms: since the last line ended, at its last word (whoever is speaking now), as last_who is read
+      // (review, 2026-11-20: the time since any word read "the listener's line, 0 seconds ago" while the guide talked on).
+      session: L.session, id, trigger, speaking: dirSpeaking(t), silence_ms: Math.max(0, t - (L.lineEndAt || L.convAt || t)),
+      last_who: !L.lastListenerAt && !L.lastGuideAt ? null : L.lastListenerAt > L.lastGuideAt ? "listener" : "guide",
+      recent: L.recent.slice(-8),
       page: { seconds: Math.round((t - (L.convAt || t)) / 1000), explained: !!L.explainedAt,
               started: !!(L.own || L.startCalled), turns: turns().length },
     };
     mark("direct-ask", trigger);
-    const timer = setTimeout(() => ctl.abort(), (C.timeout_ms || 4000) + 1500);
+    const timer = setTimeout(() => ctl.abort(), (C.timeout_ms || 6000) + 1500);
     fetch("/api/live/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
                                 signal: ctl.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t, body.last_who); } })
+      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t); } })
       .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e)); } })
       .finally(() => clearTimeout(timer));
   }
 
-  function directorGot(got, askedAt, lastWho) {
+  function directorGot(got, askedAt) {
     const D = L.dir;
     if (!got || got.error) return directorFailed((got && got.error) || "no answer");
     D.fails = 0;
-    mark("direct", got.move);
-    if (got.move && got.move !== "wait" && got.note) D.next = { move: got.move, note: got.note, askedAt, at: now(), lastWho };
+    mark("direct", got.changed && got.note ? `${got.kind || "when_it_fits"} ${got.about || ""}`.trim() : "no change");
+    // A whisper only when its advice changed; the newest replaces one not yet delivered.
+    if (got.changed && got.note) D.next = { kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now() };
   }
 
   function directorFailed(why) {
     const D = L.dir;
     D.fails++;
     mark("direct-fail", why);
-    if (D.fails >= 2 && !D.down) { D.down = true; D.next = null; mark("director-down"); }  // the clocks take over
+    if (D.fails >= 2 && !D.down) { D.down = true; D.next = null; D.queued = null; mark("director-down"); }  // the clocks take over
   }
 
-  // Whether a decision goes now: "send", "hold" (not yet a lull) or "drop". Pure: tested with any state.
-  // The quiet is counted from the decision's arrival too: the input transcript runs seconds behind the voice, so a
-  // listener who has just started again may not show in heardAt yet (deliver_quiet_ms). After the guide's own line
-  // (nearly every decision: GPT-Live answers in about 0.9 s) it waits for a real pause the listener let go by
-  // (deliver_after_guide_ms; Ian pauses 4-8 s before answering). One check-in a conversation, and only while the
-  // listener hasn't said a word (the old hello check): any other pause is theirs to leave.
+  // Whether a whisper goes now: "send", "hold" or "drop". Pure: tested with any state. A when_it_fits whisper goes at
+  // once, even while they talk (it is worded for its moment, and GPT-Live never reads an instruction aloud), unless it
+  // is within min_gap_secs of the last whisper (other page notes don't count). A "now" whisper (a clear yes not acted
+  // on, quiet asked for and not given) is exempt from the gap, but is dropped if the listener has spoken since the
+  // look was asked for (the moment has moved), and held while they are mid-utterance. After the start the offer,
+  // the pitch, an interest question or a start are stale; an offer is stale once the guide has said what it does.
   function directorVerdict(n, t, st, C) {
     if (!st.here) return "drop";
-    if (t - n.at > (C.max_age_ms || 12000)) return "drop";
-    if (st.heardAt > n.askedAt || st.spokeAt > n.askedAt) return "drop";  // someone spoke since: the moment has moved
-    if (n.move === "offer_what_i_do" && (st.explained || st.offered)) return "drop";
-    if (["pitch", "ask_interest", "start_chapter", "offer_what_i_do"].includes(n.move) && st.started) return "drop";
-    if (n.move === "check_in" && (st.listenerSpoke || st.checkedIn)) return "drop";
-    const quiet = C.deliver_quiet_ms || 0;
-    const gap = n.lastWho === "guide" ? Math.max(C.deliver_after_guide_ms || 0, quiet) : quiet;
-    if (st.speaking || t - Math.max(st.heardAt, st.spokeAt) < gap || t - n.at < quiet) return "hold";
-    if (!["step_back", "start_chapter"].includes(n.move) && st.noteAt && t - st.noteAt < (C.min_gap_secs || 0) * 1000) return "drop";
+    if (st.started && ["offer", "pitch", "interest", "start"].includes(n.about)) return "drop";
+    if (n.about === "offer" && (st.explained || st.offered)) return "drop";
+    if (n.kind === "now") {
+      if (st.heardAt > n.askedAt) return "drop";
+      return st.listenerSpeaking ? "hold" : "send";
+    }
+    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000) return "drop";
     return "send";
   }
 
@@ -833,19 +905,22 @@
     const D = L.dir, n = D.next, C = S.director || {};
     const O = S.offer_nudge || {};
     const verdict = directorVerdict(n, t, {
-      here: dirHere(), heardAt: L.heardAt, spokeAt: L.spokeAt, speaking: !!(L.inp || L.out), noteAt: L.noteAt || 0,
+      here: dirHere(), heardAt: L.heardAt, listenerSpeaking: dirSpeaking(t) === "listener", sentAt: D.sentAt,
       explained: !!L.explainedAt, started: !!(L.own || L.startCalled),
-      listenerSpoke: L.heardAt > L.convAt, checkedIn: !!D.checkedIn,
       offered: D.offered || !!(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || "")),
     }, C);
     if (verdict === "hold") return;
     D.next = null;
-    if (verdict === "drop") return mark("direct-drop", n.move);
-    if (n.move === "offer_what_i_do") D.offered = true;
-    if (n.move === "check_in") D.checkedIn = true;
-    mark("direct-sent", n.move);
-    instruct(((n.move === "start_chapter" ? N.direct_start : N.direct) || "[{note}]").replace("{note}", n.note));
-    if (n.move === "step_back") restSoon();  // the mic off once it has said its parting words, unless they speak first
+    const what = n.about || n.kind;
+    if (verdict === "drop") return mark("direct-drop", what);
+    D.sentAt = t;
+    if (n.about === "offer") D.offered = true;
+    mark("direct-sent", what);
+    const tpl = n.kind === "now" ? (n.about === "start" ? N.direct_start : N.direct_now || N.direct) : N.direct;
+    instruct((tpl || "[{note}]").replace("{note}", n.note));
+    // A quiet whisper never rests the page itself (DESIGN: the earpiece does not drive restSoon; review,
+    // 2026-11-20): it would rest after whatever line the guide was saying, a question left hanging. The guide's
+    // parting words, read by guideSaid (STEP_BACK), or its step_back call rest it as before.
   }
 
   // --- cues in what was said (Ian's second test, 2026-11-15) -------------------------------------------
@@ -1094,6 +1169,7 @@
     const when = m ? `about ${m} minute${m === 1 ? "" : "s"}` : "a few minutes";
     const topic = String((args && args.topic) || (out && (out.topic || out.title)) || "").trim() || "the one you pitched";
     const fill = (note) => note.replace("{when}", when).replace(/\{topic\}/g, topic);
+    if (L.dir) L.dir.event = "started";  // the earpiece looks once after the started note (when it is here: company)
     if (engaged()) {
       mark("after-start", "company");
       return instruct(fill(N.started_company));
@@ -1114,6 +1190,7 @@
       return setTimeout(rest, 400);
     }
     L.restWaitAt = 0; L.stepBackAt = 0; L.replyWait = null;
+    dirForget();  // nothing of the earpiece's carries over a rest
     // It said it would start the chapter and hasn't: remind it while the session is still open, then rest.
     if (L.promiseAt && !L.startCalled && !L.own && L.nudges < 2 && L.dc && L.dc.readyState === "open") {
       L.promiseAt = 0; L.nudges++;
@@ -1217,6 +1294,7 @@
   function wake() {
     W.sounds = 0; W.total = 0; W.off = false; L.wokeAt = 0;  // a tap: sounds may wake it again
     L.phase = "talk"; L.restAt = 0;
+    dirForget();
     instruct(N.wake);
     render();
   }
@@ -2541,18 +2619,18 @@
     }
     if (!L.pc) return typedChat(text);
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
-    L.heardAt = L.inAt = L.lastListenerAt = now();  // typed counts as said for every cue
+    L.heardAt = L.inAt = L.lastListenerAt = L.lineEndAt = now();  // typed counts as said for every cue
     L.turnEnd = 0;  // a typed line is its own turn: never merged on timing
     countLine(text);
     remember("listener", text);
-    if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }
+    directorLine(true);
     listenerSaid(text, now());
     if (L.phase === "waiting" && L.wait) { L.wait.checkedIn = true; L.phase = "checkin"; }
     if (L.phase === "reading") ask();
     const conv = L.aside || L.wait;  // typed counts as said: the silent context and the aside's lines
     if (conv) { conv.lastListener = now(); conv.lines.push({ who: "listener", text }); }
     if (L.phase === "resting" || L.phase === "ended") { L.phase = "talk"; L.restAt = 0; }
-    instruct(N.typed.replace("{text}", text), false);  // their line, not a page note: no min gap for the director
+    instruct(N.typed.replace("{text}", text));
   });
 
   $("orb").addEventListener("click", async () => {

@@ -68,6 +68,8 @@ tester run".
 | A briefer intro | 47 words after "Hi, is this ...?"; 28 s live, handed over on the words |
 | The director | Built and on by default (`live.director`); replayed on 25 moments (21 acceptable, no wrong active move). Live, the persona mirror only asks after guide lines: 12 decisions, all `wait`. With it on, the offer clock is off, which removed the mid-story cut-in seen with it off; the offer came later (2:25 against 1:17). Its own moves are untested live |
 
+| The earpiece (2026-11-20; replaces the director) | Ian: a background earpiece with a plan it checks off and changes; the guide keeps all its style. Built (prompt, server, page, persona mirror, four scripted probes), reviewed (four lenses, 17 findings confirmed, all fixed with tests). Live, $0.77: probes B, C, D used the whisper at the guide's 2nd or 3rd turn (21-40 s), at a lull or wind-down, never voiced, never over the listener; A (mid-story) gave no pitch in the gaps, the probe closed too soon to say more; a replacing whisper won. Natural runs (evening, reserved): 22 looks, 0 whispers. The director's own whisper is not yet heard live |
+
 Live checks for this round: $0.70 guide and director (voice/gpt_live/build_costs.jsonl, now $18.34 of its $20
 cap), $0.20 interviewer (demo/build_costs.jsonl). Full suite: 1840 passed before the last two fixes.
 

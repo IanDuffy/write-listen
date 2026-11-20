@@ -79,8 +79,8 @@ stages:
   overnight_revise:       {max_tokens: 32000, effort: high, expected_output_tokens: 5000}
   overnight_intro:        {model: claude-sonnet-5-5, max_tokens: 16000, effort: medium, expected_output_tokens: 1500}
   overnight_library:      {model: claude-sonnet-5-5, max_tokens: 8000, effort: low, expected_output_tokens: 1000}
-  # The live guide's director (voice/gpt_live/director.py, prompts/live_director.md; Ian, 2026-11-19): a decision
-  # after each line or silence in conversation. Sonnet at low: 14 of 14 acceptable on held-out moments at a median
+  # The live guide's earpiece (voice/gpt_live/director.py, prompts/live_director.md; Ian, 2026-11-19): one look on
+  # a cadence (live.director), never per line. Sonnet at low: 14 of 14 acceptable on held-out moments at a median
   # 1.9 s; Haiku was 0.5 s faster but 7 of 14 (scratch director.report.md). Costs go to listener/sessions/log.jsonl.
   director: {model: claude-sonnet-5-5, max_tokens: 1500, effort: low, expected_output_tokens: 150}
 
@@ -327,33 +327,36 @@ live:
   # session starts; GPT-Live may still paraphrase). Empty: the guide greets in its own words
   # (notes.md `opened`). Example: opening: "Hey there."
   opening: ""
-  # The director (Ian, 2026-11-19, his third tester run: "a listening agent on top of the gptlive model, in order to
-  # direct it when to do things"): a Claude call (stages.director) reads the conversation after each line and on
-  # silences and decides the guide's next move; the page (live.js) delivers it as an instruction (notes.md
-  # `direct`) only in a real lull, and drops it if anyone has spoken since it was asked for or the move is done.
-  # On, it replaces the offer cue (offer_nudge is off), the hello check-in (its silence check), and the pitch nudges
-  # become late fallbacks that go only in a lull (the first is the offer cue if the guide hasn't said what it does).
-  # Two failures in a row (an error, a timeout, a cap) and the page goes back to today's timers for that
-  # conversation, in a lull only (by then they are overdue). enabled: false gives today's code path exactly.
+  # The earpiece (Ian, 2026-11-19, his third tester run: "a listening agent on top of the gptlive model, in order to
+  # direct it when to do things"; then "it can constantly evaluate the conversation and provide updated notes ...
+  # with a plan that the earpiece agent can use to check off items or even modify the plan"). A Claude call
+  # (stages.director) looks at the conversation in the background, keeps a plan (open, done, dropped items) in its
+  # transcript rows, and whispers the guide a note only when its advice changes; the page (live.js) sends a whisper
+  # at once as an instruction (notes.md `direct`, `direct_now`, `direct_start`). Built per line and delivered only in
+  # lulls, it had decided "wait" 12 times of 12 live and sent nothing, so there is no lull hold, no drop because
+  # someone spoke (a "now" note excepted) and no maximum age. On, the offer clock is off and the pitch nudges are late
+  # fallbacks, lull only, their gap counted from the last whisper (the first is the offer cue if nothing was
+  # explained: the replay never whispered an offer); the hello check-in is the page's own clock. Two failures in a
+  # row (an error, a timeout, a cap) and the page goes back to today's clocks for that conversation, in a lull only.
+  # enabled: false gives today's code path exactly.
   director:
     enabled: true
-    min_quiet_ms: 1000          # asked once nobody has spoken this long after a line (the line's own 900 ms count)
-    silence_secs: [8, 20]       # and at each of these seconds of silence after the last line (its check-in)
-    timeout_ms: 4000            # the decision's wait on the server (the page gives up 1.5 s after that)
-    max_age_ms: 12000           # a decision older than this is dropped
-    # Delivered only after nobody has spoken this long, counted from the decision's arrival too (and nobody since it
-    # was asked for): the input transcript runs seconds behind the voice (run 3's fragments came 2-3 s apart while
-    # Ian was mid-sentence), so a listener who has started again may not show yet. Was 1500, which the ask's own
-    # wait had always met already.
-    deliver_quiet_ms: 2500
-    # After the guide's own line, only once the listener has let a real pause go by: GPT-Live answers in about 0.9 s,
-    # so a decision almost always follows a guide line, and Ian pauses 4-8 s before answering. Under max_age_ms.
-    deliver_after_guide_ms: 6000
-    min_gap_secs: 15            # at most one note this often (step_back and start_chapter excepted)
-    max_calls: 150              # per conversation; then it stops asking (the timers take over)
+    every_secs: 15              # a look this often while something new has been said (one look in flight at a time)
+    every_words: 12             # and when a listener turn ends (live.page.engaged_merge_ms) with this many words,
+    every_lines: 4              # or with this many lines new since the last look
+    company_every_secs: 30      # the cadence once a chapter has started (quiet looks in company were most of the cost)
+    silence_secs: [12]          # one look per stretch at each of these seconds with nobody speaking (page audio)
+    audio:                      # who is speaking, from the page's meters as well as the transcript (it lags the voice)
+      window_ms: 600            # a sound this recent counts as speaking
+      out_rms: 0.01             # the guide's audio above this
+      min_rms: 0.02             # the mic above this, and floor_x times the room's level, while the guide is quiet
+      floor_x: 4
+    min_gap_secs: 20            # whisper to whisper (other page notes don't count; "now" notes are exempt)
+    timeout_ms: 6000            # the look's wait on the server (nothing races a lull now)
+    max_calls: 150              # per conversation; then it stops asking (the clocks take over)
     max_usd: 0.50               # per conversation, likewise (and guide.max_session_usd over everything)
-    fallback:                   # the pitch nudges while the director is up: late, and only in a lull
-      pitch_nudge_secs: [210, 270]
+    fallback:                   # the page's nudges while the earpiece is up: late, and only in a lull
+      pitch_nudge_secs: [150, 240]
   continue_minutes: 15          # a page reopened this soon after the reading stopped picks the chapter back up
   unread_ready_minutes: 120     # a chapter written but never begun (they went away while it was made) is offered this long
   page:                         # page/live.js

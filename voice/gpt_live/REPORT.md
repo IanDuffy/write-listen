@@ -14,6 +14,47 @@ in how the transcript spells them. The persona is better than at the start but d
 (graded 3-6/10): praise and long pitches persist, and going back after a question still leans on the
 page's own cues. Costs: $0.05 per connected minute; a 20-minute live chapter is about $1.10 of voice.
 
+## The earpiece (2026-11-20): a plan in the background instead of a director per line
+
+**What Ian said.** Not a turn-by-turn assistant: an earpiece that keeps evaluating the conversation and passes
+notes on what to do next or when to wrap up, "perhaps even with a plan that the earpiece agent can use to check
+off items or even modify the plan", with no delay to the conversation; the guide keeps "all the other stylistic
+instructions on how to sound and interact with the listener".
+
+**Built.** Sonnet 5.5 (effort low) looks every 15 s of talk with something new, at the end of a listener turn,
+once after the start and on a 12 s silence; one look in flight, never blocking a turn. It returns the plan
+(open/done/dropped items, renamed with the listener's own words), its read, the next step, and a whisper only
+when the advice changes (at most 25 words). The page sends a whisper by `session.instructions.append` in the
+`direct` wording ("... Work it in your own words when that moment comes, never over them. If it doesn't come,
+let it go. This replaces any earlier earpiece note."), `direct_now` / `direct_start` for the few that can't wait.
+Replayed offline on run 2, run 3, Pooja, Purnima and three persona runs (110 looks, $0.72): it now catches the
+pitch moments it had missed (The God Test at 3:57, the peregrine at 4:47, offering Purnima a surprise at 2:11)
+and stays silent through the stories. Review: four lenses, 17 findings confirmed, all fixed with tests (audio
+meters as well as the transcript for who is speaking; nothing left over after a rest; no whisper during a tool
+call; a quiet whisper no longer rests the page).
+
+**Live probes** (a scripted TTS listener, a whisper injected in the `direct` wording; `persona --probe`):
+
+| Probe | Whisper | What the guide did |
+| --- | --- | --- |
+| A, mid-story | pitch the peregrine comeback, at 0:31 between fragments | backchannels only in the gaps, no pitch before the probe closed at 1:00 (too short to tell holding from dropping) |
+| B, after its own question | offer, at 0:18 | asked another question, then at its 2nd turn (21 s) explained and pitched in one turn |
+| C, listener keeps going | offer when the story winds down | reacted twice, then offered at the wind-down (33 s), after they finished |
+| D, supersede | octopus pitch, then "drop that: the lighthouses" | octopus never pitched or mentioned again; lighthouse keepers pitched at its 3rd turn (40 s) |
+
+No note was ever spoken aloud ("earpiece" or "producer": 0 hits in every transcript).
+
+**Natural runs** (`persona --director`, evening as Ian and reserved as Priya, 3 minutes each): 22 looks, 0
+whispers. Evening: the plan tracked the guide's own offer (1:43), kept "Finish saying what you do" open after
+the explanation was cut off and checked it at the full retelling; no pitch by 3:00. Reserved: the guide pitched
+the Rumours harmonies at 1:51 and started at 2:15 without ever saying what it does; the director checked that
+item off, against its rule (now: a pitch taken up with no explanation leaves it dropped). The guide still asks
+a lot of a reserved listener (6 of 8 turns) and takes "Okay, cool." or "Sure." as a yes.
+
+**Not yet known.** A whisper written by the director itself, heard live (none came); a whisper while the guide is
+mid-reply; many whispers in one session. Cost: about $0.005 a look, $0.02 a minute. Build checks now $19.11 of
+the $20 cap.
+
 ## After Ian's third tester run (2026-11-19): warmth back, and a director
 
 **What he said.** The guide was peppier but not engaging; his conversations with Pooja and Purnima had been more

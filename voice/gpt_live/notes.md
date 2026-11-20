@@ -50,17 +50,25 @@ instruction): sent as instructions, live, the guide said nothing (in conversatio
 and went on waiting for the answer; at the chapter's end it had finished reading), and the debrief followed 8 to
 12 s of silence. `handback_done` stays an instruction: it has a reading to stop, as `tapped` does. With no session
 open (resting, paused) nothing is said: the debrief starts at once.
-Ian's third tester run (2026-11-19): `offer_nudge` (only with config live.director off now: the director reads the
-conversation instead) cut into his story 50 s in and said "No more questions about their day", dropped; the pitch
+Ian's third tester run (2026-11-19): `offer_nudge` (with config live.director on, only as the first late fallback
+when nothing was explained: the earpiece reads the conversation instead) cut into his story 50 s in and said "No more questions about their day", dropped; the pitch
 nudges are 720f7d5's short lines again (with the real-interest fallback of 2026-11-16, and without "if you haven't
 told them what you do", which made it explain twice); `started_step_back` and `started_company` carry the topic
 ({topic}: start_chapter's topic as pitched), because he asked "What would it be about?" and never heard; and
 `started_step_back` ends on a real question whose answer the page waits for (it had stepped back 6 s after "unless
 there's anything else you'd like to chat about"). End demo now stops a chapter still being made ("We definately
 need to stop the run of the chapter once the post inverview starts"), so `handback_making` no longer promises it.
-`direct` and `direct_start` wrap the director's note (voice/gpt_live/director.py, config live.director) as an
-instruction, sent only in a real lull and dropped if anyone spoke since it was asked for; `direct_start` when its
-move is to start the chapter, so a clear yes starts it through start_chapter without a word about it. On a no to
+`direct`, `direct_now` and `direct_start` wrap the earpiece's whisper (voice/gpt_live/director.py, config
+live.director; Ian, 2026-11-19: "an earpiece ... with a plan") as an instruction, sent at once with the mic open.
+GPT-Live takes any instruction as a task for its very next turn (scratch earpiece/EVIDENCE.md): "now" and "say"
+made notes speak within 1 to 2 s, and heavily hedged notes went unsaid for minutes, so `direct` (kind
+when_it_fits, almost every whisper) has neither word and gives it leave to skip; the earpiece itself times the
+send. `direct_now` is for the rare must-happen note (a clear yes the guide moved past, quiet asked for and not
+given), `direct_start` for a "now" note about starting, so a clear yes starts it through start_chapter without a
+word about it. No append can be withdrawn and old notes stay active, so each whisper replaces the last, and
+`started_step_back` and `started_company` end the earpiece's last one ("Any earlier earpiece note is done.", which
+director.CLEARED reads back). director.whisper_in matches the three wrappers around {note}: keep it the only
+placeholder in them. On a no to
 `started_step_back`'s offer to chat, the guide is told to use step_back: the page reads the no too (its main path),
 and the tool is a second one if the page's patterns miss the words.
 Placeholders in single braces ({title}, {text}, {when}, {topic}) are filled by the page.
@@ -97,8 +105,8 @@ moved: [The listener moved the chapter to another place. Stop now, even mid-sent
 offer_line: Your chapter's ready: "{title}". Want to hear it now?
 ready_line_resting: Your chapter's ready whenever you are. Tap play when you'd like it.
 asking: This session carries on the same conversation. The chapter is paused and the listener is about to ask you something: listen, and answer as your rules for questions say.
-started_step_back: [Their chapter is under way: "{topic}". The opening should be ready in {when}. In a sentence or two, in your own words: say so and what it will be about, in a few words; that you'll step back for a bit while you research it, and they can speak up or tap your circle any time; and ask, lightly, whether there's anything else they'd like to chat about first. Then wait for their answer: if they'd like to chat, keep them company; if not, a few words, then use the backend tool step_back and say nothing more.]
-started_company: [Their chapter is under way: "{topic}". The opening should be ready in {when}. They've been enjoying the chat: say in a sentence what it will be about, that you'll research it in the background and you're happy to keep talking, or to step back if they'd rather have quiet. Then carry on the conversation.]
+started_step_back: [Their chapter is under way: "{topic}". The opening should be ready in {when}. In a sentence or two, in your own words: say so and what it will be about, in a few words; that you'll step back for a bit while you research it, and they can speak up or tap your circle any time; and ask, lightly, whether there's anything else they'd like to chat about first. Then wait for their answer: if they'd like to chat, keep them company; if not, a few words, then use the backend tool step_back and say nothing more. Any earlier earpiece note is done.]
+started_company: [Their chapter is under way: "{topic}". The opening should be ready in {when}. They've been enjoying the chat: say in a sentence what it will be about, that you'll research it in the background and you're happy to keep talking, or to step back if they'd rather have quiet. Then carry on the conversation. Any earlier earpiece note is done.]
 back_from_rest: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener has tapped to talk. Let them know you're here in a word or two, and listen.
 listening_again: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener may be about to speak to you. Say nothing first: listen, and answer only if they talk to you.
 ready_back: This session carries on the same conversation: you had stepped back while their chapter was made, and it's ready now. Say nothing until the app gives you the words to say.
@@ -107,5 +115,6 @@ handback_end: The chapter has ended and nothing more is to be read. Speak now, i
 handback_done: [The listener tapped End demo, so the chapter stops here. Stop reading now, even mid-sentence: never go on with the passage. Close in a sentence or two, then say you're handing them back to the person who welcomed them, and stop.]
 handback_talk: The listener tapped End demo, so the conversation ends here. Speak now, without waiting for them: close warmly in one sentence, then say you're handing them back to the person who welcomed them, and stop. Ask nothing more.
 handback_making: The listener tapped End demo, so the conversation ends here, and their chapter, still being made, stops with it. Speak now, without waiting for them: close warmly in one sentence, without promising them the chapter; then say you're handing them back to the person who welcomed them, and stop. Ask nothing more.
-direct: [{note}]
-direct_start: [{note} If they have clearly said yes, start it now: Generate <|SpawnThinking|> to call start_chapter, saying nothing about it.]
+direct: [Earpiece note from your producer, for you only: {note} Work it in your own words when that moment comes, never over them. If it doesn't come, let it go. This replaces any earlier earpiece note.]
+direct_now: [Earpiece, this one matters: {note} At your next turn, never over them. This replaces any earlier earpiece note.]
+direct_start: [Earpiece, this one matters: {note} If they have clearly said yes, start it now: Generate <|SpawnThinking|> to call start_chapter, saying nothing about it. This replaces any earlier earpiece note.]

@@ -1,29 +1,43 @@
-# The director's moment: the user message for each decision (voice/gpt_live/director.py `moment`)
+# The earpiece's look: the user message for each look (voice/gpt_live/director.py `moment`)
 
-Inputs: {{phase}} (a first conversation with no chapter yet, or the chapter being made), {{seconds}} into the
-conversation (page/live.js), {{explained}} (the guide has said what it does: the page's or the transcript's
-"audio chapter"), {{started}} (start_chapter returned a chapter), {{turns}} (the listener's turns, fragments heard
-within a moment of each other merged), {{silence_secs}} and {{last_who}} (the silence right now and whose line
-came last), {{profile}} (what is known about the listener: guide.Session.values identity and profile) and
-{{transcript}} (this conversation, with the app's notes to the guide marked "app note"). Ian, 2026-11-19: see
-prompts/live_director.md. {{explained}} is also yes for a returning listener, who already knows (their guide has
-offer_known.md, never says "audio chapters", and must never offer to explain again; the review of 2026-11-19).
+Inputs: {{elapsed}} (m:ss into the conversation), {{trigger}} (why the page asks, in plain words: the regular
+look with something new, a listener turn just ended, the guide just called start_chapter, a silence of N
+seconds), {{speaking}} (from the page's input and output audio: "the listener is speaking", "the guide is
+speaking" or "nobody is speaking"; a line reaches the transcript only when it ends), {{last_who}} and
+{{silence_secs}} (whose line ended last, "listener" or "guide", and how many seconds ago), {{explained}} (yes once
+a guide line said "audio chapter", which a cut-off line also does; yes too for a returning listener),
+{{started}} (yes once start_chapter returned a chapter), {{profile}} (guide.Session.values identity and profile),
+{{plan}} (its plan from its last look, one numbered line per item with its state, or a first-look line),
+{{last_read}} (its read from its last look), {{notes}} (its whispers so far with times and kinds, and the app's
+clear at the start) and {{transcript}} (guide, listener, app notes and tools, timestamped m:ss). Every one must
+be supplied. Ian, 2026-11-19, and the blind judge of the v3 replay: see prompts/live_director.md.
 ---
 <state>
-Phase: {{phase}}.
-Seconds into the conversation: {{seconds}}.
-The guide has said what it does: {{explained}}. (Yes too for a returning listener, who already knows.)
+Elapsed: {{elapsed}}. You are looking because: {{trigger}}.
+Right now: {{speaking}}. The last line that ended was the {{last_who}}'s, {{silence_secs}} seconds ago.
+A guide line has said what it does: {{explained}}. (Yes too for a returning listener, who already knows. Check
+the transcript that the explanation was said whole, not cut off.)
 A chapter is under way: {{started}}.
-Listener turns so far: {{turns}}.
-Right now: nobody is speaking; {{silence_secs}} seconds since the {{last_who}}'s last line.
 </state>
 
 <profile>
 {{profile}}
 </profile>
 
+<your_plan>
+{{plan}}
+</your_plan>
+
+<your_last_read>
+{{last_read}}
+</your_last_read>
+
+<your_whispers_so_far>
+{{notes}}
+</your_whispers_so_far>
+
 <transcript>
 {{transcript}}
 </transcript>
 
-Decide the guide's next move.
+Update your plan, then decide whether to whisper.

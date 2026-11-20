@@ -502,3 +502,296 @@ def test_pace_says_when_it_explained_pitched_and_how_much_it_asked():
     assert P.pace(t) == {"explained": 31.0, "pitched": 95.0, "started": 101.0, "turns": 5, "questions": 3}
     assert "said what it does at 0:31, pitched at 1:35, started at 1:41; 3 of its 5 turns" in P.summary("ian", t, None)
     assert P.pace({"timeline": tl[:2]})["explained"] is None and P.pace({"timeline": tl[:2]})["pitched"] is None
+
+
+# --- the earpiece, mirrored in the persona check (live.director; Ian, 2026-11-19) -------------------------------
+
+def looks(*answers, delay=0.0):
+    """A director_fn answering each look with the next of `answers` (then no whisper); the users it was given."""
+    users, it = [], iter(answers)
+
+    def fn(user):
+        users.append(user)
+        if delay:
+            import time
+            time.sleep(delay)
+        return next(it, {"read": "", "plan": [], "next": None, "changed": False, "kind": None, "about": None,
+                         "note": None})
+    return fn, users
+
+
+def look(note, *, kind="when_it_fits", about="pitch", plan=None, read="r"):
+    return {"read": read, "plan": plan or [{"item": "Meet them a little", "state": "open"}], "next": None,
+            "changed": True, "kind": kind, "about": about, "note": note}
+
+
+def earpiece_cfg(cfg, **over):
+    cfg["live"]["director"] = {**cfg["live"]["director"], "enabled": True, "every_lines": 1, "every_words": 1,
+                               "every_secs": 1000, "company_every_secs": 1000, "silence_secs": [], "min_gap_secs": 0,
+                               **over}
+    cfg["live"]["page"]["engaged_merge_ms"] = 100
+    return cfg
+
+
+def test_the_earpiece_looks_after_a_listener_turn_keeps_its_plan_and_whispers_at_once(cfg, monkeypatch, tmp_path):
+    """`persona --director`: one background task on the page's triggers (here turn_end, after each listener turn),
+    its plan given back on the next look, a whisper sent at once as notes.md `direct`, the offer cue off, and each
+    whisper recorded with the guide's next turn."""
+    earpiece_cfg(cfg)
+    cfg["live"]["page"]["offer_nudge"] = {"after_secs": 0, "max_secs": 0, "offered": "\\bwhat i do\\b"}
+    monkeypatch.setattr(P, "TICK_SECS", 0.05)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 3)
+    ws = scripted_guide(["Hey, Dan! I'm Ailsa.", "Ooh, cabinets. Plywood or the real thing?", "Ha. Brave.", "Mm."])
+    use_ws(monkeypatch, ws)
+    plan = [{"item": "Meet them a little", "state": "done"}, {"item": "Find what lights them up", "state": "open"}]
+    fn, users = looks(look("His cabinets are the thread: guess what he's building them for.", about="interest",
+                           plan=plan, read="Cabinets, warm."))
+
+    def reply(timeline, moment, said=iter(["I build cabinets for a living, mostly kitchens these days.",
+                                           "Plywood, mostly, honestly."])):
+        import time
+        time.sleep(0.3)
+        return next(said)
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=2, reply_fn=reply, sim_kwargs=FAST, handoff="Dan",
+                        director=True, director_fn=fn))
+    notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+    want = live.notes()["direct"].replace("{note}", "His cabinets are the thread: guess what he's building them for.")
+    assert notes.count(want) == 1 and live.notes()["offer_nudge"] not in notes
+    first = t["director"][0]
+    assert first["trigger"] == "turn_end" and first["delivered"] and first["template"] == "direct"
+    assert first["sent_t"] is not None and first["next_turn"] and first["next_turn_t"] >= first["sent_t"]
+    assert "guide: Hey, Dan! I'm Ailsa." in users[0] and "start from the default plan" in users[0]
+    assert len(users) >= 2 and "1. [done] Meet them a little" in users[1] and "Cabinets, warm." in users[1]
+    assert "(when_it_fits) His cabinets are the thread" in users[1]  # its whisper, listed apart
+    assert "earpiece: " in P.summary("builder", t, None)
+
+
+def test_the_verdict_is_the_pages():
+    """live.js directorVerdict, mirrored: whispers go at once (even while the listener speaks), only the gap from
+    the last whisper holds one back; "now" notes are exempt from it but dropped once the listener has spoken since
+    the look was asked for, and held while they are mid-line; stale kinds go after the start."""
+    base = dict(here=True, started=False, explained=False, offered=False, spoke_since_ask=False,
+                listener_speaking=False, now=100.0, sent_at=None, min_gap=20)
+    w = look("Pitch the peregrine.")
+    assert P.verdict(w, **{**base, "listener_speaking": True, "spoke_since_ask": True}) == "send"
+    assert P.verdict(w, **{**base, "sent_at": 90.0}) == "drop" and P.verdict(w, **{**base, "sent_at": 79.0}) == "send"
+    now = look("They said yes: start it.", kind="now", about="start")
+    assert P.verdict(now, **{**base, "sent_at": 95.0}) == "send"
+    assert P.verdict(now, **{**base, "spoke_since_ask": True}) == "drop"
+    assert P.verdict(now, **{**base, "listener_speaking": True}) == "hold"
+    for about in ("offer", "pitch", "interest", "start"):
+        assert P.verdict(look("x.", about=about), **{**base, "started": True}) == "drop"
+    assert P.verdict(look("Answer their question.", about="unanswered"), **{**base, "started": True}) == "send"
+    assert P.verdict(look("Offer it.", about="offer"), **{**base, "explained": True}) == "drop"
+    assert P.verdict(look("Offer it.", about="offer"), **{**base, "offered": True}) == "drop"
+    assert P.verdict({**w, "changed": False}, **base) == "drop" and P.verdict(w, **{**base, "here": False}) == "drop"
+    N = live.notes()
+    assert P.whisper_note(N, now) == ("direct_start", N["direct_start"].replace("{note}", now["note"]))
+    assert P.whisper_note(N, look("Quiet, as asked.", kind="now", about="quiet"))[0] == "direct_now"
+    assert P.whisper_note(N, w)[0] == "direct"
+
+
+def test_a_second_whisper_within_the_gap_is_dropped_in_the_conversation(cfg, monkeypatch, tmp_path):
+    earpiece_cfg(cfg, min_gap_secs=60)
+    monkeypatch.setattr(P, "TICK_SECS", 0.05)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 3)
+    ws = scripted_guide(["Hey, Dan!", "Ooh, cabinets.", "Ha. Brave.", "Mm."])
+    use_ws(monkeypatch, ws)
+    fn, _ = looks(look("Guess what the cabinets are for.", about="interest"),
+                  look("Pitch the cabinets, a chapter on plywood's history.", about="pitch"))
+
+    def reply(timeline, moment, said=iter(["I build cabinets.", "Plywood, mostly."])):
+        import time
+        time.sleep(0.3)
+        return next(said)
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=2, reply_fn=reply, sim_kwargs=FAST, handoff="Dan",
+                        director=True, director_fn=fn))
+    got = [(x["about"], x.get("delivered")) for x in t["director"] if x.get("note")]
+    assert got[:2] == [("interest", True), ("pitch", False)]
+
+
+def test_a_look_in_flight_is_awaited_and_its_cost_logged_when_the_conversation_ends(cfg, monkeypatch, tmp_path):
+    """Default path (no director_fn): director.decide, its cost logged to build_costs.jsonl. A look still running
+    when the conversation ends is waited for, so its cost is never lost; it is not delivered."""
+    earpiece_cfg(cfg)
+    monkeypatch.setattr(P, "TICK_SECS", 0.05)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 2)
+    ws = scripted_guide(["Hey, Dan!", "Ooh, cabinets."])
+    use_ws(monkeypatch, ws)
+    import time as _t
+
+    def slow(cfg_, log_run, user, log_extra=None):
+        _t.sleep(1.5)
+        return {**look("Pitch the cabinets."), "ms": 1500, "cost_usd": 0.004}
+    monkeypatch.setattr(P.live_director, "decide", slow)
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=1, reply_fn=lambda tl, m: "I build cabinets.",
+                        sim_kwargs=FAST, handoff="Dan", director=True))
+    assert t["director"] and t["director"][0]["ms"] == 1500 and not t["director"][0].get("delivered")
+    costs = [json.loads(l) for l in S.COSTS.read_text().splitlines()]
+    assert [c["usd"] for c in costs if c["what"] == "claude director"] == [0.004]
+    assert not [m for m in ws.sent if m["type"] == "session.instructions.append"]
+
+
+def test_two_failed_looks_take_the_earpiece_down(cfg, monkeypatch, tmp_path):
+    earpiece_cfg(cfg)
+    monkeypatch.setattr(P, "TICK_SECS", 0.05)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 3)
+    ws = scripted_guide(["Hey, Dan!", "Ooh, cabinets.", "Ha.", "Mm.", "Right."])
+    use_ws(monkeypatch, ws)
+    fn, users = looks({"error": "timeout"}, {"error": "timeout"}, look("Pitch it."))
+
+    def reply(timeline, moment, said=iter(["I build cabinets.", "Plywood.", "Yep."])):
+        import time
+        time.sleep(0.3)
+        return next(said)
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=3, reply_fn=reply, sim_kwargs=FAST, handoff="Dan",
+                        director=True, director_fn=fn))
+    assert len(users) == 2 and [x["error"] for x in t["director"]] == ["timeout", "timeout"]
+
+
+# --- earpiece probes (persona --probe) ---------------------------------------------------------------------
+
+def test_a_probe_injects_its_whisper_at_its_step_and_records_the_guides_next_turn(cfg, monkeypatch, tmp_path):
+    """No Claude at all (llm.call is refused here): a scripted listener and an injected whisper; the result has
+    the whisper's next guide turn, the turn that took it up and the turns before each mark."""
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 2)
+    monkeypatch.setitem(P.PROBES, "T", {"what": "test", "steps": [
+        ("guide",), ("say", "Hi, I saw a falcon."),
+        ("whisper", "when_it_fits", "pitch", "When the falcon story is over, pitch a chapter on falcons.", r"chapter"),
+        ("guide",), ("mark", "end"), ("say", "Yeah."), ("guide",)]})
+    ws = scripted_guide(["Hey, Sam!", "Ooh, a falcon!", "Want a chapter on how falcons came back?"])
+    use_ws(monkeypatch, ws)
+    r = arun(P.probe(cfg, "T", tmp_path / "out", sim_kwargs=FAST))
+    notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+    assert notes == [live.notes()["direct"].replace("{note}", "When the falcon story is over, pitch a chapter on falcons.")]
+    w = r["whispers"][0]
+    assert w["next_turn"] == "Ooh, a falcon!" and w["took_up"]["turn"] == 2 and "came back" in w["took_up"]["text"]
+    assert w["turns_before"] == {"end": 1} and w["took_up_before"] == {"end": False}
+    assert (tmp_path / "out" / "probe-T.json").exists() and "taken up at turn 2" in P.probe_summary("T", r)
+    spoken = [m["content"] for m in ws.sent if m["type"] == "session.commentary.append"]
+    assert spoken == [live.notes()["handoff"].replace("{name}", "Sam")]
+
+
+def test_the_probes_are_scripted_short_and_their_whispers_avoid_now_and_say():
+    import re as _re
+    assert set(P.PROBES) == {"A", "B", "C", "D"}
+    for name, spec in P.PROBES.items():
+        ws_ = [s for s in spec["steps"] if s[0] == "whisper"]
+        assert ws_ and all(not _re.search(r"\b(now|say)\b", s[3], _re.I) and len(s[3].split()) <= 25 for s in ws_)
+    assert len([s for s in P.PROBES["D"]["steps"] if s[0] == "whisper"]) == 2
+    assert [s[1] for s in P.PROBES["A"]["steps"] if s[0] == "gap"] == [1.5, 1.5]
+
+
+# --- review of the earpiece (2026-11-20): the persona mirror keeps to the page ---------------------------------
+
+class EarSim:
+    """Just what the Earpiece reads of a Sim: the timeline, the guide's turns, tool calls, who is audible, the clock."""
+
+    def __init__(self, timeline=(), turns=(), t=0.0, speaking=False):
+        self.timeline, self.turns, self.calls, self.t = list(timeline), list(turns), [], t
+        self.speech, self.speaking, self.audio_last, self.notes = b"", speaking, 0.0, []
+        self.closed = type("Closed", (), {"is_set": lambda self: False})()
+
+    def now(self):
+        return self.t
+
+    async def note(self, kind, text):
+        self.notes.append((kind, text))
+
+
+def ear(cfg, sim, fn=None):
+    return P.Earpiece(cfg, sim, profile="(new)", notes=live.notes(), decide_fn=fn or looks()[0])
+
+
+def test_the_persona_counts_a_turn_as_the_page_does(cfg):
+    """live.js countLine merges a line into the turn only if it began within engaged_merge_ms of the last one's end;
+    the persona summed every line since the guide's, so three 5-word fragments 2.5 s apart made a 15-word turn_end
+    the page never makes."""
+    cfg["live"]["director"] = {**cfg["live"]["director"], "every_words": 12, "every_lines": 4, "silence_secs": []}
+    cfg["live"]["page"]["engaged_merge_ms"] = 1500
+    frag = "so I saw this bird"
+
+    def timeline(gap):
+        out, t = [{"t": 0.0, "who": "guide", "text": "Hi there!"}], 1.0
+        for _ in range(3):
+            out.append({"t": t, "end": t + 1.0, "who": "listener", "text": frag + " today"})
+            t += 1.0 + gap
+        return out
+    apart = EarSim(timeline(2.5), t=20.0)
+    e = ear(cfg, apart)
+    e.seen = len(e.talk())  # no new lines: only the turn's words could fire it
+    e.asked_at = 20.0
+    assert e.trigger(20.0) is None
+    close = EarSim(timeline(0.5), t=20.0)
+    e = ear(cfg, close)
+    e.seen, e.asked_at = len(e.talk()), 20.0
+    assert e.trigger(20.0) == "turn_end"
+
+
+def test_the_persona_drops_an_offer_whisper_when_the_guide_just_offered(cfg):
+    """live.js counts the guide's own "Want to hear what I do?" (offer_nudge.offered) as offered; the persona only
+    counted its own whispers."""
+    cfg["live"]["page"]["offer_nudge"] = {"after_secs": 0, "max_secs": 0, "offered": "\\bwhat i do\\b"}
+    sim = EarSim([{"t": 0.0, "who": "guide", "text": "Hey! Want to hear what I do?"}],
+                 turns=[{"t": 0.0, "end": 1.0, "text": "Hey! Want to hear what I do?"}], t=5.0)
+    e = ear(cfg, sim)
+    rec = {"t": 4.0}
+    arun(e.deliver(look("Offer what you do, bridged from the hello.", about="offer"), rec))
+    assert rec["delivered"] is False and not sim.notes
+
+
+def test_a_plain_no_to_the_offer_to_chat_ends_the_persona_earpiece_and_its_started_look(cfg):
+    """The page rests on a plain no after started_step_back and forgets the started look (dirForget); the persona
+    used to ask it as soon as the listener answered, no or yes."""
+    sim = EarSim([{"t": 0.0, "who": "guide", "text": "Hi!"}], t=10.0)
+    e = ear(cfg, sim)
+    e.on_started(step_back=True)
+    assert not e.here()
+    sim.timeline.append({"t": 11.0, "end": 12.0, "who": "listener", "text": "No thanks, go ahead."})
+    assert not e.here() and e.event is None and e.trigger(15.0) != "started"
+    sim2 = EarSim([{"t": 0.0, "who": "guide", "text": "Hi!"}], t=10.0)
+    e2 = ear(cfg, sim2)
+    e2.on_started(step_back=True)
+    sim2.timeline.append({"t": 11.0, "end": 12.0, "who": "listener", "text": "Sure, let's chat a bit."})
+    assert e2.here() and e2.trigger(15.0) == "started"
+    assert P.declines_chat("Um, no, go ahead.") and not P.declines_chat("No wait, tell me about falcons?")
+
+
+def test_the_persona_says_how_long_ago_the_last_line_ended_while_the_guide_talks(cfg):
+    """silence_secs is the time since the last line ended, as on the page; it was 0 whenever anyone spoke."""
+    sim = EarSim([{"t": 0.0, "who": "guide", "text": "Hi!"},
+                  {"t": 2.0, "end": 5.0, "who": "listener", "text": "I made salmon tonight."}],
+                 turns=[{"t": 0.0, "end": 1.0, "text": "Hi!"}], t=20.0, speaking=True)
+    users = []
+    e = ear(cfg, sim, fn=lambda user: users.append(user) or {**looks()[0](user)})
+
+    async def go():
+        e.ask("cadence", 20.0)
+        await e.inflight
+    arun(go())
+    assert "the guide is speaking" in users[0] and "the listener's, 15 seconds ago" in users[0]
+
+
+def test_with_the_persona_earpiece_down_the_pages_clocks_come_back_in_a_lull(cfg, monkeypatch, tmp_path):
+    """live.js: two failures and the offer clock and the plain pitch nudges come back, lull only (fb); the persona
+    kept the earpiece's clocks (no offer clock) for the whole run."""
+    earpiece_cfg(cfg)
+    cfg["live"]["page"]["offer_nudge"] = {"after_secs": 0, "max_secs": 0, "offered": "\\bwhat i do\\b"}
+    monkeypatch.setattr(P, "TICK_SECS", 0.05)
+    monkeypatch.setattr(P, "GUIDE_WAIT_SECS", 2)
+    ws = scripted_guide(["Hey, Dan!", "Ooh, cabinets.", "Ha."])  # then it says nothing: a lull
+    use_ws(monkeypatch, ws)
+    fn, users = looks({"error": "timeout"}, {"error": "timeout"})
+
+    def reply(timeline, moment, said=iter(["I build cabinets.", "Plywood.", "Yep.", "Hello?"])):
+        import time
+        time.sleep(0.3)
+        return next(said)
+    t = arun(P.converse(cfg, DAN, tmp_path / "out", max_turns=4, reply_fn=reply, sim_kwargs=FAST, handoff="Dan",
+                        director=True, director_fn=fn))
+    assert [x["error"] for x in t["director"]] == ["timeout", "timeout"]
+    notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+    assert notes.count(live.notes()["offer_nudge"]) == 1
+    order = [(x["who"], x.get("text")) for x in t["timeline"] if x["who"] in ("listener", "app")]
+    assert order.index(("listener", "Yep.")) < order.index(("app", live.notes()["offer_nudge"])) \
+        < order.index(("listener", "Hello?"))  # not while the guide answered every line: in the lull after "Ha."

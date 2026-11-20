@@ -13,9 +13,10 @@
     POST /api/live/tool       {"session", "name", "args"}: a tool the backend called, run in the conversation
     POST /api/live/line       {"session", "who", "text", ...}: a line for the transcript
     POST /api/live/usage      {"session", "live_id", "seconds", "backend"}: a session's cost, when it ends
-    POST /api/live/direct     {"session", "id", "trigger", "silence_ms", "last_who", "recent", "page"}: the director's
-                              decision on the guide's next move (voice/gpt_live/director.py; Ian, 2026-11-19):
-                              {"id", "move", "note", "why", "ms", "cost_usd"}, "wait" with an "error" on any failure
+    POST /api/live/direct     {"session", "id", "trigger", "speaking", "silence_ms", "last_who", "recent", "page"}:
+                              one look by the earpiece (voice/gpt_live/director.py; Ian, 2026-11-19): {"id", "read",
+                              "plan", "next", "changed", "kind", "about", "note", "ms", "cost_usd"}; on any failure
+                              no whisper (changed false, note and kind null) and an "error"
     GET  /api/live/chapter/{run}            the chapter as paragraphs (voice/gpt_live/chapter.py)
     GET  /api/live/card/{run}               the chapter card (faststart/card.py), with the outline's title once
                                             there is one; 404 until it is written
@@ -83,10 +84,11 @@ class Line(BaseModel):
 
 class Direct(BaseModel):
     session: str
-    id: int = 0                   # the page's request number (it echoes back; a newer request aborts an older one)
-    trigger: str = "line"         # line (a line ended and a lull followed) or silence (live.director.silence_secs)
-    silence_ms: float = 0
-    last_who: str = ""            # whose line came last: guide or listener
+    id: int = 0                   # the page's look number (it echoes back; one look in flight at a time)
+    trigger: str = "cadence"      # cadence, turn_end, silence or started (live.director; director.TRIGGERS)
+    speaking: str = "none"        # who is speaking right now, from the page's audio: listener, guide or none
+    silence_ms: float = 0         # since the last line ended
+    last_who: str | None = None   # whose line ended last: guide or listener
     recent: list[dict] = []       # the page's last few lines ({who, text}): any the transcript lacks yet are added
     page: dict = {}               # {seconds, explained, started, turns}: what the page knows of the conversation
 
@@ -140,7 +142,7 @@ LINE_WHO = ("listener", "guide", "page", "event")
 def page_settings(cfg: dict) -> dict:
     return {**cfg["live"]["page"], "notes": live_session.notes(), "restart_bands_secs": cfg["live"]["restart_bands_secs"],
             "opening": str(cfg["live"].get("opening") or "").strip(),
-            "director": live_director.settings(cfg),  # the director's page side (live.director): off, today's cues
+            "director": live_director.settings(cfg),  # the earpiece's page side (live.director): off, today's cues
             # the local listener's settings (page/wake.js): voice.wake, with live.page.wake over them
             "wake": {**((cfg.get("voice") or {}).get("wake") or {}), **(cfg["live"]["page"].get("wake") or {})}}
 
@@ -382,7 +384,7 @@ def mount(app, cfg: dict, pipe, chat) -> None:
 
     @app.post("/api/live/direct")
     def direct(req: Direct) -> dict:
-        """The director's decision (voice/gpt_live/director.py). The conversation lock is held only to read and
+        """One look by the earpiece (voice/gpt_live/director.py). The conversation lock is held only to read and
         write the transcript, never for the model call (about 2 s), so the page's line posts go on meanwhile."""
         with chat.lock:
             session = chat.current(req.session)

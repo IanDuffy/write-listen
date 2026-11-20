@@ -596,18 +596,41 @@ Deploy: `DEPLOY.md`, `deploy/`.
 - **After Ian's third tester run (2026-11-19)** (records: `listeners/t-ian-run-3/`; built, reviewed, and checked
   with small live runs: four persona conversations, two debriefs, one intro; results in `voice/gpt_live/REPORT.md`
   and PROGRESS.md; not yet tried by Ian):
-  - **The director** (`voice/gpt_live/director.py`, `POST /api/live/direct`, `prompts/live_director.md` and
-    `live_director_moment.md`; config `live.director`, on, and `stages.director`: Sonnet 5.5, effort low, cost
-    logged per conversation as stage "director" and counted in `guide.max_session_usd`; its transcript rows use
-    `note`, never read by `earlier_text`, memory or `explained()`). The page (`live.js` `directorTick`/`Ask`/
-    `Verdict`/`Deliver`) asks after each line and on silences, in talk before the chapter and in company; delivers
-    only in a real lull (`deliver_quiet_ms` from the decision's arrival too; `deliver_after_guide_ms` after the
-    guide's own line), drops a move if anyone spoke since it was asked for, within `min_gap_secs` of any page note,
-    or already done; one check-in, only before the listener's first word. While it is up `offer_nudge` and
-    `hello_silence` are off and the pitch nudges are late fallbacks (`live.director.fallback`; the first is the offer
-    cue if nothing was explained), lull only. Two failures in a row: today's clocks, lull only. A returning
-    listener counts as told. `python -m voice.gpt_live persona --director/--no-director` mirrors it. Notes
-    `direct`/`direct_start`. Page tests turn it off (`tests/conftest.py`, `test_live_page`'s `site`).
+  - **The earpiece** (was the director; rebuilt 2026-11-19 after its per-line, lull-gated form decided `wait` 12
+    times of 12 live. Ian: "an earpiece ... with a plan that the earpiece agent can use to check off items or even
+    modify the plan", and the guide keeps "all the other stylistic instructions"). `voice/gpt_live/director.py`,
+    `POST /api/live/direct`, `prompts/live_director.md` and `live_director_moment.md`; config `live.director`, on,
+    and `stages.director` (Sonnet 5.5, effort low; cost logged per conversation as stage "director" and counted in
+    `guide.max_session_usd`). Each look returns `{read, plan: [{item, state: open|done|dropped}], next, changed,
+    kind: when_it_fits|now, about, note}`; the plan and read live in its transcript rows (`note`, never `text`: not
+    read by `earlier_text`, memory or `explained()`) and come back on the next look, with its whispers so far
+    (the app notes the page delivered, `director.whisper_in`). A whisper is a note with `changed`, at most 25
+    words (code cuts at a sentence end or drops it). The page asks on a cadence (`every_secs` 15 with a new line,
+    `company_every_secs` 30 once started; `turn_end` after a listener turn of `every_words` words or `every_lines`
+    new lines; `started` once after the started note; one `silence` per stretch of `silence_secs`), one look in
+    flight, never while reading, in an aside, a check-in, resting, muted, around handover/handback or in the
+    step-back reply wait; it sends a whisper at once by `session.instructions.append` (notes `direct`,
+    `direct_now`, `direct_start`; no "now" or "say" in `direct`, which also gives leave to skip), dropping only
+    stale kinds after the start, an offer once explained, a `now` note the listener has spoken since (held while
+    they are mid-line), and a whisper within `min_gap_secs` (20) of the last whisper. The started notes end the
+    last whisper ("Any earlier earpiece note is done."). The guide has one clause about it (`10_talk.md`). While it
+    is up the offer clock is off, the hello check-in is the page's own clock, and the pitch nudges are late
+    fallbacks (`live.director.fallback.pitch_nudge_secs` [150, 240]; the first is the offer cue if nothing was
+    explained), lull only, gap from the last whisper. Two failures in a row: today's clocks, lull only. A
+    returning listener counts as told. `python -m voice.gpt_live persona --director` mirrors it (`persona.Earpiece`,
+    `persona.verdict`); `persona --probe A,B,C,D` runs scripted probes with an injected whisper and no Claude (mid-
+    story, after the guide's question, skippable, supersede). Page tests turn it off (`tests/conftest.py`,
+    `test_live_page`'s `site`). A pitch taken up with no explanation leaves "say what you do" dropped, not done.
+    Live (2026-11-20, $0.77; `voice/gpt_live/REPORT.md`): injected `direct` whispers were never spoken aloud, and the
+    guide used them at a fitting moment two or three turns later (21-40 s), never over the listener; a replacing
+    whisper won. Two natural persona runs: 22 looks, 0 whispers (the guide was moving on its own), so the
+    director's own whisper has not been heard live yet; nor has Ian heard any of it.
+    Review (2026-11-20): `speaking`, the turn end and the silence read the page's meters as well as the transcript
+    (it lags the voice; `live.director.audio`); `silence_ms` is since the last line ended; not asked while a tool
+    call is in flight; a rest or a session coming back forgets a pending started look, trigger, look or whisper
+    (`dirForget`); a quiet whisper no longer rests the page (the guide's parting words or `step_back` do); the
+    default plan says what it does before finding the spark; the persona mirrors the page's turn count, the
+    guide's own offer line, a plain no to chat and the clocks coming back when the earpiece is down.
   - **The guide's warmth** is 720f7d5's again (Pooja's and Purnima's conversations): conversation not interview,
     "Mix your moves", about a third of turns a question, the pause left to them, a few exchanges about them before
     the offer, stay on what lights them up, then pitch. The pace (what it does by about a minute, the pitch within
@@ -624,10 +647,8 @@ Deploy: `DEPLOY.md`, `deploy/`.
     debrief's account says so, `did_stopped`). Missing interviewer recordings are fetched at server start
     (`interviewer.fetch_pending`). The farewell to Ian himself is `farewell_ian` ("That really helps."), not
     "Thank you, Ian. That really helps Ian."
-  - **What the live checks can't show yet:** `persona --director` asks the director only after guide lines (the page
-    also asks after listener lines) and delivers without the page's lull, so in four conversations all 12
-    decisions were `wait` and the on/off difference came from the clocks being off. The director's moves are
-    first heard on the real page.
+  - **What the live checks showed:** the per-line director's `persona --director` asked only after guide lines, so
+    in four conversations all 12 decisions were `wait`. That led to the earpiece above.
 
 ## Local setup
 

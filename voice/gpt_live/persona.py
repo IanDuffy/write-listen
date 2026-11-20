@@ -13,6 +13,11 @@ questions mid-chapter.
   page feeds them (commentary, mic muted), the listener taps (unmute, the "tapped" note, the silent
   context) and speaks the scenario's lines; code checks when resume_chapter came, and
   prompts/live_grade_aside.md grades the rest.
+- `Earpiece`: the page's earpiece (live.director) mirrored in `converse` with `director=True`: a background task
+  on the page's triggers, the same verdict (`verdict`), whispers sent at once as instructions.
+- `probe`: an earpiece probe (PROBES: A mid-story, B after the guide's question, C skippable, D supersede): a
+  scripted listener and an injected whisper, no Claude at all; it records when the guide's next turn came and
+  whether a turn took the note up.
 
 Every paid call is logged to build_costs.jsonl and checked against live.build_cap_usd (sim.py).
 """
@@ -214,6 +219,262 @@ def explained_at(timeline: list[dict]) -> float | None:
     return next((x["t"] for x in timeline if x["who"] == "guide" and live.EXPLAINED.search(x.get("text") or "")), None)
 
 
+TICK_SECS = 0.5  # the earpiece's clock in the persona check
+STALE_AFTER_START = ("offer", "pitch", "interest", "start")
+
+
+def verdict(got: dict, *, here: bool, started: bool, explained: bool, offered: bool, spoke_since_ask: bool,
+            listener_speaking: bool, now: float, sent_at: float | None, min_gap: float) -> str:
+    """The page's verdict on a look (live.js directorVerdict), mirrored: "send", "hold" or "drop". Only a whisper
+    (a note with changed) is sent; stale kinds go once a chapter has started, an offer once the guide has said
+    what it does or was whispered it; a "now" note goes unless the listener has spoken since the look was asked
+    for (held while they are mid-line); any other whisper goes at once unless it is within min_gap seconds of
+    the last whisper (other page notes don't count). No lull hold, no maximum age."""
+    if not (got.get("changed") and got.get("note")) or not here:
+        return "drop"
+    about = got.get("about")
+    if started and about in STALE_AFTER_START:
+        return "drop"
+    if about == "offer" and (explained or offered):
+        return "drop"
+    if got.get("kind") == "now":
+        if spoke_since_ask:
+            return "drop"
+        return "hold" if listener_speaking else "send"
+    if sent_at is not None and now - sent_at < min_gap:
+        return "drop"
+    return "send"
+
+
+def whisper_note(notes: dict, got: dict) -> tuple[str, str]:
+    """(template key, the instruction) for a whisper: notes.md direct_start, direct_now or direct."""
+    key = ("direct_start" if got.get("about") == "start" else "direct_now") if got.get("kind") == "now" else "direct"
+    return key, notes[key].replace("{note}", got["note"])
+
+
+def _words(text: str) -> int:
+    return len([w for w in TAG.sub(" ", text or "").split() if re.search(r"[A-Za-z0-9]", w)])
+
+
+# The page's reading of an answer to started_step_back's offer to chat (live.js declinesChat; keep in step).
+NO_CHAT = re.compile(r"^\W*(?:(?:no|nope|nah|not really|not right now|nothing(?: else)?|maybe later|i'?m (?:good|fine|all set)"
+                     r"|all good|that'?s (?:all|fine|it)|go ahead|go for it|thanks|thank you|ok(?:ay)?|sounds good|perfect"
+                     r"|great)\b\W*)+$", re.I)
+NO_LEAD = re.compile(r"^\W*((um+|uh+|er+|hmm+|mm+|ah+|oh|well|so|yeah|yep|sure)\b\W*)+", re.I)
+NO_ANY = re.compile(r"\b(go ahead|go for it|i'?m (good|fine|all set)|all good|not (right )?now|maybe later)\b", re.I)
+YES_CHAT = re.compile(r"\b(tell me|let'?s|chat|talk)\b", re.I)
+
+
+def declines_chat(said: str) -> bool:
+    """live.js declinesChat: a plain no to the offer to chat (the page then rests)."""
+    if "?" in said or _words(said) > 6:
+        return False
+    core = NO_LEAD.sub("", said).strip()
+    return bool(NO_CHAT.search(said) or (core and NO_CHAT.search(core)) or (NO_ANY.search(said) and not YES_CHAT.search(said)))
+
+
+class Earpiece:
+    """The page's earpiece (live.js director*), mirrored in the persona check: one background task that ticks
+    every TICK_SECS of the conversation and asks on the page's triggers (config live.director): "started" once
+    after the started note (after the listener's answer to started_step_back's offer to chat), "turn_end" when a
+    listener turn ends (no line from them for live.page.engaged_merge_ms) with every_words words or every_lines
+    new lines since the last look, "cadence" every every_secs with a new line (company_every_secs once started),
+    "silence" once per stretch of silence_secs with nobody speaking. One look in flight; a newer trigger waits.
+    Each look gets the earpiece's previous plan and read (as the server reads them from its rows) and goes
+    through the same verdict; a whisper is sent at once as an instruction, even while the listener's audio is
+    streaming. `stop()` awaits a look in flight, so its cost is logged. Two failures in a row and it is down
+    (the page's clocks come back, in a lull only)."""
+
+    def __init__(self, cfg: dict, sim, *, profile: str, notes: dict, decide_fn, known: bool = False):
+        self.cfg, self.sim, self.profile, self.notes, self.decide_fn, self.known = cfg, sim, profile, notes, decide_fn, known
+        self.D = live_director.settings(cfg)
+        self.merge = float(cfg["live"]["page"].get("engaged_merge_ms") or 1500) / 1000
+        self.looks: list[dict] = []
+        self.plan, self.read = None, "(first look)"
+        self.asked_at, self.seen = 0.0, 0
+        self.silence_ix, self.silence_seen = 0, -1
+        self.turn_seen = None
+        self.event: str | None = None
+        self.reply_wait_from: float | None = None
+        self.sent_at: float | None = None
+        self.offered, self.fails, self.down, self.stopped, self.rested = False, 0, False, False, False
+        self.inflight: asyncio.Task | None = None
+        self.task: asyncio.Task | None = None
+        self.held: tuple[dict, dict] | None = None
+
+    # --- what the page knows ---
+    def talk(self) -> list[dict]:
+        return [x for x in director_lines(self.sim.timeline) if x["who"] in ("guide", "listener")]
+
+    def speaking(self) -> str:
+        return "listener" if self.sim.speech else "guide" if self.sim.speaking else "none"
+
+    def started(self) -> bool:
+        return any(c["name"] == "start_chapter" for c in self.sim.calls)
+
+    def explained(self) -> bool:
+        return self.known or explained_at(self.sim.timeline) is not None
+
+    def last_end(self) -> float:
+        ends = [x["end"] for x in self.sim.turns] + [x.get("end") or x["t"] for x in self.sim.timeline
+                                                     if x["who"] == "listener" and x.get("text")]
+        return max(ends + [self.sim.audio_last if self.sim.audio_last > 0 else 0.0, 0.0])
+
+    def line_end(self) -> float:
+        """When the newest guide or listener line ended (the page's lastGuideAt / lastListenerAt)."""
+        ends = [x["end"] for x in self.sim.turns if x.get("end") is not None]
+        ends += [x["end"] for x in self.sim.timeline if x["who"] == "listener" and x.get("text") and x.get("end") is not None]
+        return max(ends + [0.0])
+
+    def offered_by_guide(self) -> bool:
+        """The guide's last line offered to say what it does (live.page.offer_nudge.offered, as the page reads it)."""
+        pat = (self.cfg["live"]["page"].get("offer_nudge") or {}).get("offered")
+        return bool(pat and self.sim.turns and re.search(pat, self.sim.turns[-1].get("text") or "", re.I))
+
+    def spoke_since(self, t: float) -> bool:
+        return any(x["who"] == "listener" and x.get("text") and x.get("end") is not None and x["end"] > t
+                   for x in self.sim.timeline)
+
+    def here(self) -> bool:
+        if (self.stopped or self.down or self.rested or self.sim.closed.is_set()
+                or any(c["name"] == "step_back" for c in self.sim.calls)):
+            return False
+        if self.reply_wait_from is not None:  # the step-back reply wait (live.js): asked again once they answer
+            answer = next((x for x in self.sim.timeline
+                           if x["who"] == "listener" and x.get("text") and x["t"] > self.reply_wait_from), None)
+            if answer is None:
+                return False
+            self.reply_wait_from = None
+            if declines_chat(answer["text"]):  # a plain no: the page rests, and forgets the started look (dirForget)
+                self.rested, self.event, self.held = True, None, None
+                return False
+        return True
+
+    def on_started(self, step_back: bool) -> None:
+        self.event = "started"
+        if step_back:
+            self.reply_wait_from = self.sim.now()
+
+    # --- the clock ---
+    async def run(self) -> None:
+        while not self.stopped and not self.sim.closed.is_set():
+            await self.tick(self.sim.now())
+            await asyncio.sleep(TICK_SECS)
+
+    def trigger(self, now: float) -> str | None:
+        D, talk = self.D, self.talk()
+        n = len(talk)
+        if n != self.silence_seen:
+            self.silence_ix, self.silence_seen = 0, n
+        if self.event:
+            e, self.event = self.event, None
+            return e
+        lis = [x for x in self.sim.timeline if x["who"] == "listener" and x.get("text")]
+        if lis and lis[-1] is not self.turn_seen and lis[-1].get("end") is not None and now - lis[-1]["end"] >= self.merge:
+            last = self.turn_seen = lis[-1]
+            g = max((x["t"] for x in self.sim.timeline if x["who"] == "guide" and x["t"] < last["t"]), default=-1.0)
+            # The turn as the page counts it (live.js countLine): a line joins the one before only if it began
+            # within engaged_merge_ms of that one's end, with no guide line between.
+            turn = [last]
+            for x in reversed(lis[:-1]):
+                if x["t"] <= g or x.get("end") is None or turn[0]["t"] - x["end"] >= self.merge:
+                    break
+                turn.insert(0, x)
+            words = sum(_words(x["text"]) for x in turn)
+            if words >= int(D["every_words"]) or n - self.seen >= int(D["every_lines"]):
+                return "turn_end"
+        every = D["company_every_secs"] if self.started() else D["every_secs"]
+        if n > self.seen and now - self.asked_at >= float(every):
+            return "cadence"
+        secs = D.get("silence_secs") or []
+        if (n and self.silence_ix < len(secs) and self.speaking() == "none"
+                and now - self.last_end() >= float(secs[self.silence_ix])):
+            self.silence_ix += 1
+            return "silence"
+        return None
+
+    async def tick(self, now: float) -> None:
+        if self.inflight is not None or not self.here():
+            return
+        if self.held:
+            got, rec = self.held
+            self.held = None
+            await self.deliver(got, rec)
+            return
+        trig = self.trigger(now)
+        if trig:
+            self.ask(trig, now)
+
+    def ask(self, trig: str, now: float) -> None:
+        lines = director_lines(self.sim.timeline)
+        sp = self.speaking()
+        last_who = next((x["who"] for x in reversed(lines) if x["who"] in ("guide", "listener")), None)
+        silence = max(0.0, now - self.line_end())  # since the last line ended, whoever is speaking (live.js)
+        started = self.started()
+        user = live_director.look(self.D, lines=lines, trigger=trig, speaking=sp, last_who=last_who,
+                                  silence_secs=silence, seconds=int(now), explained=self.explained(), started=started,
+                                  profile=self.profile, plan=self.plan, last_read=self.read)
+        self.asked_at, self.seen = now, len(self.talk())
+        rec = {"t": now, "trigger": trig, "speaking": sp}
+        self.inflight = asyncio.create_task(self._look(user, rec))
+
+    async def _look(self, user: str, rec: dict) -> None:
+        try:
+            got = await asyncio.to_thread(self.decide_fn, user)
+            if not got.get("error"):
+                got = {**got, **live_director.shape(got)}
+        except Exception as e:  # a look never breaks the conversation (a cap refusal, a bad answer)
+            got = {**live_director.NO_WHISPER, "error": f"{type(e).__name__}: {e}"[:300]}
+        rec.update({k: got.get(k) for k in live_director.FIELDS + ("ms", "error")})
+        rec["arrived"] = self.sim.now()
+        self.looks.append(rec)
+        self.fails = self.fails + 1 if got.get("error") else 0
+        self.down = self.down or self.fails >= 2
+        self.plan = got.get("plan") or self.plan
+        self.read = got.get("read") or self.read
+        try:
+            if not self.stopped:
+                await self.deliver(got, rec)
+        finally:
+            self.inflight = None
+
+    async def deliver(self, got: dict, rec: dict) -> None:
+        now = self.sim.now()
+        v = verdict(got, here=self.here(), started=self.started(), explained=self.explained(),
+                    offered=self.offered or self.offered_by_guide(),
+                    spoke_since_ask=self.spoke_since(rec["t"]), listener_speaking=bool(self.sim.speech), now=now,
+                    sent_at=self.sent_at, min_gap=float(self.D["min_gap_secs"] or 0))
+        if v == "hold":
+            self.held = (got, rec)
+            return
+        rec["delivered"] = v == "send"
+        if v != "send":
+            return
+        key, text = whisper_note(self.notes, got)
+        await self.sim.note("instructions", text)
+        self.sent_at = rec["sent_t"] = self.sim.now()
+        rec["template"] = key
+        self.offered = self.offered or got.get("about") == "offer"
+
+    async def stop(self) -> None:
+        self.stopped = True
+        if self.task:
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+        if self.inflight is not None:  # its cost is logged when it returns
+            await asyncio.gather(self.inflight, return_exceptions=True)
+
+
+def next_turns(looks: list[dict], turns: list[dict]) -> None:
+    """For each whisper sent, the guide's next turn after it: when it began and what it said."""
+    for rec in looks:
+        if rec.get("sent_t") is None:
+            continue
+        nxt = next((x for x in turns if x["t"] >= rec["sent_t"]), None)
+        rec["next_turn_t"] = nxt["t"] if nxt else None
+        rec["next_turn"] = nxt["text"] if nxt else None
+
+
 async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 12, after_start: int = 2,
                    max_minutes: float = 6, log_run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None,
                    handoff: str | None = None, pause_secs: float = PAUSE_SECS, director: bool = False,
@@ -224,12 +485,13 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
     spoken in pieces with `pause_secs` of silence at each (someone who talks in fragments: does the guide
     wait, or cut in?).
 
-    `director` (live.director, Ian 2026-11-19): as the page does with it on, the director decides after each
-    guide line (and each silence) while the simulated listener thinks of a reply, both at once; its move goes in
-    as the `direct` note only if it lands before the listener speaks (the page delivers only in a lull, and drops
-    a move once anyone has spoken since it was asked for) and isn't done already; the offer cue is off and the
-    pitch nudges are the late fallbacks, in silences only. `director_fn(user) -> decision`: for tests (default:
-    director.decide, a Claude call logged to build_costs.jsonl)."""
+    `director` (live.director, Ian 2026-11-19: the earpiece): as the page does with it on, an Earpiece looks at
+    the conversation in the background on the page's triggers and sends its whispers at once as instructions
+    (notes.md direct, direct_now, direct_start), even while the listener speaks; the offer cue is off and the
+    pitch nudges are late fallbacks, in silences only, their gap counted from the last whisper (the first is the
+    offer cue if the guide hasn't said what it does). Every look is in the transcript's "director" list, each
+    whisper with the guide's next turn. `director_fn(user) -> look`: for tests (default: director.decide, a
+    Claude call logged to build_costs.jsonl)."""
     log_run = log_run or claude_run()
     name = persona["name"]
     values = first_meeting_values(persona["now"])
@@ -248,54 +510,20 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
     since, said, silent, stop = 0, 0, 0, "turns"
     page = cfg["live"]["page"]
     DC = cfg["live"].get("director") or {}
-    nudges, nudged = (((DC.get("fallback") or {}).get("pitch_nudge_secs") if director else page.get("pitch_nudge_secs"))
-                      or []), 0
-    offer, offered, hold = ({} if director else page.get("offer_nudge") or {}), False, page.get("pitch_hold") or {}
+    nudged, offered, hold = 0, False, page.get("pitch_hold") or {}
     after_noted = False
-    dstate = {"noted_at": None, "offered": False, "checked_in": False, "moves": []}
-
-    def decide_sync(moment_secs: float) -> dict:
-        tl = sim.timeline
-        started_ = any(c["name"] == "start_chapter" for c in sim.calls)
-        last = next((x["who"] for x in sorted(tl, key=lambda r: r["t"], reverse=True)
-                     if x["who"] in ("guide", "listener") and x.get("text")), "guide")
-        user = live_director.moment(
-            phase=live_director.PHASES["company" if started_ else "talk"], seconds=int(sim.now()),
-            explained=explained_at(tl) is not None, started=started_, turns=len(listener_turns(tl)),
-            silence_secs=moment_secs, last_who=last, profile=values["profile"],
-            transcript=live_director.transcript_text(director_lines(tl)))
-        if director_fn:
-            return director_fn(user)
-        S.check_cap(cfg, DIRECTOR_USD, "Claude director")
-        got = live_director.decide(cfg, log_run, user)
-        S.log_cost("claude director", got.get("cost_usd") or 0.0)
-        return got
-
-    async def direct(moment_secs: float, reply_task: asyncio.Task) -> None:
-        """The director's decision raced against the listener's reply: delivered only if it lands first."""
-        d_task = asyncio.create_task(asyncio.to_thread(decide_sync, moment_secs))
-        done, _ = await asyncio.wait({d_task, reply_task}, return_when=asyncio.FIRST_COMPLETED)
-        got = await d_task
-        move, note = got.get("move"), got.get("note") or ""
-        started_ = any(c["name"] == "start_chapter" for c in sim.calls)
-        told = explained_at(sim.timeline) is not None
-        gap = DC.get("min_gap_secs") or 0
-        drop = (reply_task in done and d_task not in done and reply_task.result() != SILENT) \
-            or move in (None, "wait") or not note \
-            or (move == "offer_what_i_do" and (told or dstate["offered"])) \
-            or (move in ("pitch", "ask_interest", "start_chapter", "offer_what_i_do") and started_) \
-            or (move == "check_in" and (dstate["checked_in"] or bool(listener_turns(sim.timeline)))) \
-            or (move not in ("step_back", "start_chapter") and dstate["noted_at"] is not None
-                and sim.now() - dstate["noted_at"] < gap)
-        dstate["moves"].append({"t": sim.now(), "move": move, "note": note, "why": got.get("why"), "error": got.get("error"),
-                                "delivered": not drop})
-        if drop:
-            return
-        dstate["noted_at"] = sim.now()
-        dstate["offered"] = dstate["offered"] or move == "offer_what_i_do"
-        dstate["checked_in"] = dstate["checked_in"] or move == "check_in"  # once, before their first word (the page's rule)
-        key = "direct_start" if move == "start_chapter" else "direct"
-        await sim.note("instructions", notes[key].replace("{note}", note))
+    pitched = 0  # pitch nudges sent (the offer cue can take the first fallback's place, as on the page)
+    ear = None
+    if director:
+        def decide(user: str) -> dict:
+            if director_fn:
+                return director_fn(user)
+            S.check_cap(cfg, DIRECTOR_USD, "Claude director")
+            got = live_director.decide(cfg, log_run, user)
+            S.log_cost("claude director", got.get("cost_usd") or 0.0)
+            return got
+        ear = Earpiece(cfg, sim, profile=values["profile"], notes=notes, decide_fn=decide)
+        ear.task = asyncio.create_task(ear.run())
     try:
         while True:
             new = await sim.wait_guide(since, GUIDE_WAIT_SECS)
@@ -312,6 +540,8 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                 call = next(c for c in sim.calls if c["name"] == "start_chapter")
                 topic = str((call.get("args") or {}).get("topic") or "").strip() or "the one you pitched"
                 await sim.note("instructions", notes[key].replace("{when}", "about 4 minutes").replace("{topic}", topic))
+                if ear:
+                    ear.on_started(step_back=key == "started_step_back")
                 new = await sim.wait_guide(since, GUIDE_WAIT_SECS) or new
                 since = len(sim.turns)
             if sim.closed.is_set():
@@ -328,12 +558,7 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                     break
             moment = ("The guide has just finished speaking." if new else
                       f"The guide has said nothing for {GUIDE_WAIT_SECS} seconds.")
-            if director:
-                reply_task = asyncio.create_task(asyncio.to_thread(reply_fn, sim.timeline, moment))
-                await direct(1.0 if new else GUIDE_WAIT_SECS, reply_task)
-                reply = await reply_task
-            else:
-                reply = await asyncio.to_thread(reply_fn, sim.timeline, moment)
+            reply = await asyncio.to_thread(reply_fn, sim.timeline, moment)
             if sim.speaking or len(sim.turns) > since:  # it spoke again while the listener was thinking
                 await sim.wait_guide(since, GUIDE_WAIT_SECS)
                 since = len(sim.turns)
@@ -354,18 +579,29 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
             # the first lull from after_secs: here, when the guide has just let a silence run); a conversation
             # running long with no chapter is nudged toward one, not within pitch_hold.explained_secs of the
             # guide's explanation.
+            # With the earpiece up the offer clock is off and the nudges are its late fallbacks; down (two failures in
+            # a row), the page's own clocks come back, in a lull only (live.js conversationCues, fb).
+            up = director and not (ear and ear.down)
+            nudges = ((DC.get("fallback") or {}).get("pitch_nudge_secs") if up else page.get("pitch_nudge_secs")) or []
+            offer = {} if up else page.get("offer_nudge") or {}
             no_chapter = not any(c["name"] == "start_chapter" for c in sim.calls)
             told = explained_at(sim.timeline + ([{"t": sim.now(), "who": "guide", "text": sim.spoken_since(0)}]))
-            if (offer and not offered and told is None and no_chapter and said >= 1
+            if (offer and not offered and told is None and no_chapter and said >= 1 and not (director and new)
                     and sim.now() > (offer["after_secs"] if not new else offer["max_secs"])
                     and not (offer.get("offered") and sim.turns
                              and re.search(offer["offered"], sim.turns[-1]["text"], re.I))):
                 await sim.note("instructions", notes["offer_nudge"])
                 offered = True
             elif (nudged < len(nudges) and sim.now() > nudges[nudged] and no_chapter and not (director and new)
+                    and not (up and ear and ear.sent_at is not None and sim.now() - ear.sent_at < (DC.get("min_gap_secs") or 0))
                     and not (told is not None and sim.now() - told < (hold.get("explained_secs") or 0))):
-                await sim.note("instructions", notes["pitch_nudge" if nudged == 0 else "pitch_nudge_again"])
                 nudged += 1
+                if ear and not ear.down and told is None and not ear.offered and not offered:
+                    offered = True  # with the earpiece up the first fallback is the offer cue (live.js conversationCues)
+                    await sim.note("instructions", notes["offer_nudge"])
+                else:
+                    await sim.note("instructions", notes["pitch_nudge" if pitched == 0 else "pitch_nudge_again"])
+                    pitched += 1
             pieces = [x for x in PAUSE.split(reply) if x.strip()] if pause_secs else [reply]
             for i, piece in enumerate(pieces or [reply]):
                 if i:
@@ -380,18 +616,174 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                 await sim.wait_guide(since, GUIDE_WAIT_SECS)
                 break
     finally:
+        if ear:
+            await ear.stop()
         cost = await sim.close()
     heard_for(sim.timeline, sim.heard)
+    if ear:
+        next_turns(ear.looks, sim.turns)
     transcript = {
         "kind": "onboarding", "persona": name, "now": persona["now"], "description": persona["text"],
         "values": values, "session_id": sim.session_id, "stop": stop,
         "timeline": split_turns(sim.timeline), "calls": sim.calls, "errors": sim.errors,
         "cost": cost, "listener_usd": _listener_usd(before, name),
-        **({"director": dstate["moves"]} if director else {}),
+        **({"director": ear.looks} if ear else {}),
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.json").write_text(json.dumps(transcript, indent=1, ensure_ascii=False), encoding="utf-8")
     return transcript
+
+
+# --- earpiece probes ------------------------------------------------------------------------------
+
+# Scripted listeners with a whisper injected at a scripted moment, the earpiece's model off: no Claude, only
+# GPT-Live and the listener's TTS (scratch earpiece/DESIGN.md section 5). Steps: ("guide",) waits for the guide's
+# turn; ("say", text); ("gap", secs) of silence; ("whisper", kind, about, note, topic) sends the note as the page
+# would (topic: a pattern for a guide turn that takes it up); ("question", answers) answers until the guide's
+# last turn ends in "?"; ("after", secs) waits until secs after the last whisper; ("mark", name) notes the time.
+OFFER_TOPIC = r"\bwhat i do\b|\baudio chapters?\b|\bchapters?\b|\bwhat i make\b"
+PROBES = {
+    "A": {"what": "mid-story: a pitch whispered after the first of three story fragments (1.5 s gaps). Pass: no "
+                  "pitch in the gaps; a pitch after the story, or none.",
+          "steps": [("guide",), ("say", "Hey! Good, thanks. I just got back from a walk by the lake."), ("guide",),
+                    ("say", "So on the walk I saw this huge bird, a peregrine falcon, sitting right on top of a lamp post"),
+                    ("whisper", "when_it_fits", "pitch",
+                     "When the falcon story is over, pitch a chapter on how peregrines came back from near extinction.",
+                     r"\bchapters?\b|extinct|came back|comeback|\bDDT\b"),
+                    ("gap", 1.5),
+                    ("say", "and it just stared at me for a while, and then it dropped off the post and went straight "
+                            "down after a pigeon"),
+                    ("gap", 1.5), ("say", "and the pigeon got away, just barely. I had no idea they were that fast."),
+                    ("mark", "story_end"), ("guide",), ("say", "Yeah, it was kind of wild."), ("guide",),
+                    ("say", "Ha, maybe."), ("guide",)]},
+    "B": {"what": "after the guide's question: an offer whispered right after a guide turn ending in a question. "
+                  "Does it act after the answer, a turn later, or never?",
+          "steps": [("guide",), ("say", "Hi! Pretty good. I'm cooking dinner right now."), ("guide",),
+                    ("question", ["Ha, yeah, it's a lemon pasta thing.", "Mm, it's been a long week, honestly.",
+                                  "Yeah, pretty much."]),
+                    ("mark", "question"),
+                    ("whisper", "when_it_fits", "offer",
+                     "Once they answer, offer to tell them what you do, bridged from their dinner.", OFFER_TOPIC),
+                    ("gap", 2.0), ("say", "Honestly, a bit of everything. Whatever's in the fridge."), ("guide",),
+                    ("say", "Sure."), ("guide",), ("say", "Okay, cool."), ("guide",)]},
+    "C": {"what": "skippable: an offer whispered while the listener keeps adding to a live thread. Does \"if it "
+                  "doesn't come, let it go\" hold it past the next turn, until the thread winds down?",
+          "steps": [("guide",), ("say", "Hi! Honestly I'm still buzzing from my daughter's school play tonight."),
+                    ("guide",),
+                    ("say", "She was cast as a tree, but halfway through she improvised a whole line, and the entire "
+                            "audience burst out laughing."),
+                    ("whisper", "when_it_fits", "offer",
+                     "When the school play thread winds down, offer to tell them what you do.", OFFER_TOPIC),
+                    ("guide",), ("say", "And afterwards she told her teacher she'd been planning it for weeks. Weeks!"),
+                    ("guide",), ("say", "I mean, I was proud and mortified at the same time."), ("guide",),
+                    ("mark", "wind_down"), ("say", "Yeah. Anyway, that was my night."), ("guide",), ("say", "Sure."),
+                    ("guide",)]},
+    "D": {"what": "supersede: a pitch on X, then 20 s later a whisper that replaces it with Y. Does X come up "
+                  "after the second whisper?",
+          "steps": [("guide",),
+                    ("say", "Hi! I spent the afternoon reading about octopuses, and then somehow about old lighthouses."),
+                    ("whisper", "when_it_fits", "pitch",
+                     "Their spark is octopuses: pitch a chapter on how an octopus tastes with its arms.",
+                     r"octopus|octopi|tentacle|\barms?\b"),
+                    ("guide",), ("say", "Yeah, they're such strange animals."), ("guide",), ("after", 20),
+                    ("whisper", "when_it_fits", "pitch",
+                     "Drop the octopus idea: their real spark is the lighthouses. Pitch a chapter on the last "
+                     "lighthouse keepers.", r"lighthouse|keeper"),
+                    ("say", "Mm, I don't know."), ("guide",), ("say", "The lighthouse stuff was interesting too, actually."),
+                    ("guide",), ("say", "Hm, maybe."), ("guide",)]},
+}
+
+
+def probe_result(whispers: list[dict], marks: dict, turns: list[dict]) -> list[dict]:
+    """Per whisper: the guide's next turn, the first turn that takes it up (its topic), the turns before each
+    mark, and for a later whisper how often an earlier whisper's topic still came up after it."""
+    out = []
+    for i, w in enumerate(whispers):
+        after = [x for x in turns if x["t"] >= w["t"]]
+        nxt = after[0] if after else None
+        took = next(((n + 1, x) for n, x in enumerate(after) if re.search(w["topic"], x["text"], re.I)), None)
+        rec = {**w, "next_turn_t": nxt["t"] if nxt else None, "next_turn": nxt["text"] if nxt else None,
+               "took_up": ({"turn": took[0], "t": took[1]["t"], "after_secs": round(took[1]["t"] - w["t"], 1),
+                            "text": took[1]["text"]} if took else None),
+               "turns_before": {k: sum(1 for x in after if x["t"] < v) for k, v in marks.items() if v > w["t"]}}
+        if took:
+            rec["took_up_before"] = {k: took[1]["t"] < v for k, v in marks.items() if v > w["t"]}
+        if i:
+            rec["earlier_topic_after"] = sum(1 for x in after for e in whispers[:i] if re.search(e["topic"], x["text"], re.I))
+        out.append(rec)
+    return out
+
+
+async def probe(cfg: dict, name: str, out_dir: Path, *, handoff: str = "Sam", max_minutes: float = 2.5,
+                sim_kwargs: dict | None = None, label: str | None = None) -> dict:
+    """One earpiece probe by voice (PROBES[name]); returns (and saves) its result as probe-<label>.json."""
+    spec, label = PROBES[name], label or name
+    notes = live.notes()
+    values = first_meeting_values(day_part())
+    sim = S.Sim(cfg, live.session_config(cfg, values, transport="websocket", greet=False), label=f"probe {label}",
+                tool_handler=S.FakeTools(), max_minutes=max_minutes, audio_out=out_dir / f"probe-{label}.guide.wav",
+                events_path=out_dir / f"probe-{label}.events.jsonl", **{**(sim_kwargs or {}), "greet": False})
+    await sim.connect()
+    await sim.note("commentary", notes["handoff"].replace("{name}", handoff))
+    since, whispers, marks, done = 0, [], {}, []
+    try:
+        for step in spec["steps"]:
+            if sim.closed.is_set() or sim.now() > max_minutes * 60 - 10:
+                break
+            op = step[0]
+            if op == "guide":
+                await sim.wait_guide(since, GUIDE_WAIT_SECS)
+                since = len(sim.turns)
+            elif op == "say":
+                await sim.say(step[1])
+            elif op == "gap":
+                await asyncio.sleep(step[1])
+            elif op == "after" and whispers:
+                await asyncio.sleep(max(0.0, whispers[-1]["t"] + step[1] - sim.now()))
+            elif op == "mark":
+                marks[step[1]] = sim.now()
+            elif op == "question":
+                for answer in step[1]:
+                    if sim.turns and sim.turns[-1]["text"].rstrip().endswith("?"):
+                        break
+                    await sim.say(answer)
+                    await sim.wait_guide(since, GUIDE_WAIT_SECS)
+                    since = len(sim.turns)
+            elif op == "whisper":
+                got = {"kind": step[1], "about": step[2], "note": step[3], "changed": True}
+                key, text = whisper_note(notes, got)
+                await sim.note("instructions", text)
+                whispers.append({"t": sim.now(), "kind": step[1], "about": step[2], "note": step[3], "template": key,
+                                 "topic": step[4], "guide_speaking": sim.speaking, "listener_speaking": bool(sim.speech)})
+            done.append(op)
+    finally:
+        cost = await sim.close()
+    result = {"kind": "probe", "probe": name, "what": spec["what"], "session_id": sim.session_id,
+              "steps_done": len(done), "steps": len(spec["steps"]), "marks": marks,
+              "whispers": probe_result(whispers, marks, sim.turns),
+              "timeline": split_turns(sim.timeline), "calls": sim.calls, "errors": sim.errors, "cost": cost}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"probe-{label}.json").write_text(json.dumps(result, indent=1, ensure_ascii=False), encoding="utf-8")
+    return result
+
+
+def probe_summary(label: str, result: dict) -> str:
+    c = result["cost"]
+    lines = [f"probe {label}: {result['what']}",
+             f"  {result['steps_done']} of {result['steps']} steps, {c['seconds']:.0f} s connected, GPT-Live ${c['usd']:.3f}"]
+    for w in result["whispers"]:
+        t = lambda v: f"{int(v) // 60}:{int(v) % 60:02d}"  # noqa: E731
+        nxt = (f"next turn {w['next_turn_t'] - w['t']:.1f} s later: \"{(w['next_turn'] or '')[:70]}\""
+               if w.get("next_turn_t") is not None else "no guide turn after it")
+        took = (f"taken up at turn {w['took_up']['turn']} ({w['took_up']['after_secs']} s): \"{w['took_up']['text'][:70]}\""
+                if w.get("took_up") else "never taken up")
+        lines.append(f"  {t(w['t'])} whisper {w['about']}: {nxt}; {took}")
+        for k, n in (w.get("turns_before") or {}).items():
+            lines.append(f"    guide turns before {k}: {n}" + (f"; taken up before it: {w['took_up_before'][k]}"
+                                                                  if k in (w.get("took_up_before") or {}) else ""))
+        if "earlier_topic_after" in w:
+            lines.append(f"    the earlier whisper's topic came up {w['earlier_topic_after']} times after this one")
+    return "\n".join(lines)
 
 
 # --- grading --------------------------------------------------------------------------------------
@@ -481,6 +873,25 @@ def pace(transcript: dict) -> dict:
             "started": start, "turns": len(turns), "questions": len(asked)}
 
 
+def earpiece_summary(looks: list[dict]) -> list[str]:
+    """The earpiece's looks by trigger, and each whisper with when the guide's next turn began after it."""
+    by: dict[str, int] = {}
+    for x in looks:
+        by[x.get("trigger") or "?"] = by.get(x.get("trigger") or "?", 0) + 1
+    errors = sum(1 for x in looks if x.get("error"))
+    out = [f"  earpiece: {len(looks)} looks ({', '.join(f'{k} {v}' for k, v in by.items()) or 'none'})"
+           + (f", {errors} failed" if errors else "")]
+    for x in looks:
+        if x.get("sent_t") is not None:
+            after = (f"next turn {x['next_turn_t'] - x['sent_t']:.1f} s later: \"{(x.get('next_turn') or '')[:80]}\""
+                     if x.get("next_turn_t") is not None else "no guide turn after it")
+            out.append(f"    {int(x['sent_t']) // 60}:{int(x['sent_t']) % 60:02d} {x.get('kind')}/{x.get('about')} "
+                       f"\"{x.get('note')}\"; {after}")
+        elif x.get("note") and x.get("changed"):
+            out.append(f"    (dropped) {x.get('kind')}/{x.get('about')} \"{x.get('note')}\"")
+    return out
+
+
 def summary(name: str, transcript: dict, g: dict | None) -> str:
     c = transcript["cost"]
     lines = [f"{name}: stop={transcript['stop']}, {c['seconds']:.0f} s connected, GPT-Live ${c['usd']:.3f}"
@@ -490,10 +901,9 @@ def summary(name: str, transcript: dict, g: dict | None) -> str:
     at = lambda v: "never" if v is None else f"{int(v) // 60}:{int(v) % 60:02d}"  # noqa: E731
     lines.append(f"  said what it does at {at(k['explained'])}, pitched at {at(k['pitched'])}, started at "
                  f"{at(k['started'])}; {k['questions']} of its {k['turns']} turns up to then asked something")
-    moves = transcript.get("director")
-    if moves is not None:
-        sent = [m["move"] for m in moves if m.get("delivered")]
-        lines.append(f"  director: {len(moves)} decisions, delivered: {', '.join(sent) or 'none'}")
+    looks = transcript.get("director")
+    if looks is not None:
+        lines.extend(earpiece_summary(looks))
     if g:
         failed = [r for r in g["rules"] if r["verdict"] == "fail"]
         lines.append(f"  score {g['score']}/10; failed: {', '.join(r['id'] for r in failed) or 'none'}; "
@@ -601,8 +1011,12 @@ async def aside(cfg: dict, run_dir: Path, scenario: tuple, out_dir: Path, *, tap
             await sim.note("commentary", f"{notes['read']} {live_chapter.text_from(hit[2], at['sentence'])}")
             await asyncio.sleep(6)
     finally:
+        if ear:
+            await ear.stop()
         cost = await sim.close()
     heard_for(sim.timeline, sim.heard)
+    if ear:
+        next_turns(ear.looks, sim.turns)
     call = next((c for c in sim.calls if c["name"] == "resume_chapter"), None)
     resume_after = (sum(1 for x in sim.timeline if x["who"] == "listener" and x.get("text") and x["t"] > tap
                         and x["t"] < call["t"]) if call else None)

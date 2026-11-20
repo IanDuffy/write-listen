@@ -14,9 +14,11 @@ WL_DEMO=1 .venv/bin/python server.py
 - **The intro**: "Hi, is this Ian?", then about 15 seconds on what to expect, "Ready?", and the handover.
 - **The guide**: warmer and more curious, closer to Pooja's and Purnima's conversations: guesses about you,
   reactions, about a third of turns a question. It should never cut into a story to say what it does.
-- **The director** (on): it should mostly stay out of the way; when you go quiet for a while, the guide should
-  pick something up rather than sit there. If it ever talks over you or feels slow to get to the point, note
-  when. `live.director.enabled: false` in config.yaml puts back the old timers.
+- **The earpiece** (on; it replaced the director): a second model listens in the background, keeps a plan
+  (meet you, say what it does, find what lights you up, pitch, a clear yes) and whispers the guide a nudge when
+  the guide is stuck or past a moment. It should mostly stay silent; when it does nudge, the guide should take it
+  up a turn or two later, never mid-sentence, never saying the note aloud. If the guide ever talks over you or
+  feels slow to get to the point, note when. `live.director.enabled: false` in config.yaml puts back the timers.
 - **The start**: the chapter begins only after a clear yes; "What would it be about?" gets an answer first. Then
   it offers to keep chatting and waits for your answer: "no, go ahead" rests it, anything else keeps talking.
 - **End demo while it's being made**: the chapter stops (the admin page shows it stopped) and the debrief says so.

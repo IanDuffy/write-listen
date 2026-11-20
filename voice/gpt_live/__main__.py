@@ -3,6 +3,9 @@
     python -m voice.gpt_live persona [--n K] [--personas builder,reserved] [--max-turns 8] [--max-minutes 3] [--grade]
                                      [--handoff NAME]   (the Tester Demo's opening: --personas evening --handoff Ian)
                                      [--director | --no-director]   (default: config live.director.enabled)
+    python -m voice.gpt_live persona --probe A,B,D [--n 2] [--handoff NAME]
+                                     (earpiece probes: a scripted listener and an injected whisper, no Claude;
+                                      A mid-story, B after the guide's question, C skippable, D supersede)
     python -m voice.gpt_live asides [--only closing,lost] [--run runs/<fast run>] [--grade]
     python -m voice.gpt_live grade <folder or transcript.json>
     python -m voice.gpt_live spend
@@ -42,7 +45,20 @@ def checks(cfg: dict) -> dict:
             **(cfg["live"].get("checks") or {})}
 
 
+def cmd_probe(cfg: dict, a) -> None:
+    out = P.new_out_dir()
+    for name in _names(a.probe, list(P.PROBES)):
+        for k in range(a.n):
+            label = f"{name}-{k + 1}" if a.n > 1 else name
+            t = asyncio.run(P.probe(cfg, name, out, handoff=a.handoff or "Sam", max_minutes=a.max_minutes or 2.5,
+                                    label=label))
+            print(P.probe_summary(label, t), flush=True)
+    print(f"Saved in {out}. Build spend: ${S.spent():.2f}")
+
+
 def cmd_persona(cfg: dict, a) -> None:
+    if a.probe:
+        return cmd_probe(cfg, a)
     C = checks(cfg)
     people = P.personas()
     out = P.new_out_dir()
@@ -131,8 +147,11 @@ def main(argv=None) -> int:
     p.add_argument("--handoff", metavar="NAME", help="open as the Tester Demo does: the page's handoff note with this "
                                                      "name (the guide greets them by name), no hello")
     p.add_argument("--director", action=argparse.BooleanOptionalAction, default=None,
-                   help="mirror the page's director (voice/gpt_live/director.py) in the conversation; "
+                   help="mirror the page's earpiece (voice/gpt_live/director.py) in the conversation; "
                         "default: config live.director.enabled")
+    p.add_argument("--probe", metavar="NAMES", help="earpiece probes instead of personas (comma-separated: A mid-story, "
+                                                    "B after the guide's question, C skippable, D supersede); about "
+                                                    "2.5 minutes each, no Claude")
     s = sub.add_parser("asides", help="scripted questions mid-chapter, then graded")
     s.add_argument("--only", help="comma-separated scenario names (default: all)")
     s.add_argument("--run", default="runs/ideas-behind-systems-stocks-20261113",
