@@ -1,0 +1,272 @@
+CONTRACT: the earpiece view (Ian, 2026-11-20). Two implementers working in parallel. A builds the server side, B builds the page side. No file is in both lists.
+
+Where the code is today (read, not changed):
+- page/live.js. `newConversation()` creates `L.dir = {fails, down, ctl, id, next, lines, askedAt, event, queued, turnOpen, silenceIx, sentAt, offered}`.
+  - `directorAsk(t, trigger)` posts `/api/live/direct` with `id = ++D.id`.
+  - `directorGot(got, askedAt)` sets `D.next = {kind, about, note, askedAt, at}` when `got.changed && got.note`. A newer whisper silently replaces one not yet sent.
+  - `directorFailed(why)`: two failures in a row set `D.down` and clear `D.next`.
+  - `directorDeliver(t)` runs every 200 ms tick while `D.next` is set. It calls the pure `directorVerdict(n, t, st, C)`, which returns "send", "hold" or "drop". It has no reason, and a hold repeats every tick. On send it calls `instruct(tpl.replace("{note}", note))`, which also posts the text to `/api/live/line` as a "page" row.
+  - `dirForget()` is called from `connect(resume)`, `rest()` and `wake()`. It clears `D.next` silently.
+  - The page settings arrive only in the global `/live.js` (`__LIVE_SETTINGS__`, `routes.page_settings`). Today that includes `director: live_director.settings(cfg)`.
+  - The `/api/live/start` answer is read in `connect()` around lines 261-266.
+- voice/gpt_live/director.py. `ask()` records one row per look in `listener/sessions/<id>.jsonl`:
+  `{"t", "who": "director", "id", "trigger", "speaking", "read", "plan", "next", "changed", "kind", "about", "note", "ms", "cost_usd", "error"?}`.
+  The row is written after the answer, so the ask time is roughly `t - ms`. Readers filter on `who`: `lines_from_transcript`, `memory()`, `guide.earlier_text`, `stages/memory.py`, `demo/debrief.py`, `whisper_in`/`notes_text`. A new `who` value is safe as long as it has no "text" field.
+- Session ids look like `YYYYMMDD-HHMMSS` or `YYYYMMDD-HHMMSS-N` (`guide.Session`). The transcript is `<listener>/sessions/<id>.jsonl` and `"t"` has one-second resolution.
+- The admin guard is `demo/routes.py guard()`: loopback or basic auth, and it clears `REQUEST_LISTENER`. `/admin*` and `/api/admin*` answer without a tester (`server.OPEN_PREFIX`), so any new admin path must start with one of those.
+
+====================================================================
+SHARED NAMES (both use exactly these strings)
+====================================================================
+- `/api/live/start` answer: a new boolean field, `"earpiece_view"`.
+- Fates: `"sent" | "held" | "dropped"`.
+- Reasons for "dropped" (`director.FATE_REASONS`):
+  - `"not_here"`: the page isn't in a state to send (detail says which condition)
+  - `"stale_after_start"`: offer, pitch, interest or start after the chapter started
+  - `"explained"`: an offer once the guide had said what it does, or already offered
+  - `"listener_spoke"`: a "now" note, and the listener spoke after the look was asked
+  - `"gap"`: within `min_gap_secs` of the last whisper
+  - `"replaced"`: a newer look's note replaced it before it was sent
+  - `"forgotten"`: a rest, a wake or a new session cleared it (`dirForget`)
+  - `"down"`: the earpiece went down while the note waited
+  - `"ended"`: the conversation ended. Panel only, never posted.
+- Plan change rule, used by both the panel and the history. Compare a look's plan with the previous look in the same conversation that had a plan. Match items by text, lowercased with whitespace collapsed.
+  - An item that wasn't there before: change "new".
+  - An item whose state differs: change = its new state ("done", "dropped" or "open").
+  - An unchanged item: null.
+  - Items that are gone go in `removed`.
+  - The first look has every change null and `removed` empty.
+- Time shown everywhere: m:ss since the conversation started, plus local clock HH:MM:SS.
+
+====================================================================
+IMPLEMENTER A: server side
+====================================================================
+Files A owns:
+- config.yaml
+- voice/gpt_live/director.py
+- voice/gpt_live/routes.py
+- voice/gpt_live/earpiece_history.py (new)
+- demo/testers.py, demo/routes.py, demo/state.py, demo/cli.py
+- page/admin.html, page/admin_earpiece.html (new)
+- tests: tests/live/test_director.py, tests/live/test_live_server.py, tests/demo/test_admin.py, tests/demo/test_testers.py, tests/demo/test_state.py, tests/demo/test_study_cli.py, tests/demo/test_server_testers.py
+
+A1. Config and the flag
+- config.yaml: add `view: false` under `live.director`, with a comment: the panel on Ian's own page when demo mode is off.
+- `director.settings()` default gains `"view": False`.
+- `routes.page_settings()` must leave it out: `"director": {k: v for k, v in live_director.settings(cfg).items() if k != "view"}`. The global /live.js never carries the flag.
+- New `director.view_on(cfg) -> bool`, read on every call with no caching (B's tests flip cfg between tests):
+  - demo on (`cfg["demo"]["enabled"]`; `server.create_app` already folds `WL_DEMO` into it): `tester.json` at `common.listener_dir(cfg)` has `"earpiece_view": true`.
+  - demo off: `settings(cfg)["view"]` is truthy.
+  - Anything else is False. In demo mode the config key is ignored.
+
+A2. The tester field
+- demo/testers.py:
+  - `create(cfg, label, base=None, name=None, chapter=None, earpiece_view=False)` writes `"earpiece_view": true` to tester.json and the registry entry only when it is on. Absent means off. Follow the `chapter` pattern.
+  - New `set_earpiece_view(lid, on: bool) -> dict`: writes the bool to tester.json and mirrors it into the registry, as `set_chapter` does.
+  - New `earpiece_view(rec) -> bool`.
+  - `reset()` and `open_link()` (folder remade) carry it over.
+- demo/state.py: `all_states` rows gain `"earpiece_view": bool`.
+- demo/cli.py:
+  - `wl study create <label> ... --earpiece-view` passes `earpiece_view=True`. The printed line adds ", earpiece view".
+  - `wl study testers` lists "earpiece view" among the flags.
+  - Update the docstring.
+
+A3. The admin routes (demo/routes.py; every one calls `guard(request)` first)
+- `NewTester` gains `earpiece_view: bool = False`. `POST /api/admin/testers` passes it on.
+- `POST /api/admin/testers/{lid}/earpiece` with `{"value": "on"|"off"}` (reuse `Card`):
+  - answer: `{"earpiece_view": bool}`
+  - 400 for any other value; 404 for an unknown tester (`_tester_or_404`)
+- `GET /api/admin/testers`: rows carry `earpiece_view`. The response gains `"demo": demo_on(cfg)`.
+- `GET /admin/earpiece` serves page/admin_earpiece.html (NO_STORE). The page reads `?lid=` and `&session=`.
+- `GET /api/admin/earpiece/{lid}` lists the conversations. `lid` is a tester id, or `"own"`, which means `common.listener_dir(cfg)` after `guard()` (the active listener; Ian's own when demo is off).
+  - Answer: `{"lid", "label": tester label or "Your own", "conversations": [...]}`, newest first. One entry per `sessions/<id>.jsonl` whose stem matches `\d{8}-\d{6}(-\d+)?`:
+    `{"session", "started": iso of first row t, "ended": iso of last row t, "minutes": float 1dp, "lines": guide+listener rows with text, "looks", "notes": looks with a note, "sent", "dropped", "errors", "cost_usd": sum of director cost_usd}`
+  - 404 for an unknown tester.
+- `GET /api/admin/earpiece/{lid}/{session}` is one conversation's timeline. 404 for an id that doesn't match the pattern or a missing file.
+- page/admin.html:
+  - Per row, a select `data-do="earpiece"` with options "Earpiece view: off" and "Earpiece view: on" (value off/on), posting to the route above, like the "chapter" select.
+  - Per row, a link "Earpiece history" to `/admin/earpiece?lid=<lid>`.
+  - In the create form, a checkbox `#earpiece-view` labelled "Earpiece view", sent as `earpiece_view`.
+  - When `demo` is false, a line at the top: "Your own conversations: earpiece history", linking to `/admin/earpiece?lid=own`.
+
+A4. Timeline builder (voice/gpt_live/earpiece_history.py; pure file reading, no model)
+- `conversations(folder: Path) -> list[dict]` and `timeline(folder: Path, session: str) -> dict`.
+- `plan_changes(prev, plan) -> (plan_with_change, removed)` follows the shared rule.
+- `timeline()` answer:
+  `{"lid", "session", "started", "ended", "director": {"looks", "notes", "sent", "dropped", "held", "errors", "cost_usd"}, "items": [...]}`
+  Items come in file order. Every item has `"t"` (iso), `"clock"` ("HH:MM:SS"), `"secs"` (int since the first row) and `"kind"`:
+  - `{"kind": "line", "who": "guide"|"listener", "text"}`
+  - `{"kind": "note", "text", "whisper": bool, "look": int|null}`: a "page" row. `whisper` is true when `director.whisper_in(text)` matches. `look` is the id of the look whose note equals that whisper's note (the latest such look before the row).
+  - `{"kind": "tool", "name"}`
+  - `{"kind": "session", "live_id"}`: a "session" row, meaning a new GPT-Live session.
+  - `{"kind": "look", "id", "trigger", "speaking", "ms", "asked_secs": secs - round(ms/1000), "cost_usd", "error": str|null, "read", "plan": [{"item", "state", "change"}], "removed": [str], "next", "changed", "note", "note_kind": the row's kind, "about", "fate", "delivered", "reply"}`
+- The fate fields on a look:
+  - `fate`: `{"fate": "sent"|"dropped"|"held", "reason", "detail", "held_secs": float|null, "t", "clock", "secs", "inferred": bool}` or null. Built from the "director_fate" rows with the same id: the final row wins, and a "held" row fills `held_secs` = (final secs - held secs) or comes from `held_ms`.
+  - With no fate rows (older conversations) but a matching whisper note after the look: `{"fate": "sent", "inferred": true, ...}` at that note's time.
+  - With neither: null. The page shows that as "no fate recorded (the page had moved on or closed)".
+  - `delivered`: `{"t", "clock", "secs"}` of the matched whisper note row, else null.
+  - `reply`: the first "guide" row after the delivered row, as `{"t", "clock", "secs", "after_secs": its secs - delivered secs, "text"}`, else null. Label it as the line's end ("ended +N s"), since rows are written when a line ends.
+- "director_fate", "event" and any other `who` are not items of their own.
+
+A5. The fate route (voice/gpt_live/routes.py, plus a helper in director.py)
+- `POST /api/live/direct/fate`. Pydantic model `Fate`:
+  ```
+  session: str
+  id: int                                          # the look's id
+  fate: str                                        # sent|held|dropped
+  reason: str | None = None
+  detail: str | None = Field(None, max_length=200)
+  secs: float | None = None                        # page clock since the conversation started
+  held_ms: int | None = None
+  ```
+- 400 when `fate` is not in `director.FATES`, when `reason` is not in `FATE_REASONS`, or when `fate == "dropped"` has no reason.
+- Under `chat.lock`: `session = chat.current(req.session)` (409 if ended), then
+  `session.record("director_fate", id=..., fate=..., reason=..., detail=..., page_secs=req.secs, held_ms=req.held_ms)`.
+- The answer is `{"ok": true}`.
+- The row shape, exactly: `{"t", "who": "director_fate", "id", "fate", "reason", "detail", "page_secs", "held_ms"}`. Never a "text" or "note" key.
+- Keep the delivered whisper's app-note row exactly as it is today (instruct posts it).
+- Update the module docstring's route list.
+
+A6. The per-request flag and the script
+- `POST /api/live/start` answer gains `"earpiece_view": live_director.view_on(cfg)`. It is not added to `/api/live/resume`.
+- `GET /earpiece.js`:
+  - 404 (empty) unless `view_on(cfg)` is true for this request's listener.
+  - Otherwise `EARPIECE_JS.read_text()` as text/javascript with Cache-Control no-cache. `EARPIECE_JS = ROOT / "page" / "earpiece.js"` is a module constant (tests monkeypatch it).
+  - 404 also if the file is missing.
+- No server.py change is needed: with a valid tester cookie TesterScope passes everything through, and without one the page is 404 anyway.
+
+A7. A's tests (offline; no paid calls)
+- test_testers.py:
+  - create with and without `earpiece_view` (tester.json and registry)
+  - `set_earpiece_view` toggles it
+  - reset and open_link (folder remade) keep it
+- test_state.py: rows carry `earpiece_view`.
+- test_study_cli.py: `create X --earpiece-view` sets the flag and prints ", earpiece view".
+- test_admin.py:
+  - create with `earpiece_view`; on/off; 400 for a bad value; 404 for an unknown tester; the list has `earpiece_view` and `demo`
+  - a non-loopback request without credentials gets 403/401 on `/admin/earpiece`, `/api/admin/earpiece/<lid>` and `/api/admin/earpiece/<lid>/<id>`
+  - History, from a hand-written transcript in a tester's `sessions/` with: lines; a whisper note built from notes.md "direct"; director rows with plans across two looks (one item done, one new, one removed); fate rows held→sent and one dropped "gap". Check:
+    - the list counts
+    - item order
+    - plan change marks and `removed`
+    - fate with `held_secs`
+    - delivered and reply `after_secs`
+    - an older conversation without fate rows gives `inferred: true`
+    - a bad id gives 404
+    - `lid=own` works with demo off
+  - In the existing Playwright admin site fixture: the select posts, the link href is right, and the history page renders a timeline with no horizontal scroll at 375 px.
+- test_server_testers.py (demo fixture): a tester without the flag gets `earpiece_view` false on start and 404 on `/earpiece.js`. A tester with it gets true and 200 (`EARPIECE_JS` monkeypatched to a tmp file). Demo mode ignores `live.director.view`.
+- test_director.py:
+  - `view_on` off-demo follows the config key; the `page_settings` director has no "view"
+  - the fate route records the exact row shape, with no "text"
+  - 400 for a bad fate, a bad reason, or "dropped" with no reason; 409 for an ended session
+  - fate rows are never read by `lines_from_transcript`, `memory()`, `notes_text`, `guide.earlier_text`, `live_session.explained()` or `stages.memory`'s transcript text
+  - `/api/live/start` gives `earpiece_view` false by default and true with `live.director.view: true`
+  - `/earpiece.js` gives 404 off and 200 on
+- Run with `-x -q`, narrowed with `-k` while iterating: tests/live/test_director.py, tests/live/test_live_server.py, tests/demo/test_admin.py, tests/demo/test_testers.py, tests/demo/test_state.py, tests/demo/test_study_cli.py, tests/demo/test_server_testers.py.
+- Land A5, A6 and the `view_on` part of A1 first. They are small, and B's page tests hit them for real.
+
+====================================================================
+IMPLEMENTER B: page side
+====================================================================
+Files B owns:
+- page/live.js
+- page/earpiece.js (new)
+- tests/live/test_live_page.py
+- page/live.html only if it can't be avoided. The plan needs no change there: earpiece.js injects its own style and element.
+
+B1. The hook in page/live.js (feeds the panel and posts fates; must not change any decision)
+- `L.dirEvents = []` in L, kept across conversations and capped at 500.
+- `dirEmit(type, fields)`:
+  - builds `ev = {type, at: Date.now(), secs: L.convAt ? Math.round((at - L.convAt) / 100) / 10 : null, session: L.session, ...fields}`
+  - pushes it onto `L.dirEvents`
+  - then `try { window.Earpiece && Earpiece.event(ev) } catch (e) {}`
+  - It never throws, never awaits, and never reads anything back from Earpiece.
+- Emit points:
+  - `connect()`, after `if (!resume) L.convAt = now();`: `dirEmit("conversation", {handoff: !!L.handoffOpen})`. For a resume that came up: `dirEmit("session", {reason: resume})`.
+  - `directorAsk`, after `mark("direct-ask")`: `dirEmit("ask", {id, trigger, speaking, silence_ms, last_who, page})`, the same values as the request body.
+  - `directorGot`, first line: `dirEmit("look", {id: got && got.id, got})`. This fires for error answers too. If a new whisper replaces a pending `D.next`, call `dirFate(oldNext, "dropped", "replaced")` before replacing it. The new `D.next` also carries `id: got.id`.
+  - `directorFailed(why, id)`: pass the look id from the `directorAsk` callbacks, then `dirEmit("fail", {id, why, fails: D.fails})`. When it goes down: if `D.next`, call `dirFate(D.next, "dropped", "down")` first, then `dirEmit("down", {})`.
+  - `directorDeliver`:
+    - "hold": `if (!n.heldAt) { n.heldAt = t; dirFate(n, "held"); }` (once per note, not every tick)
+    - "drop": `dirFate(n, "dropped", directorWhy(n, t, st, C), detail)`. The detail is `dirHereWhy()` for not_here, or `"<s> s after the last"` for gap.
+    - "send": build the text, call `dirFate(n, "sent", null, null, {text})`, then `instruct(text)` as now.
+    - `st` is the same object that is passed to `directorVerdict`. Hoist it into a const.
+  - `dirForget(why)`: if `D.next`, call `dirFate(D.next, "dropped", "forgotten", why)`. Then `dirEmit("forget", {why})`. The callers pass `"new session: " + resume`, `"rest"` and `"wake"`.
+  - `newConversation()`: if the old `L.dir.next` is pending, `dirEmit("fate", {id, fate: "dropped", reason: "ended", note, kind, about})`. Panel only, not posted.
+  - Lines. The 200 ms loop's guide line, next to `directorLine(false)`: `dirEmit("line", {who: "guide", text, began: L.lineAt || t})`. The listener line: `{who: "listener", text, began: L.inStart || L.inAt}`. A typed line (around line 2626): `{who: "listener", text, typed: true, began: now()}`.
+  - `instruct(text)`: `dirEmit("note", {text})`.
+- `dirFate(n, fate, reason = null, detail = null, extra = {})`:
+  - builds `body = {session: L.session, id: n.id, fate, reason, detail: detail && String(detail).slice(0, 200), secs, held_ms: n.heldAt && fate !== "held" ? t - n.heldAt : null}`
+  - unless `reason === "ended"`, and if `L.session && n.id != null`: `quietPost("/api/live/direct/fate", body)`
+  - then `dirEmit("fate", {...body, note: n.note, kind: n.kind, about: n.about, ...extra})`
+  - Fates are posted whenever the earpiece is on, with or without the panel, so the admin history is complete for every tester. This is fire-and-forget and changes nothing.
+- New pure functions, exported on `window.Live` next to `directorVerdict`:
+  - `directorWhy(n, t, st, C) -> reason | null`. It mirrors `directorVerdict`'s order: not_here → stale_after_start → explained → listener_spoke (kind now) → gap. It returns null exactly when the verdict isn't "drop".
+  - `dirHereWhy() -> ""` when `dirHere()`, else the first failing condition, in `dirHere`'s order. Labels: "off", "phase <phase>", "no session", "channel closed", "muted", "waiting on the guide", "handing back", "debrief", "held", "reading started", "chapter offered", "stepping back", "reply wait", "after a sound wake", "tool call in flight", "guide not yet spoken". Do not refactor `dirHere`, `directorVerdict` or anything else that decides.
+- Loading:
+  - In `connect()`, after a fresh `/api/live/start`: `if (got.earpiece_view) loadEarpiece(); else if (window.Earpiece) Earpiece.remove();`
+  - `loadEarpiece()`: if `L.earpieceLoaded`, return. Otherwise set it true and append `<script src="/earpiece.js" async>` to document.head. On error, set `L.earpieceLoaded = false`. This works in the gate document too: the handover injects live.js there.
+  - Nothing reads the flag from `S`.
+
+B2. page/earpiece.js (plain IIFE, no frameworks)
+- It reads only `window.Live.L.dirEvents` (a replay on load) and `window.Live.S.director.enabled`. It never calls into Live, never posts, never changes L.
+- It defines `window.Earpiece = {event(ev), open(bool), remove()}`. `remove()` drops the DOM and the style, deletes `window.Earpiece`, and sets `Live.L.earpieceLoaded = false`.
+- DOM:
+  - `<aside id="earpiece" aria-label="Earpiece">` containing the header `<button id="earpiece-head" aria-expanded>` and `<ol id="earpiece-list">`.
+  - Style in `<style id="earpiece-style">`, using live.html's `--accent`/`--fg`/`--bg`/`--muted`/`--line` with fallbacks (accent #d9822b), the system font at 13 px, one accent colour.
+  - The header shows "Earpiece", the conversation id, and counts ("6 looks · 2 sent · 1 dropped"). It shows "off" when `S.director.enabled` is false and "down" after a down event. The open/folded state is kept in localStorage `"wl.earpiece.open"` inside try/catch; it starts open.
+- Layout:
+  - position fixed, z-index 12, `left: calc(12px + env(safe-area-inset-left))`
+  - top: 12 px plus the safe area; 56 px below 600 px of width (under End demo)
+  - width `min(340px, calc(100vw - 24px))`
+  - Max height, recomputed on resize, on scroll and on every event, with a floor of 96 px:
+    - when the panel overlaps #orb horizontally and the orb is on screen: orb rect top - panel top - 8
+    - otherwise: innerHeight - panel top - (heights of a visible #player and #lib-player) - 12
+  - overflow auto
+  - hidden under `body.handoff:not(.revealed)` and `body.debrief`
+  - It never covers #orb, #end-demo or #player.
+- Entries, newest first, at most 200 kept. Each has an m:ss and HH:MM:SS stamp.
+  - `<li class="look" data-session data-id>`:
+    - while asking: "Looking… (<trigger>)"
+    - "<trigger> · <speaking> speaking"
+    - the read (muted)
+    - the plan as a checklist `<li data-state="open|done|dropped" data-change="new|done|dropped|open|">` (marked when changed; dropped struck through) plus "removed: …"
+    - "Next: …"
+    - when there is a note: the note, "kind · about", and `<div class="fate" data-fate data-reason>`:
+      - "Sent to the guide at m:ss"
+      - "Held m:ss, sent m:ss"
+      - "Dropped at m:ss: <plain reason>" (not_here shows its detail)
+      - with no fate yet: "waiting"
+    - after a sent note: `<div class="reply">` "Guide began N.N s after: “…”", using the first guide line event whose `began` ≥ the sent `at`, cut to 140 characters
+  - `<li class="fail">` "Look failed: <why>"
+  - a banner `<div class="down">` "Earpiece down: the page's clocks have taken over"
+  - a grey forget line, "Pending note forgotten (<why>)", or "Cleared (<why>)" when nothing was pending
+  - a page note that wasn't a whisper (one whose text doesn't equal a sent fate's text): `<li class="note">`, one grey line cut to 120 characters, full text in the title attribute
+  - "conversation" and "session" events as dividers
+- An ask with no look before a "forget" is shown as "answer not used (the page moved on)".
+
+B3. B's tests (tests/live/test_live_page.py; the fake director via the existing `director_on()` and `whisper()`)
+- Add `w.cfg = cfg` in `site`. `view_on()` reads `cfg["live"]["director"]["view"]` live; demo is off in this fixture.
+- New tests:
+  1. `test_without_the_flag_the_earpiece_is_never_loaded`: a whisper goes as before; there is no request to /earpiece.js, no #earpiece, and `window.Earpiece` is undefined.
+  2. `test_with_the_flag_the_panel_shows_each_look_newest_first`: a whisper, then a plan-only change, then a second whisper. Check card order, trigger, speaking, read, plan states and `data-change` marks, next, and the fate "sent" with its m:ss. After `p.say(...)` the reply shows with its seconds.
+  3. `test_held_dropped_replaced_and_forgotten_fates_are_shown_and_posted`:
+     - a "now" note while the listener is mid-line goes held, then sent (held_ms > 0; exactly one held post)
+     - a gap drop gives reason "gap" with its detail
+     - a replaced note gives "replaced"
+     - a rest with a note pending gives "forgotten" with detail "rest"
+     - Check the `/api/live/direct/fate` post bodies via `p.post_bodies("api/live/direct/fate")`.
+  4. `test_fates_are_posted_without_the_panel`: flag off; the sent and dropped posts still go.
+  5. `test_errors_and_the_earpiece_going_down_show_plainly`: `["error", "error"]` gives two fail rows and the down banner.
+  6. `test_the_panel_folds_and_never_covers_the_circle_end_demo_or_the_play_bar`: at 375x812 and 1280x800, with about 30 looks and #player and #end-demo forced visible, the panel's rect doesn't intersect them. The header toggles `aria-expanded` and hides the list.
+  7. `test_the_panel_changes_nothing`: the same answers with the flag on and off give the same `instructions(p)` and the same director marks, and the same `L.log` direct-* sequence. A throwing `Earpiece.event` still lets the whisper go.
+  8. `test_directorWhy_names_each_drop_and_nothing_else`: a pure table through `Live.directorWhy` against `Live.directorVerdict`, plus `dirHereWhy()` being "" exactly when `dirHere` is true in two states.
+- Run `tests/live/test_live_page.py -k "director or earpiece" -x -q`: the new tests plus the existing director tests, since live.js's director code changes. Never the whole file. Also run `node --check page/live.js page/earpiece.js` if node is installed.
+
+====================================================================
+NEITHER TOUCHES
+====================================================================
+server.py, voice/gpt_live/notes.md, prompts/*, voice/gpt_live/instructions/*, tests/conftest.py, page/gate.html, page/interview.js, CLAUDE.md, PROGRESS.md, NEEDS_HUMAN.md. The lead writes the docs.
+
+Nothing goes to the model, so no prompt text changes; labels live in the JS and HTML. No paid calls, no commits, nothing started on 8765 or 8767.
