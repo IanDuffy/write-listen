@@ -44,7 +44,9 @@ Seed runs (Phase 1, docs/phase1-onboarding.md): a 20-minute lesson from a listen
     new [run] --seed "..." --unattended --mode fast
                                  Fast Start (docs/fast-start.md): the opening plays a few minutes after
                                  the topic is set, and the rest is researched, written, edited and narrated
-                                 section by section meanwhile. A run started fast continues fast.
+                                 section by section meanwhile. A run started fast continues fast. A run
+                                 marked a rehearsal (fast.json, faststart/rehearsal.py) replays a finished
+                                 chapter instead: no research, writing or model calls.
     new [run] --seed "..."       just write 00_source/seed.md; then run the stages one by one:
     scout <run>                  seed -> 01_map.md (10 searches), then angles, choose, ... as above
     chat                         talk with the guide in the terminal (milestone 3); it starts the
@@ -196,6 +198,9 @@ def new_run(args, cfg: dict) -> int:
         return 0
     r.unattended = True
     if fast:
+        from faststart import rehearsal
+        if rehearsal.marked(r.root):  # a rehearsal (fast.json): replayed from a finished chapter, never made
+            return _rehearse(r, cfg)
         from faststart import run as fast_run
         r.max_usd = args.max_usd if args.max_usd is not None else cfg["fast"]["max_run_usd"]
         fast_run.run(r, cfg)
@@ -205,8 +210,40 @@ def new_run(args, cfg: dict) -> int:
     return 0
 
 
+def _runs_dir_from_env() -> None:
+    """A server whose runs folder is fixed (server.Pipeline(runs_dir=...): tests, the page checks) names it in
+    $WRITE_LISTEN_RUNS_DIR, so this process opens the run start_seed wrote, not one in the listener's chapters."""
+    import os
+    from pathlib import Path
+
+    from stages import common, seed
+
+    fixed = os.environ.get(common.RUNS_ENV, "").strip()
+    if fixed:
+        common.RUNS_DIR = seed.RUNS_DIR = Path(fixed)
+
+
+def _rehearse(r: Run, cfg: dict) -> int:
+    """Replay a rehearsal (faststart/rehearsal.py). SIGTERM (Pipeline.stop's second signal) is turned into the
+    KeyboardInterrupt that SIGINT already raises, so the replay writes its problem status either way."""
+    import signal
+
+    from faststart import rehearsal
+
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+
+    old = signal.signal(signal.SIGTERM, interrupted)
+    try:
+        rehearsal.run(r, cfg)
+    finally:
+        signal.signal(signal.SIGTERM, old)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    _runs_dir_from_env()
     if argv and argv[0] == "deploy":  # the droplet's deploy is a shell script (it restarts this very app)
         import os
         script = str(ROOT / "deploy" / "deploy.sh")

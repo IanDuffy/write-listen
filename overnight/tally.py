@@ -35,6 +35,8 @@ def main(argv=None) -> int:
     for r in rows:
         print(f"  {r['session']}  {r['run']}  ended: {r['ended']}  {r['seconds']} s")
     for ch in profiles.chapters(listener=listener):
+        if profiles.rehearsal(ch):  # a voice test's replayed chapter, not a recorded one
+            continue
         asides = [x for x in profiles.read_jsonl(ch / "12_asks" / "asides.jsonl") if x.get("voice") == "gpt-live"]
         for x in asides:
             print(f"  aside {ch.name} at {x['t']:.0f}s -> restart {x['restart']['t']:.1f}s ({x['restart']['rule']}), "

@@ -415,3 +415,99 @@ def test_a_page_open_during_a_reset_runs_no_pass_on_the_conversation_let_go(demo
     assert getattr(demo.resp, "memory_calls", 0) == before
     assert "skipped" in (demo.L / "t-alice" / "sessions" / f"{sa}.done").read_text()
 
+
+
+# --- rehearsal chapters (faststart/rehearsal.py, Ian 2026-11-20) -------------------------------------
+
+@pytest.fixture
+def rehearsing(demo, tmp_path, monkeypatch):
+    """A source to replay, live voice on, and every paid path made to raise; card starts recorded."""
+    import faststart.card as card_mod
+    from faststart import rehearsal
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "faststart"))
+    from rehearsal_fakes import make_source
+    src = make_source(tmp_path / "source-chapter")
+    demo.cfg["rehearsal"] = {"own": False, "source": str(src), "sections": 2, "opening_seconds": 90,
+                             "after_speed": 1.0}
+    monkeypatch.setattr(fast_base, "live_voice", lambda cfg: True)
+    cards = []
+    monkeypatch.setattr(card_mod, "start", lambda root, cfg: cards.append(root))
+
+    def paid(*a, **k):
+        raise AssertionError("a paid call")
+    monkeypatch.setattr(llm, "call", paid)
+
+    def chapter(lid, value):
+        p = demo.L / lid / "tester.json"
+        rec = json.loads(p.read_text())
+        rec.pop("chapter", None)
+        profiles.write_json(p, {**rec, **({"chapter": value} if value else {})})
+    return NS(src=src, cards=cards, chapter=chapter, rehearsal=rehearsal)
+
+
+def test_rehearsal_start_skips_queue_and_card(demo, rehearsing, monkeypatch):
+    demo.cfg["demo"]["max_builds"] = 1
+    app = server.create_app(cfg=demo.cfg, remember_on_start=False)
+    q = app.state.build_queue
+    b = TestClient(app, headers={"cookie": "wl_tester=tokB"})
+    start(b, "Why bridges sway")  # a real build holds the only slot
+    assert len(demo.launched) == 1
+    rehearsing.chapter("t-alice", "rehearsal")
+    pipe = server.state_for("t-alice").pipe
+    run = pipe.start_seed("Roman concrete", mode="fast", live=True)
+    root = demo.L / "t-alice" / "chapters" / run
+    assert len(demo.launched) == 2  # at once: never queued behind Bob
+    assert demo.launched[1]["cmd"][2:] == ["new", run, "--unattended", "--mode", "fast"]
+    marker = json.loads((root / "fast.json").read_text())["rehearsal"]
+    assert marker["opening_seconds"] == 90.0 and marker["sections"] == 2 and marker["source"] == str(rehearsing.src)
+    assert json.loads((root / "fast" / "card.json").read_text())["title"] == "What the Heron Does"
+    time.sleep(0.05)
+    assert rehearsing.cards == []  # no paid card call
+    (root / "status.json").write_text(json.dumps({"run": run, "state": "making", "pid": os.getpid()}))
+    with q.lock:
+        assert str(root) not in q.running()
+    monkeypatch.setattr(q, "submit", lambda *a, **k: (_ for _ in ()).throw(AssertionError("queued")))
+    pipe.start(["new", run, "--unattended"], run)  # Try again
+    assert len(demo.launched) == 3 and demo.launched[2]["cmd"][2:] == ["new", run, "--unattended"]
+
+
+def test_rehearsal_and_real_runs_of_one_seed_stay_apart(demo, rehearsing):
+    pipe = server.state_for("t-alice").pipe
+    real = pipe.start_seed("Herons", mode="fast", live=True)
+    demo.launched[-1]["proc"].returncode = 0
+    real_root = demo.L / "t-alice" / "chapters" / real
+    (real_root / "status.json").write_text(json.dumps({"run": real, "state": "stopped"}))
+    rehearsing.chapter("t-alice", "rehearsal")
+    rh = pipe.start_seed("Herons", mode="fast", live=True)
+    assert rh != real and rehearsing.rehearsal.marked(demo.L / "t-alice" / "chapters" / rh)
+    assert not rehearsing.rehearsal.marked(real_root)  # the unfinished real run was not taken over
+    demo.launched[-1]["proc"].returncode = 0
+    (demo.L / "t-alice" / "chapters" / rh / "status.json").write_text(json.dumps({"run": rh, "state": "stopped"}))
+    again = pipe.start_seed("Herons", mode="fast", live=True)  # a rehearsal again: the stopped rehearsal goes on
+    assert again == rh
+    demo.launched[-1]["proc"].returncode = 0
+    rehearsing.chapter("t-alice", "real")
+    back = pipe.start_seed("Herons", mode="fast", live=True)  # real again: the real run, never the rehearsal
+    assert back == real
+
+
+def test_testers_get_real_chapters_by_default(demo, rehearsing):
+    pipe = server.state_for("t-alice").pipe
+    run = pipe.start_seed("Roman concrete", mode="fast", live=True)
+    root = demo.L / "t-alice" / "chapters" / run
+    assert "rehearsal" not in json.loads((root / "fast.json").read_text())
+    for _ in range(100):
+        if rehearsing.cards:
+            break
+        time.sleep(0.01)
+    assert rehearsing.cards == [root]  # the card's thread starts as before
+
+
+def test_rehearsal_without_source_is_409(demo, rehearsing, tmp_path):
+    from fastapi import HTTPException
+    rehearsing.chapter("t-alice", "rehearsal")
+    demo.cfg["rehearsal"]["source"] = str(tmp_path / "nowhere")
+    with pytest.raises(HTTPException) as e:
+        server.state_for("t-alice").pipe.start_seed("Roman concrete", mode="fast", live=True)
+    assert e.value.status_code == 409 and "not there" in e.value.detail
+    assert demo.launched == []

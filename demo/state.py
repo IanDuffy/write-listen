@@ -14,7 +14,10 @@ is right whoever's request (or none) is in scope.
   heard), at live.page.words_per_second.
 - questions: that chapter's asides of kind ask in which the listener said something.
 - all_states adds the tester's record, with debrief_card (auto/on/off): whether a tester who comes back with
-  the debrief not done sees the End demo button (demo/testers.py).
+  the debrief not done sees the End demo button (demo/testers.py), and chapter_kind (real/rehearsal): what
+  their chapters are, tester.json's chapter else config demo.chapter ("chapter" is the newest chapter's folder).
+- rehearsal: the newest chapter is a rehearsal (fast.json, faststart/rehearsal.py), and rehearsal_source the
+  chapter it replays. Its cost is $0: a rehearsal logs none.
 - The tester's button presses (study/events.jsonl, POST /api/demo/event) count as activity for last_active,
   like every study/*.jsonl; the debrief's account of what they did is demo/debrief.activity.
 - cost: sessions/log.jsonl, study/log.jsonl, chapters/*/log.jsonl (minus the early scout's lines copied in
@@ -30,6 +33,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from faststart import rehearsal as rehearsal_mod
 from overnight import profiles
 
 from . import testers
@@ -209,6 +213,8 @@ def tester_state(cfg: dict, lid: str) -> dict:
         "last_active": _iso(last),
         "chapter": ch.name if ch else None,
         "title": chapter_title(ch),
+        "rehearsal": bool(marker := (rehearsal_mod.marked(ch) if ch else None)),
+        "rehearsal_source": (marker or {}).get("source_run"),
         "minutes_heard": minutes_heard(cfg, ch),
         "chapter_minutes": minutes,
         "questions": len(asks(ch)),
@@ -227,6 +233,7 @@ def all_states(cfg: dict) -> list[dict]:
         out.append({"lid": rec["lid"], "label": rec.get("label"), "token": rec.get("token"),
                     "name": rec.get("name"), "created": rec.get("created"), "opened_at": rec.get("opened_at"),
                     "consent_at": rec.get("consent_at"), "debrief_card": rec.get("debrief_card") or "auto",
+                    "chapter_kind": testers.chapter_of(cfg, rec),
                     "revoked": not rec.get("token"), **tester_state(cfg, rec["lid"])})
     return out
 

@@ -650,6 +650,30 @@ Deploy: `DEPLOY.md`, `deploy/`.
   - **What the live checks showed:** the per-line director's `persona --director` asked only after guide lines, so
     in four conversations all 12 decisions were `wait`. That led to the earpiece above.
 
+## Rehearsal chapters and the guide's peek (2026-11-20, feature/tester-demo)
+
+Ian: "add a toggle that turns off the story writing part for now", and "it might be good to see at least something
+to tease what's being written". Code: `faststart/rehearsal.py`, `faststart/peek.py`; tests
+`tests/faststart/test_rehearsal.py`, `test_peek.py`.
+- **Rehearsal**: a chapter asked for is not researched or written; a finished live fast chapter (config `rehearsal.source`,
+  default the newest complete one under `shared/rehearsal/`, gitignored; Ian's heron chapter is there) is replayed on its
+  own timeline, cut to `rehearsal.sections` (2) and timed so the opening is ready at `opening_seconds` (90), the rest at
+  `after_speed`. It writes the same files and status.json as a real live run, so the page, the guide, the library, End demo
+  and the debrief work unchanged; nothing is paid (no card call: the source's card is copied). Marked in fast.json
+  (`rehearsal`), dispatched by `cli.py new` on that marker (so Retry stays a rehearsal), never queued or counted in
+  `demo.max_builds`, never the listener's latest chapter or planned from (`overnight/profiles.rehearsal`). The guide is not
+  told; the chapter is about herons whatever was asked. Per tester: `wl study create ... --rehearsal`, the admin page's
+  "Chapter: real / rehearsal" (tester.json `chapter`), default `demo.chapter: real`; off demo mode `rehearsal.own: true`.
+  `voice.gpt_live.pagecheck` rehearses unless `--real`. The server passes a fixed runs folder to the child as
+  `WRITE_LISTEN_RUNS_DIR`.
+- **Peek**: get_status's `peek` (`faststart/guide_hooks.for_guide`), by code from the run's files, no model call, at most
+  60 words: `about` (card overview, until the outline), `question` (through_line), `working_on` (the part being written
+  and what it settles; the last part's title only), `looking_into` (research questions under way), `found` (one short
+  standalone finding, the working part's newest rows first; never a research note, an unnamed-source sentence, or one
+  echoing the last part's lands or the closing idea). The live guide (30_pitch.md, 80_policies.md, backend.md) and the
+  typed guide (prompts/guide.md) tease one thing from it in their own words, never the step or the ending. Live check: asked
+  "how's it coming along?" the guide said it was "digging into ... how water makes a fish seem somewhere it's not".
+
 ## Local setup
 
 ```bash
@@ -659,8 +683,9 @@ brew install ffmpeg poppler  # macOS; on Linux: apt install ffmpeg poppler-utils
 cp .env.example .env         # fill in ANTHROPIC_API_KEY and ELEVENLABS_API_KEY
 ```
 
-`.env` is gitignored. The code reads `WRITE_LISTEN_ANTHROPIC_API_KEY` first,
-then `ANTHROPIC_API_KEY` (from `.env`), and passes the key and
+`.env` is gitignored. The code reads `ARTICLE_PIPELINE_ANTHROPIC_API_KEY` first (Ian's cloud
+environment holds the key under that name, 2026-11-20, so a session never sees it), then
+`WRITE_LISTEN_ANTHROPIC_API_KEY`, then `ANTHROPIC_API_KEY` (from `.env`; `llm.KEY_VARS`), and passes the key and
 `https://api.anthropic.com` to the client explicitly. The dedicated variable
 exists so the pipeline never uses or overrides a key that Claude Code itself
 relies on. Without `ELEVENLABS_API_KEY` the ElevenLabs client sends a
@@ -794,7 +819,10 @@ real key), so locally it must be in `.env`.
 - Prompts live only in `prompts/*.md` (the live guide's in `voice/gpt_live/instructions/`, per its spec), never inline in code. Inputs are listed
   above a `---` line, which `load_prompt` drops; `{{placeholders}}` below it
   must all be supplied, or it raises.
-- Run the tests before every commit. Add a regression test with each bug fix.
+- Run the tests before every commit: the files that cover the change. For changes to the voices and the page
+  (live guide, earpiece, interviewer, tester flow) that is tests/live, tests/demo, tests/faststart and the server
+  tests that apply, not the full ~38-minute suite, which is mostly the chapter pipeline (Ian, 2026-11-20); run the
+  full suite when pipeline stages change. Add a regression test with each bug fix.
 - Ian dislikes invented distinctions and padding: be direct, recommend.
 
 ## Parser contracts (code depends on these formats; keep prompts and code in step)
@@ -862,4 +890,6 @@ A personal Claude Code cloud environment `write-listen` exists, with the
 ElevenLabs key saved as a network secret for `api.elevenlabs.io`. Anthropic
 keys can't be added there (Anthropic hosts bypass the proxy), and elevenlabs.io's
 docs site was not reachable from it, so Phase 1 development continues locally
-(Ian, 2026-11-12).
+(Ian, 2026-11-12). Since 2026-11-20 the Anthropic key can be there as the environment variable
+`ARTICLE_PIPELINE_ANTHROPIC_API_KEY` (read first, above). Gitignored state (`listeners/`, `shared/`,
+including `shared/rehearsal/`, `runs/`, `.env`) is not in a cloud checkout.

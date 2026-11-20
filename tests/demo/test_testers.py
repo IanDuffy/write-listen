@@ -339,3 +339,44 @@ def test_a_label_for_a_kind_of_tester_is_not_greeted_as_a_name(dcfg):
     assert testers.greeting_name("Rolando") == "Rolando" and testers.greeting_name("  Mary   Ann ") == "Mary Ann"
     assert testers.greeting_name("Design Team", " Purnima ") == "Purnima"
     assert testers.create(dcfg, "Mom", name="Ruth")["name"] == "Ruth"
+
+
+def _source(tmp_path):
+    """A finished chapter to replay (tests/faststart/rehearsal_fakes.py)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "faststart"))
+    from rehearsal_fakes import make_source
+    return make_source(tmp_path / "source-chapter")
+
+
+def test_chapter_choice_survives_reset_and_rebuild(dcfg, tmp_path):
+    """Rehearsal chapters (faststart/rehearsal.py): a tester made with chapter rehearsal keeps it through a reset
+    and a folder rebuilt on first open; the admin's set_chapter checks the value and that there is a source."""
+    dcfg["rehearsal"] = {"source": str(_source(tmp_path))}
+    got = testers.create(dcfg, "Voice Test", name="Ian", chapter="rehearsal")
+    lid = got["lid"]
+    assert got["chapter"] == "rehearsal" and testers.record(lid)["chapter"] == "rehearsal"
+    reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
+    assert reg["tokens"][got["token"]]["chapter"] == "rehearsal"
+    testers.reset(lid, dcfg)
+    assert testers.record(lid)["chapter"] == "rehearsal"
+    import shutil
+    shutil.rmtree(common.LISTENERS_DIR / lid)
+    assert testers.open_link(dcfg, got["token"])["chapter"] == "rehearsal"  # the folder made again on first open
+    assert testers.chapter_of(dcfg, testers.record(lid)) == "rehearsal"
+    assert testers.set_chapter(dcfg, lid, "real")["chapter"] == "real"
+    assert json.loads((common.SHARED_DIR / "testers.json").read_text())["tokens"][got["token"]]["chapter"] == "real"
+    with pytest.raises(StageError, match="chapter must be one of"):
+        testers.set_chapter(dcfg, lid, "x")
+    dcfg["rehearsal"]["source"] = str(tmp_path / "gone")
+    with pytest.raises(StageError, match="not there"):
+        testers.set_chapter(dcfg, lid, "rehearsal")
+    with pytest.raises(StageError, match="not there"):
+        testers.create(dcfg, "Another", chapter="rehearsal")  # refused at creation, not mid-test
+    assert testers.record(lid)["chapter"] == "real"
+    plain = testers.create(dcfg, "Pilot 9")
+    assert "chapter" not in testers.record(plain["lid"])
+    assert testers.chapter_of(dcfg, testers.record(plain["lid"])) == "real"
+    dcfg["demo"]["chapter"] = "rehearsal"
+    assert testers.chapter_of(dcfg, testers.record(plain["lid"])) == "rehearsal"

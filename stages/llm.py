@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from .common import ROOT, Run, StageError
 
 _client = None
+# Read in order; the first set wins. ARTICLE_PIPELINE_... is the one in Ian's cloud environment (2026-11-20).
+KEY_VARS = ("ARTICLE_PIPELINE_ANTHROPIC_API_KEY", "WRITE_LISTEN_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
 
 
 def get_client():
@@ -26,12 +28,13 @@ def get_client():
         from dotenv import load_dotenv
 
         load_dotenv(ROOT / ".env")
-        # The pipeline's own variable comes first, so it never picks up (or clobbers)
+        # The pipeline's own variables come first, so it never picks up (or clobbers)
         # a key that a host app such as Claude Code uses for itself.
-        key = os.environ.get("WRITE_LISTEN_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+        key = next((os.environ[v] for v in KEY_VARS if os.environ.get(v)), None)
         if not key:
-            raise StageError("No Anthropic API key. Set WRITE_LISTEN_ANTHROPIC_API_KEY in the environment, "
-                             "or ANTHROPIC_API_KEY in .env (see README, 'API keys').")
+            raise StageError("No Anthropic API key. Set ARTICLE_PIPELINE_ANTHROPIC_API_KEY or "
+                             "WRITE_LISTEN_ANTHROPIC_API_KEY in the environment, or ANTHROPIC_API_KEY in .env "
+                             "(see README, 'API keys').")
         # Explicit key and URL: the client then ignores any other ANTHROPIC_* settings around it.
         _client = anthropic.Anthropic(api_key=key, base_url="https://api.anthropic.com", max_retries=4)
     return _client

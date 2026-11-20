@@ -29,7 +29,7 @@ voices, models and user).
 
 - ElevenLabs: saved as a network secret for `api.elevenlabs.io`. The session's
   proxy adds it to every request, so no variable is needed.
-- Anthropic: an environment variable named `WRITE_LISTEN_ANTHROPIC_API_KEY`,
+- Anthropic: an environment variable named `ARTICLE_PIPELINE_ANTHROPIC_API_KEY` (or `WRITE_LISTEN_ANTHROPIC_API_KEY`),
   added in the environment's settings (the cloud environment menu in the
   session's title bar, then Edit, then environment variables). Requests to
   Anthropic don't pass through the proxy, so a network secret can't be used.

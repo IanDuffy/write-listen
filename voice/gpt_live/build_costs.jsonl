@@ -864,3 +864,6 @@
 {"t": "2026-11-20T02:32:00", "what": "tts listener line", "seconds": 6.4, "backend_tokens": null, "usd": 0.0016}
 {"t": "2026-11-20T02:32:18", "what": "tts listener line", "seconds": 3.65, "backend_tokens": null, "usd": 0.000912}
 {"t": "2026-11-20T02:32:57", "what": "gpt-live probe C", "seconds": 116.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 15547, "output": 98, "cached": 7575}, "usd": 0.105507}
+{"t": "2026-11-20T08:24:46", "what": "tts listener line", "seconds": 2.25, "backend_tokens": null, "usd": 0.000562}
+{"t": "2026-11-20T08:25:05", "what": "tts listener line", "seconds": 3.45, "backend_tokens": null, "usd": 0.000862}
+{"t": "2026-11-20T08:25:25", "what": "gpt-live peek check", "seconds": 50.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 30745, "output": 126, "cached": 22608}, "usd": 0.051564}

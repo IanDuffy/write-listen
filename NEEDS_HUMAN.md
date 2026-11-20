@@ -10,6 +10,13 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## Rehearsal chapters (2026-11-20): testing the voices without making a chapter
+- Make your link with `wl study create "Ian run 4" --name Ian --rehearsal` (or set "Chapter: rehearsal" on the admin
+  page). Asking for a chapter then replays the heron chapter at no cost: the opening is ready in about 1.5 minutes,
+  part 2 about four minutes later. It will be about herons whatever you asked for. Friends' links stay real.
+- While you wait, ask "how's it coming along?" or "what are you working on?": the guide should tease one concrete
+  thing (something it's looking into or found), not "writing the intro".
+
 ## After Ian's third tester run (2026-11-19): what to look and listen for on the next one
 - **The intro**: "Hi, is this Ian?", then about 15 seconds on what to expect, "Ready?", and the handover.
 - **The guide**: warmer and more curious, closer to Pooja's and Purnima's conversations: guesses about you,

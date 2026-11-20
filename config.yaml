@@ -600,6 +600,14 @@ fast:
     reasoning_effort: low
     turn_timeout_secs: 30       # the page handles silence itself; the platform should not nudge first
 
+# Rehearsal chapters (Ian, 2026-11-20): a finished live fast chapter replayed in place of making one, for voice tests.
+rehearsal:                # faststart/rehearsal.py: no research, writing or model calls; never counts in demo.max_builds
+  own: false              # no tester (Ian's own app, the agent's page checks): true replays for every live start_chapter
+  source: null            # the chapter folder to replay (absolute, or relative to the repo); null: the newest complete one under shared/rehearsal/
+  sections: 2             # replay only the first N sections (null: all). Herons' first 2 are about 10 minutes, a tester's length
+  opening_seconds: 90     # the opening is ready this long after the start; the source's steps before it are scaled to fit
+  after_speed: 1.0        # after the opening, the source's own pace times this (2.0 = twice as fast: the parts arrive sooner; below about 1.0, e.g. 0.5, the listener catches up and gets a check-in)
+
 # Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys.
 demo:
   enabled: false            # tester mode: cookies required, gate, interviewer. Off: the app as today (Ian's own).
@@ -609,6 +617,7 @@ demo:
   cookie_days: 365
   secure_cookie: auto       # auto: Secure when the request came over https (X-Forwarded-Proto from Caddy)
   chapter_minutes: 10       # testers' chapter length (written into their settings.json)
+  chapter: real             # real | rehearsal: what a tester's live start_chapter makes. tester.json "chapter" wins (wl study create --rehearsal, the admin page). rehearsal replays a finished chapter (faststart/rehearsal.py): no research, writing or model calls
   base_url: null            # the links' origin for `wl study create` (env WL_BASE_URL wins), e.g. https://listen.ianduffy.com
   interviewer:                  # part C: demo/interviewer.py, page/interview.js, prompts/interviewer*.md
     voice: cedar                # its own GPT-Live voice (the guide's is live.voice); model and backend are live's

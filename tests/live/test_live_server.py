@@ -531,6 +531,23 @@ def test_get_status_still_reports_a_chapter_being_made(app, cfg):
     assert c.post("/api/live/tool", json={"session": sid, "name": "get_status", "args": {}}).json()["state"] == "being made"
 
 
+def test_live_get_status_carries_the_peek(app, cfg):
+    """The live guide's get_status passes the peek through (faststart/peek.py), while the older guides' wait
+    rules (while_waiting) are still dropped."""
+    c, _, runs = app
+    root = live_status(runs, state="making", pid=os.getpid(), first_audio=False)
+    (root / "fast").mkdir(exist_ok=True)
+    (root / "fast" / "player.json").write_text(json.dumps({"state": "done", "at": time.time()}))
+    (root / "ledger.json").write_text(json.dumps({"rows": [
+        {"id": "L01", "section": 2, "idea": "To settle: what Katzir found comparing cattle egrets with little egrets."}]}))
+    (root / "fast_timeline.jsonl").write_text(json.dumps({"t": 1, "event": "research_start", "row": "L01"}) + "\n")
+    sid = c.post("/api/live/start", json={"sdp": "OFFER"}).json()["session"]
+    got = c.post("/api/live/tool", json={"session": sid, "name": "get_status", "args": {}}).json()
+    assert got["peek"]["working_on"].startswith('part 1, "One"')
+    assert got["peek"]["looking_into"] == ["what Katzir found comparing cattle egrets with little egrets"]
+    assert "while_waiting" not in got
+
+
 def test_stopping_a_fast_run_keeps_what_the_live_page_knows_it_by(app, cfg):
     """Pipeline.stop rewrote status.json without mode, voice and sections, so the live page no longer
     recognised the run it was reading as stopped."""

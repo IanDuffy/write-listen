@@ -11,6 +11,7 @@ stages/guide.py stays the guide's conversation; the server hands each Session on
     add_note(run_root, ...)  a fast run's notes go to listener_notes.md, with a kind and the
                              section the listener is in
     plain(out, status)       get_status for a fast run: its sections, whether listening can start
+                             (for_guide adds the wait rules and a peek at what it is working on)
 
 Where a fast run's notes go, and why not to both files: the scout and the outline read the seed
 through common.seed_inputs, which appends 00_source/notes.md; the outline, every draft and every
@@ -38,7 +39,7 @@ from pathlib import Path
 
 from stages.common import load_prompt, pinned
 
-from . import base, notes, scout, timings
+from . import base, notes, peek, scout, timings
 from . import status as fast_status
 
 LISTENING = ("playing", "waiting", "paused")  # player states in which the listener is in a section
@@ -70,22 +71,40 @@ NO_FIGURE = "no known number of (give no time unless a tool result gives one)"
 
 def for_guide(out: dict, status: dict, cfg: dict, runs_dir: Path) -> dict:
     """What the conversation adds to plain(), with the config and the run folder to hand: the wait
-    rules while a fast run is being made and nothing can play yet, and no countdown to the first
-    audio once the run is past the earlier runs' median (the run itself gives none once the step
-    under way has run past its median: faststart/status.first_audio_by)."""
+    rules while a fast run is being made and nothing can play yet, a peek at what it is working on
+    (faststart/peek.py), and no countdown to the first audio once the run is past the earlier runs'
+    median, or past a rehearsal's own opening time (the run itself gives none once the step under way
+    has run past its median: faststart/status.first_audio_by)."""
     if status.get("mode") != "fast" or status.get("state") != "making":
         return out
     out = dict(out)
     if not status.get("first_audio"):
         out["while_waiting"] = load_prompt("guide_wait_fast").strip()
+    name = str(status.get("run") or "")
+    root = Path(runs_dir) / name if name and Path(name).name == name else None
+    if root is not None:
+        try:
+            if p := peek.peek(root, status):
+                out["peek"] = p
+        except Exception:  # never let a peek break get_status
+            pass
     if "starts_playing_in_minutes" in out:
-        name = str(status.get("run") or "")
-        mode = base.read_json(Path(runs_dir) / name / base.FILES["mode"]) if name and Path(name).name == name else None
-        seconds = timings.estimate(cfg)
+        mode = base.read_json(root / base.FILES["mode"]) if root is not None else None
+        seconds = rehearsal_opening(mode)
+        if seconds is None:
+            seconds = timings.estimate(cfg)
         set_at = mode.get("seed_set") if isinstance(mode, dict) else None
         if seconds is None or not isinstance(set_at, (int, float)) or time.time() - set_at >= seconds:
             out.pop("starts_playing_in_minutes")
     return out
+
+
+def rehearsal_opening(mode) -> float | None:
+    """A rehearsal's opening time (fast.json "rehearsal" opening_seconds, faststart/rehearsal.py): it
+    replays to its own schedule, so the earlier runs' median is not its time. None for a real run."""
+    marker = mode.get("rehearsal") if isinstance(mode, dict) else None
+    secs = marker.get("opening_seconds") if isinstance(marker, dict) else None
+    return float(secs) if isinstance(secs, (int, float)) and secs > 0 else None
 
 
 def plain(out: dict, status: dict) -> dict:
@@ -183,7 +202,9 @@ class Hooks:
         if not is_fast(run_root):
             return None
         out: dict = {"started": True}
-        seconds = timings.estimate(self.cfg)
+        seconds = rehearsal_opening(base.read_json(Path(run_root) / base.FILES["mode"]))
+        if seconds is None:
+            seconds = timings.estimate(self.cfg)
         already = (base.read_json(Path(run_root) / "status.json") or {}).get("first_audio")
         if seconds is not None and not already:  # a time only when earlier runs have measured one
             minutes = max(1, math.ceil(seconds / 60))

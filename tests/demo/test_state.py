@@ -90,3 +90,24 @@ def test_all_states_and_totals(dcfg):
     assert [r["lid"] for r in rows] == ["t-a", "t-b"]
     assert rows[0]["revoked"] is True and rows[1]["revoked"] is False and rows[1]["token"]
     assert state.totals(rows) == {"claude": 1.62, "gpt_live": 0.45, "total": 2.07, "estimated": 0.1}
+
+
+def test_state_marks_a_rehearsal_chapter(dcfg):
+    """A rehearsal (faststart/rehearsal.py) is shown as one, with the chapter it replays; it costs nothing."""
+    import json
+    lid = testers.create(dcfg, "Voice Test")["lid"]
+    testers.update(lid, opened_at="2026-11-20T10:00:00", consent_at="2026-11-20T10:00:00", intro_done=True,
+                   chapter="rehearsal")
+    ch = testers.folder(lid) / "chapters" / "herons-20261120"
+    ch.mkdir(parents=True)
+    (ch / "fast.json").write_text(json.dumps({"mode": "fast", "voice": "live", "rehearsal": {
+        "source": "/x/2026-11-14-herons", "source_run": "2026-11-14-herons", "sections": 2}}))
+    (ch / "status.json").write_text(json.dumps({"run": ch.name, "state": "making", "started": "2026-11-20T10:01:00"}))
+    (ch / "log.jsonl").write_text(json.dumps({"stage": "fast_archive", "label": "archive (read live: no audio)"}) + "\n")
+    s = state.tester_state(dcfg, lid)
+    assert s["rehearsal"] is True and s["rehearsal_source"] == "2026-11-14-herons" and s["chapter"] == ch.name
+    assert s["cost"]["claude"] == 0 and s["cost"]["total"] == 0
+    row = next(r for r in state.all_states(dcfg) if r["lid"] == lid)
+    assert row["chapter_kind"] == "rehearsal" and row["rehearsal"] is True
+    other = seed(dcfg, "Pilot 1", "done")
+    assert state.tester_state(dcfg, other)["rehearsal"] is False

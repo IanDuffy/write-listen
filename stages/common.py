@@ -31,6 +31,7 @@ LISTENERS_DIR = ROOT / "listeners"
 SHARED_DIR = ROOT / "shared"
 DEFAULT_LISTENER = "ian"
 LISTENER_ENV = "WRITE_LISTEN_LISTENER"  # pins a process (a run the server started) to one listener
+RUNS_ENV = "WRITE_LISTEN_RUNS_DIR"  # a server with a fixed runs folder tells its child (cli.py) to use the same one
 # A fixed runs folder, when set, wins over the active listener's chapters/ (tests set it; tools like
 # ping and smoketest pass their own). None: runs are the active listener's chapters.
 RUNS_DIR: Path | None = None

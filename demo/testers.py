@@ -1,8 +1,13 @@
 """Testers: the link is the tester (docs/tester-demo.md, "Tester links and consent").
 
-    shared/testers.json            {"tokens": {token: {"lid", "label", "created", "given_name"}}}: the only way in
+    shared/testers.json            {"tokens": {token: {"lid", "label", "created", "given_name", "chapter"}}}: the only way in
     listeners/<lid>/tester.json    {label, lid, token, created, opened_at, consent_at, name, given_name,
-                                    debrief_card: "auto"|"on"|"off", stage_hint, intro_done, ...}
+                                    debrief_card: "auto"|"on"|"off", chapter: "real"|"rehearsal" (absent: config
+                                    demo.chapter), stage_hint, intro_done, ...}
+
+chapter (Ian, 2026-11-20): "rehearsal" replays a finished chapter when this tester starts one
+(faststart/rehearsal.py: no research, writing or model calls), for testing the voices. It is checked against a
+source to replay when it is set (create, set_chapter), so a missing one shows then, not mid-test.
 
 debrief_card (the name is kept from when it was the library's "Got five minutes to tell Ian how it went?"
 card; Ian's notes, 2026-11-18, replaced that with the End demo button): whether a tester who comes back with
@@ -35,6 +40,7 @@ import threading
 import time
 from pathlib import Path
 
+from faststart.rehearsal import CHAPTER_VALUES, find_source
 from overnight import profiles
 from stages import common
 from stages.common import StageError
@@ -161,24 +167,38 @@ def link(cfg: dict, token: str, base: str | None = None) -> str:
     return f"{(base or base_url(cfg)).rstrip('/')}/t/{token}"
 
 
-def create(cfg: dict, label: str, base: str | None = None, name: str | None = None) -> dict:
+def _check_chapter(cfg: dict, value: str) -> None:
+    if value not in CHAPTER_VALUES:
+        raise StageError(f"chapter must be one of {', '.join(CHAPTER_VALUES)}.")
+    if value == "rehearsal":
+        find_source(cfg)  # raises with what to do when there is nothing to replay
+
+
+def create(cfg: dict, label: str, base: str | None = None, name: str | None = None,
+           chapter: str | None = None) -> dict:
     """A new tester: a token, its registry entry and its folder. {token, lid, label, name, link}. `name` is
-    what the interviewer greets them by; without one, a label that reads as a first name is used."""
+    what the interviewer greets them by; without one, a label that reads as a first name is used. `chapter`:
+    "real" or "rehearsal" for this tester (None: config demo.chapter decides)."""
     label = " ".join(str(label or "").split())
     if not label:
         raise StageError("A tester needs a label.")
+    if chapter is not None:
+        _check_chapter(cfg, chapter)
     given = greeting_name(label, name)
     with _LOCK:
         lid = _new_lid(label)
         token = secrets.token_urlsafe(24)  # 32 characters
         created = now()
         rec = {"label": label, "lid": lid, "token": token, "created": created, "opened_at": None,
-               "consent_at": None, "name": None, "given_name": given, "debrief_card": "auto", "stage_hint": None}
+               "consent_at": None, "name": None, "given_name": given, "debrief_card": "auto", "stage_hint": None,
+               **({"chapter": chapter} if chapter else {})}
         _make_folder(cfg, rec)
         reg = _registry()
-        tokens = {**reg["tokens"], token: {"lid": lid, "label": label, "created": created, "given_name": given}}
+        tokens = {**reg["tokens"], token: {"lid": lid, "label": label, "created": created, "given_name": given,
+                                           **({"chapter": chapter} if chapter else {})}}
         _save_registry({**reg, "tokens": tokens})
-    return {"token": token, "lid": lid, "label": label, "name": given, "link": link(cfg, token, base)}
+    return {"token": token, "lid": lid, "label": label, "name": given, "link": link(cfg, token, base),
+            **({"chapter": chapter} if chapter else {})}
 
 
 def lookup(token: str | None) -> dict | None:
@@ -200,7 +220,8 @@ def open_link(cfg: dict, token: str) -> dict | None:
         if not folder(rec["lid"]).exists():
             _make_folder(cfg, {"label": rec["label"], "lid": rec["lid"], "token": token, "created": rec["created"],
                                "opened_at": None, "consent_at": None, "name": None,
-                               "given_name": rec.get("given_name"), "debrief_card": "auto", "stage_hint": None})
+                               "given_name": rec.get("given_name"), "debrief_card": "auto", "stage_hint": None,
+                               **({"chapter": rec["chapter"]} if rec.get("chapter") else {})})
         return mark_opened(rec["lid"])
 
 
@@ -286,6 +307,7 @@ def reset(lid: str, cfg: dict | None = None) -> Path:
                            "opened_at": None, "consent_at": None, "name": None,
                            "given_name": rec.get("given_name"),
                            "debrief_card": rec.get("debrief_card") or "auto", "stage_hint": None,
+                           **({"chapter": rec["chapter"]} if rec.get("chapter") else {}),
                            **({"revoked_at": rec["revoked_at"]} if rec.get("revoked_at") else {}),
                            "reset_at": now()})
         return dest
@@ -339,6 +361,28 @@ def set_debrief_card(lid: str, value: str) -> dict:
     if value not in CARD_VALUES:
         raise StageError(f"debrief_card must be one of {', '.join(CARD_VALUES)}.")
     return update(lid, debrief_card=value)
+
+
+def set_chapter(cfg: dict, lid: str, value: str) -> dict:
+    """The admin's choice: this tester's chapters real or rehearsals (see the module's notes). Mirrored into
+    the registry, as given_name is."""
+    _check_chapter(cfg, value)
+    with _LOCK:
+        rec = update(lid, chapter=value)
+        reg = _registry()
+        if any(v.get("lid") == lid for v in reg["tokens"].values()):
+            tokens = {t: ({**v, "chapter": value} if v.get("lid") == lid else v) for t, v in reg["tokens"].items()}
+            _save_registry({**reg, "tokens": tokens})
+        return rec
+
+
+def chapter_of(cfg: dict, rec: dict | None) -> str:
+    """What this tester's chapters are: tester.json "chapter", else config demo.chapter, else real."""
+    mine = (rec or {}).get("chapter")
+    if mine in CHAPTER_VALUES:
+        return mine
+    given = (cfg.get("demo") or {}).get("chapter")
+    return given if given in CHAPTER_VALUES else "real"
 
 
 def all_testers() -> list[dict]:

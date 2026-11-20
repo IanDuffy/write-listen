@@ -428,3 +428,22 @@ def test_a_conversations_chapter_plans_the_next_one_at_once_if_none_waits(tmp_pa
     assert planner.plan_if_needed(cfg, listener) == {"title": "x"}
     profiles.write_json(listener / "up_next.json", {"id": "p", "status": "planned"})
     assert planner.plan_if_needed(cfg, listener) is None and calls == [1]
+
+
+def test_rehearsal_is_never_the_latest_or_planned_from(world, cfg):
+    """A rehearsal (faststart/rehearsal.py: a finished chapter replayed for a voice test) on Ian's own listener
+    is never the chapter tonight's plan or the library's latest is built from, even once it has audio."""
+    import os
+    d, _ = world
+    root = d / "chapters" / "herons-replayed-20261120"
+    (root / "10_audio").mkdir(parents=True)
+    (root / "10_audio" / "chapter.mp3").write_bytes(b"x")
+    profiles.write_json(root / "fast.json", {"mode": "fast", "voice": "live",
+                                             "rehearsal": {"source_run": "2026-11-14-herons"}})
+    profiles.write_json(root / "status.json", {"run": root.name, "state": "ready", "updated": "2099-01-01T00:00:00"})
+    os.utime(root / "10_audio" / "chapter.mp3", (4102444800, 4102444800))
+    assert profiles.rehearsal(root) and not profiles.rehearsal(d / "chapters" / "2026-11-17-the-strike")
+    assert profiles.latest_chapter(listener=d).name == "2026-11-17-the-strike"
+    got = planner.gather(cfg, d, None)
+    assert root.name not in json.dumps(got["past"]) and got["last"]["folder"] == "2026-11-17-the-strike"
+    assert root.name in [p.name for p in profiles.chapters(listener=d)]  # still a past chapter for the library

@@ -70,6 +70,9 @@ tester run".
 
 | The earpiece (2026-11-20; replaces the director) | Ian: a background earpiece with a plan it checks off and changes; the guide keeps all its style. Built (prompt, server, page, persona mirror, four scripted probes), reviewed (four lenses, 17 findings confirmed, all fixed with tests). Live, $0.77: probes B, C, D used the whisper at the guide's 2nd or 3rd turn (21-40 s), at a lull or wind-down, never voiced, never over the listener; A (mid-story) gave no pitch in the gaps, the probe closed too soon to say more; a replacing whisper won. Natural runs (evening, reserved): 22 looks, 0 whispers. The director's own whisper is not yet heard live |
 
+| Rehearsal chapters (2026-11-20) | Built (`faststart/rehearsal.py`): a tester set to rehearsal gets the heron chapter replayed on its own timeline (opening 90 s, part 2 at 5:44), nothing paid; per tester (`--rehearsal`, admin page). Reviewed (12 findings confirmed, all fixed with tests); checked offline on the real server and page: steps, countdowns, reading, End demo stopping it, the real path unchanged |
+| The guide's peek (2026-11-20) | Built (`faststart/peek.py`): get_status carries a short peek from the run's files (about, question, the part being written, research under way, one finding), no model call. Live ($0.05): asked "how's it coming along?", the guide teased the refraction idea; "what are you working on?", the herons' learning |
+
 Live checks for this round: $0.70 guide and director (voice/gpt_live/build_costs.jsonl, now $18.34 of its $20
 cap), $0.20 interviewer (demo/build_costs.jsonl). Full suite: 1840 passed before the last two fixes.
 

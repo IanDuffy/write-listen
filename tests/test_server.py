@@ -216,6 +216,55 @@ def test_stop_escalates_and_takes_what_the_run_started(client, tmp_path):
     assert c.get("/api/status").json()["state"] == "stopped"
 
 
+REHEARSAL_CHILD = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from stages import common
+common.RUNS_DIR, common.LISTENERS_DIR, common.SHARED_DIR = (Path(x) for x in sys.argv[2:5])
+import cli
+sys.exit(cli.main(["new", sys.argv[5], "--unattended"]))
+"""
+
+
+def test_stop_a_rehearsal_subprocess(client, tmp_path, cfg):
+    """A rehearsal (faststart/rehearsal.py) is a child process like a real run: Pipeline.stop's SIGINT ends it,
+    it writes its problem status on the way out, the server's stopped status follows, and nothing is left."""
+    import subprocess
+    import time
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "faststart"))
+    from rehearsal_fakes import make_run, make_source
+    from faststart import base
+    c, pipe, _, runs = client
+    src = make_source(tmp_path / "source-chapter")
+    cfg["rehearsal"] = {"source": str(src), "sections": None, "opening_seconds": 60, "after_speed": 1.0}
+    r = make_run(runs, "replayed", src, cfg, t0=time.time())
+    root = Path(server.__file__).resolve().parent
+    proc = subprocess.Popen([sys.executable, "-c", REHEARSAL_CHILD, str(root), str(runs), str(tmp_path / "_l"),
+                             str(tmp_path / "_s"), r.name], cwd=root, start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            s = json.loads(r.path("status").read_text()) if r.path("status").exists() else {}
+            if s.get("state") == "making" and s.get("pid") == proc.pid:
+                break
+            time.sleep(0.1)
+        assert s.get("state") == "making", s
+        pipe.proc, pipe.run = proc, r.name
+        t0 = time.monotonic()
+        assert c.post(f"/api/chapters/{r.name}/stop").json()["stopped"] is True
+        assert proc.poll() is not None and time.monotonic() - t0 < 5.5
+        assert any(e["event"] == "problem" for e in base.read_timeline(r))  # its own problem status came first
+        assert "KeyboardInterrupt" in r.path("decisions").read_text()
+        assert c.get("/api/status").json()["state"] == "stopped"
+        assert not server.alive(proc.pid)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
 def test_stop_with_nothing_running_and_unknown_runs(client):
     c, pipe, _, runs = client
     write_status(runs, "done", state="ready", title="T")

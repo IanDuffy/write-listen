@@ -239,3 +239,30 @@ def test_the_admin_page_fits_a_phone(dcfg, site):
     page.goto(base + "/admin")
     page.wait_for_selector("tr[data-lid='t-pilot-1']")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_rehearsal_through_the_api(dcfg, tmp_path, no_admin_env):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "faststart"))
+    from rehearsal_fakes import make_source
+    dcfg["rehearsal"] = {"source": str(make_source(tmp_path / "source-chapter"))}
+    c = client(dcfg, tmp_path)
+    made = c.post("/api/admin/testers", json={"label": "Voice Test", "rehearsal": True}).json()
+    assert made["chapter"] == "rehearsal" and testers.record(made["lid"])["chapter"] == "rehearsal"
+    plain = c.post("/api/admin/testers", json={"label": "Pilot 1"}).json()
+    assert "chapter" not in testers.record(plain["lid"])
+    rows = {r["lid"]: r for r in c.get("/api/admin/testers").json()["testers"]}
+    assert rows[made["lid"]]["chapter_kind"] == "rehearsal" and rows[plain["lid"]]["chapter_kind"] == "real"
+    assert rows[plain["lid"]]["rehearsal"] is False and rows[plain["lid"]]["chapter_default"] == "real"
+    url = f"/api/admin/testers/{plain['lid']}/chapter"
+    assert c.post(url, json={"value": "rehearsal"}).json() == {"chapter": "rehearsal"}
+    assert c.post(url, json={"value": "maybe"}).status_code == 400
+    assert c.post("/api/admin/testers/t-nobody/chapter", json={"value": "real"}).status_code == 404
+    dcfg["rehearsal"]["source"] = str(tmp_path / "gone")
+    res = c.post(url, json={"value": "rehearsal"})
+    assert res.status_code == 400 and "not there" in res.json()["detail"]
+    assert c.post("/api/admin/testers", json={"label": "X", "rehearsal": True}).status_code == 400
+    assert c.post(url, json={"value": "real"}).json() == {"chapter": "real"}
+    page = c.get("/admin").text
+    assert 'data-do="chapter"' in page and 'id="rehearsal"' in page and 'id="default-chapter"' in page

@@ -967,7 +967,11 @@ class _Driver:
 def check_folder(r: Run) -> None:
     """Refuse a folder the overnight pipeline has worked in (stage outputs, and no fast.json).
     Its ledger rows have no sections and its research answers other questions: a fast run on top
-    of them would crash, or finish "ready" with no research of its own."""
+    of them would crash, or finish "ready" with no research of its own. Refuse a rehearsal too
+    (fast.json "rehearsal", faststart/rehearsal.py): it is replayed, and a fast run would pay for
+    research and drafts on top of its copied files."""
+    if (base.read_json(base.path(r, "mode")) or {}).get("rehearsal"):  # faststart/rehearsal.py: copied files
+        raise StageError(f"{r.name} is a rehearsal (fast.json): it is replayed, never made.")
     theirs = [PATHS[k] for k in OVERNIGHT_FILES if r.path(k).exists()]
     if theirs and not base.is_fast(r):
         raise StageError(f"{r.name} is not a fast run: it already has {', '.join(theirs)} from the overnight "

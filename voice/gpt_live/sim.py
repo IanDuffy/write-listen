@@ -116,6 +116,13 @@ def rms(pcm: bytes) -> float:
 
 # --- the guide's tools, faked -----------------------------------------------------------------
 
+# get_status's peek (faststart/peek.py) for a chapter whose opening is being written: a static one, so a
+# persona run exercises the backend's rule (tease one thing, not the step) offline.
+PEEK = {"working_on": 'part 1, "The Heron That Broke a Twig": some herons do not just wait for fish',
+        "looking_into": ["what Katzir found comparing cattle egrets with little egrets"],
+        "found": "Higuchi recorded many striated herons bait-fishing at one site in Japan."}
+
+
 class FakeTools:
     """Plausible results for the guide's tools, shaped like stages/guide.py Session.tool and
     faststart/guide_hooks.py for a fast run: a chapter that starts playing in `first_audio_minutes`."""
@@ -143,7 +150,7 @@ class FakeTools:
                 return {"state": "no chapter yet"}
             left = max(1, math.ceil(self.first_audio_minutes - (self.clock() - self.started_at) / 60))
             return {"state": "being made", "stage": "researching and writing the opening",
-                    "can_start_listening": False, "starts_playing_in_minutes": left}
+                    "can_start_listening": False, "starts_playing_in_minutes": left, "peek": dict(PEEK)}
         if name == "step_back":
             return {"quiet": True}
         if name == "resume_chapter":

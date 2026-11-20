@@ -122,7 +122,7 @@ def last_chapter(root: Path) -> dict:
 
 def gather(cfg: dict, listener: Path, request: dict | None) -> dict:
     ps = plan_settings(cfg)
-    chapters = profiles.chapters(listener=listener)
+    chapters = [p for p in profiles.chapters(listener=listener) if not profiles.rehearsal(p)]  # voice tests
     latest = profiles.latest_chapter(listener=listener)
     return {
         "request": request,

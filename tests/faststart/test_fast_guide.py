@@ -568,3 +568,36 @@ def test_voice_compare_never_waits_for_a_reply_to_a_tool_the_agent_does_not_wait
     out = voice._voice_replies(cfg, session, ["I pour concrete for a living"], client=None)
     assert out[1]["tools"] == ["scout_topic"] and out[1]["reply"] == "Harbours that set under water, then."
     assert out[-1] == {"conversation_id": "conv1"}
+
+
+def test_for_guide_adds_the_peek_while_making(chat):
+    """get_status (and chapter_now) carry a peek at what the chapter is working on while it is made
+    (faststart/peek.py), so the guide can tease something better than "writing the opening"."""
+    s = chat.session()
+    start(s)
+    root = chat.runs / s.run
+    base.write_json(root / "fast" / "card.json", {"overview": "Roman concrete heals its own cracks. More."})
+    making_early(s, chat)
+    got = s.tool("get_status", {})
+    assert got["peek"] == {"about": "Roman concrete heals its own cracks."}
+    assert json.loads(chat.session().values["chapter_now"])["peek"]["about"].startswith("Roman concrete")
+    making_early(s, chat, state="ready")
+    assert "peek" not in s.tool("get_status", {})
+
+
+def test_rehearsal_opening_seconds_set_the_started_time(chat):
+    """A rehearsal (fast.json "rehearsal", faststart/rehearsal.py) replays to its own opening time, not
+    the earlier runs' median: start_chapter's time and get_status's countdown go by it."""
+    base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 30.0}, "runs": []})
+    s = chat.session()
+    start(s)
+    root = chat.runs / s.run
+    mode = root / base.FILES["mode"]
+    base.write_json(mode, {**base.read_json(mode), "rehearsal": {"opening_seconds": 90.0, "sections": 2},
+                           "seed_set": time.time() - 60})
+    out = s.fast.started(root)
+    assert out["first_audio_minutes"] == 2 and "about 2 minutes" in out["when"]
+    making_early(s, chat, **counting(30))
+    assert s.tool("get_status", {})["starts_playing_in_minutes"] == 1  # past the 30 s median, within 90 s
+    base.write_json(mode, {**base.read_json(mode), "seed_set": time.time() - 100})
+    assert "starts_playing_in_minutes" not in s.tool("get_status", {})

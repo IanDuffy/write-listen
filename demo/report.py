@@ -104,7 +104,9 @@ def tester_material(cfg: dict, s: dict) -> str:
     out = [f"## Tester: {s['label']}",
            f"Name: {s.get('name') or '(not given)'}",
            f"Stage reached: {stage}",
-           f"Chapter: {s.get('title') or '(none)'}; heard {s['minutes_heard']} of {s['chapter_minutes']} minutes",
+           f"Chapter: {s.get('title') or '(none)'}"
+           + (f" (rehearsal: replayed {s.get('rehearsal_source')})" if s.get("rehearsal") else "")
+           + f"; heard {s['minutes_heard']} of {s['chapter_minutes']} minutes",
            "Chapter parts (approximate start): " + ("; ".join(parts) if parts else "(none)"),
            "Questions asked mid-chapter: " + ("; ".join(asked) if asked else "none"),
            "What they did: " + (" ".join(did(cfg, s["lid"])) or "(no record)")]

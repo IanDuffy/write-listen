@@ -3,6 +3,11 @@
     python -m voice.gpt_live.pagecheck smoke   [--source <run folder>] [--paragraphs N]
     python -m voice.gpt_live.pagecheck read    --source <run folder>           # check 7/8: a chapter read live
     python -m voice.gpt_live.pagecheck asks    --source <run folder>           # check 8/9: interruptions
+    python -m voice.gpt_live.pagecheck fast    [--real]                        # check 12: a chapter from the talk
+
+The fast check's chapter is a rehearsal by default (config rehearsal.own: a finished chapter under
+shared/rehearsal/ replayed, faststart/rehearsal.py), so checking the voices pays for no narrative. --real
+makes a real chapter (research, writing: up to fast.max_run_usd) and needs Ian's say-so.
 
 The server runs in this process (server.create_app) on a scratch runs folder; the chapter is a copy
 of a run's locked sections, written in step as a fast run would write them (status.json with the
@@ -147,9 +152,12 @@ class World:
 
 
 class Harness:
-    def __init__(self, scenario: str, source: Path, paragraphs: int | None, sections: int | None, cap: float):
+    def __init__(self, scenario: str, source: Path, paragraphs: int | None, sections: int | None, cap: float,
+                 real: bool = False):
         self.cfg = load_config()
         self.cfg["listener_dir"] = str((RUNS_OUT / "_listener").relative_to(ROOT))
+        if not real:  # start_chapter replays a finished chapter (faststart/rehearsal.py): no narrative is paid for
+            self.cfg["rehearsal"] = {**(self.cfg.get("rehearsal") or {}), "own": True}
         if spend() >= cap:
             raise SystemExit(f"The build has spent ${spend():.2f} of its ${cap:.2f} cap.")
         self.out = RUNS_OUT / f"{time.strftime('%Y%m%d-%H%M%S')}-{scenario}"
@@ -166,7 +174,9 @@ class Harness:
         from stages import memory
         memory.after_session = lambda *a, **k: False  # nothing reaches the listener's memory
         memory.run_pending = lambda *a, **k: None
-        # A real fast run (check 12) is made in the worktree's own runs/ (gitignored), where cli.py writes it.
+        # Check 12's chapter (a rehearsal unless --real) is made in the worktree's own runs/ (gitignored): the
+        # Pipeline's fixed folder is passed to the child (server.Pipeline._launch, $WRITE_LISTEN_RUNS_DIR), so it
+        # replays the folder start_seed marked, never a same-named run in the active listener's chapters.
         pipe = server.Pipeline(runs_dir=self.world.runs if self.world else ROOT / "runs")
         self.pipe = pipe
         app = server.create_app(pipe, self.cfg, remember_on_start=False)
@@ -423,8 +433,8 @@ def fast(h: Harness) -> None:
     """Check 12: a real fast-start chapter from the conversation, read live: the listener asks for a
     chapter, the guide pitches and starts it (or, if it never does, the seed goes in typed), they talk
     while it is made, the opening is read as soon as it is written, one question mid-chapter, and every
-    check-in answered once. The run is made by cli.py in runs/ (its cost is the run's own, capped at
-    fast.max_run_usd)."""
+    check-in answered once. The run is made by cli.py in runs/: a rehearsal (a finished chapter replayed, at no
+    cost) unless --real, when its cost is the run's own, capped at fast.max_run_usd."""
     h.run = None
     h.tap()
     h.wait("L.phase === 'talk'", 20, "the session to start")
@@ -605,12 +615,14 @@ def main(argv=None):
     ap.add_argument("--source", default="/Users/ian/Desktop/write-listen/runs/ideas-behind-systems-stocks-20261113")
     ap.add_argument("--paragraphs", type=int, default=None)
     ap.add_argument("--sections", type=int, default=None)
+    ap.add_argument("--real", action="store_true",
+                    help="fast: make a real chapter (paid: research and writing) instead of replaying one")
     a = ap.parse_args(argv)
     cfg = load_config()
     if a.scenario in ("smoke", "returning", "player"):
         a.paragraphs, a.sections = a.paragraphs or 3, a.sections or 2
     h = Harness(a.scenario, None if a.scenario in ("fast", "handoff") else Path(a.source), a.paragraphs, a.sections,
-                cfg["live"]["build_cap_usd"])
+                cfg["live"]["build_cap_usd"], real=a.real)
     h.serve()
     h.open()
     try:

@@ -192,3 +192,31 @@ def test_a_tester_who_left_before_the_piece_was_ready_is_not_said_to_have_left_i
     t = when("10:08:00")
     os.utime(d / "sessions" / "s-guide.jsonl", (t, t))
     assert report.did(dcfg, lid)[-1] == "They heard none of the piece: it was ready, but they didn't start it."
+
+
+def test_study_create_rehearsal_flag_and_report_line(dcfg, monkeypatch, capsys, tmp_path):
+    import sys
+    from pathlib import Path
+
+    import demo.cli
+    from demo import state
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "faststart"))
+    from rehearsal_fakes import make_source
+    monkeypatch.setattr(demo.cli, "load_config", lambda: dcfg)
+    dcfg["rehearsal"] = {"source": str(make_source(tmp_path / "source-chapter"))}
+    assert cli.main(["study", "create", "Voice", "Test", "--name", "Ian", "--rehearsal"]) == 0
+    assert "rehearsal chapters" in capsys.readouterr().out
+    assert testers.record("t-voice-test")["chapter"] == "rehearsal"
+    assert cli.main(["study", "testers"]) == 0
+    assert "(rehearsal)" in capsys.readouterr().out
+    dcfg["rehearsal"]["source"] = str(tmp_path / "gone")
+    assert cli.main(["study", "create", "Other", "--rehearsal"]) == 1  # nothing to replay: refused
+    assert "Stopped:" in capsys.readouterr().out and testers.record("t-other") is None
+
+    lid = seed(dcfg, "Purnima", "done", name="Purnima")
+    s = next(x for x in state.all_states(dcfg) if x["lid"] == lid)
+    assert "(rehearsal" not in report.tester_material(dcfg, s)
+    fast = testers.folder(lid) / "chapters" / s["chapter"] / "fast.json"
+    fast.write_text(json.dumps({"mode": "fast", "rehearsal": {"source_run": "2026-11-14-herons"}}))
+    s = next(x for x in state.all_states(dcfg) if x["lid"] == lid)
+    assert "How Bridges Stand (rehearsal: replayed 2026-11-14-herons)" in report.tester_material(dcfg, s)

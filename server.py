@@ -75,6 +75,7 @@ from demo import interviewer as demo_interviewer
 from demo import routes as demo_routes
 from faststart import base as fast_base
 from faststart import guide_hooks as fast_hooks
+from faststart import rehearsal
 from faststart import routes as fast_routes
 from overnight import profiles
 from overnight import routes as overnight_routes
@@ -135,7 +136,12 @@ class Pipeline:
         return common.default_runs_dir()
 
     def start(self, args: list[str], run: str) -> None:
-        """Start the run's process, or, past the server's build limit, queue it (it waits its turn)."""
+        """Start the run's process, or, past the server's build limit, queue it (it waits its turn). A rehearsal
+        (faststart/rehearsal.py) starts at once and never counts in the limit: it calls no API, and a voice
+        test must never make a real tester's build wait (BuildQueue.running skips it too)."""
+        if rehearsal.marked(self.runs_dir / run):
+            self._launch(args, run)
+            return
         if self.queue is not None and not self.queue.submit(self, args, run):
             self.run = run  # the page follows it while it waits
             return
@@ -153,6 +159,11 @@ class Pipeline:
         # Always pinned: the child resolves its run folder, profile and memory by this id, never by whichever
         # listener happens to be active (or whichever tester's request came last) when it looks.
         env[common.LISTENER_ENV] = self.listener or common.active_listener_id()
+        # A fixed runs folder (tests, the page checks) is passed on, so the child opens the very folder start_seed
+        # wrote (seed, fast.json, a rehearsal marker), never a same-named run in the listener's chapters.
+        env.pop(common.RUNS_ENV, None)
+        if self._runs_dir:
+            env[common.RUNS_ENV] = str(Path(self._runs_dir).resolve())
         with open(self.runs_dir / run / "run.log", "a", encoding="utf-8") as log:  # the child keeps its own copy
             self.proc = subprocess.Popen([sys.executable, str(ROOT / "cli.py"), *args], cwd=ROOT, env=env,
                                          stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -163,18 +174,29 @@ class Pipeline:
                    live: bool = False) -> str:
         """Start (or continue) the unattended run for this seed; returns the run's name. Used by the
         text box (POST /api/chapters) and by the guide's start_chapter tool (which asks for mode "fast":
-        docs/fast-start.md). A seed's unfinished run is continued only in the mode that made it."""
+        docs/fast-start.md). A seed's unfinished run is continued only in the mode that made it.
+
+        A live fast start may be a rehearsal (faststart/rehearsal.py: the tester's or config's choice): a
+        finished chapter replayed with no paid call; with nothing to replay it is refused (409)."""
         topic = topic.strip()
         if not topic:
             raise HTTPException(400, "Say what the chapter should be about.")
         with self.lock:
             if self.busy():
                 raise HTTPException(409, "A chapter is already being made.")
+            src = None
+            if mode == "fast" and live and live_voice_on():
+                try:
+                    src = rehearsal.source_for(self.cfg or load_config(), self.listener)
+                except StageError as e:
+                    raise HTTPException(409, str(e)) from None
             text = seed_stage.seed_text(topic, why, notes, said)
-            def ok(root):  # a fast run is continued only in the voice it was started in (`live`: read live)
+            def ok(root):  # a fast run is continued only in the voice it was started in (`live`: read live),
+                # and a rehearsal only as one, a real run only as a real one
                 return fast_base.continues(root, mode) and (
                     not (Path(root) / fast_base.FILES["mode"]).exists()
-                    or fast_base.voice_matches(root, live and live_voice_on()))
+                    or (fast_base.voice_matches(root, live and live_voice_on())
+                        and bool(rehearsal.marked(root)) == (src is not None)))
             name = seed_stage.find_run(text, self.runs_dir, ok=ok) or seed_stage.run_name(topic, self.runs_dir)
             r = Run.open(name, create=True, runs_dir=self.runs_dir)
             if not r.path("seed").exists():
@@ -183,10 +205,14 @@ class Pipeline:
                 except StageError as e:
                     raise HTTPException(400, str(e)) from None
             args = ["new", name, "--unattended", *fast_routes.mode_args(r, mode, live=live)]
+            if src is not None:  # before the start: cli.py's `new` replays a marked run
+                cfg = self.cfg or load_config()
+                rehearsal.mark(r, src, cfg)
+                rehearsal.card(r, src)  # the card from the source's outline, for nothing
             if mode == "fast":
                 self._size(r)  # before the start: the run reads its config.yaml as it begins
             self.start(args, name)
-        if mode == "fast" and live:
+        if mode == "fast" and live and src is None:
             self._card(r.root)
         return name
 
@@ -424,6 +450,8 @@ class BuildQueue:
             else:
                 self.own.pop(root, None)
         for p in common.LISTENERS_DIR.glob("*/chapters/*/status.json"):
+            if rehearsal.marked(p.parent):  # a rehearsal calls no API: never counted (Pipeline.start)
+                continue
             s = fast_base.read_json(p) or {}
             if s.get("state") == "making" and not s.get("queued") and alive(s.get("pid")):
                 out.add(str(p.parent))

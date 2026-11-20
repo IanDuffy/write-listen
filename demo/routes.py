@@ -14,13 +14,18 @@
                                     event it doesn't know
     GET  /admin                     page/admin.html
     GET  /api/admin/testers         every tester's record and state, and the cost totals
-    POST /api/admin/testers         {label, name?}: a new link (name: what the interviewer greets them by)
+    POST /api/admin/testers         {label, name?, rehearsal?}: a new link (name: what the interviewer greets them
+                                    by; rehearsal: their chapters replay a finished one, faststart/rehearsal.py)
     POST /api/admin/greeting        {label, name?}: {name} it would greet them as, or null (it asks); nothing made
     POST /api/admin/testers/{lid}/revoke | reset | delete
     POST /api/admin/testers/{lid}/card    {value: auto|on|off}: tester.json's debrief_card. Since Ian's notes
                                     of 2026-11-18 it governs the End demo button for a tester who comes back
                                     with the debrief not done (it was the library's debrief card): auto shows
                                     it once a chapter was started, on always, off never
+    POST /api/admin/testers/{lid}/chapter {value: real|rehearsal}: tester.json's chapter (400 when there is no
+                                    rehearsal chapter to replay). GET rows carry chapter_kind (the effective value:
+                                    tester.json's, else demo.chapter), rehearsal (their newest chapter was one)
+                                    and chapter_default (demo.chapter)
     GET  /api/admin/testers/{lid}/study/{name}   the debrief summary, or a transcript as plain text
 
 The admin routes answer on loopback (no forwarding headers: behind Caddy every request comes from
@@ -57,6 +62,7 @@ NO_STORE = {"Cache-Control": "no-store"}
 class NewTester(BaseModel):
     label: str
     name: str | None = None   # what the interviewer greets them by (optional)
+    rehearsal: bool = False   # their chapters are rehearsals (faststart/rehearsal.py): replayed, nothing paid
 
 
 class Card(BaseModel):
@@ -245,15 +251,18 @@ def mount(app: FastAPI, cfg: dict) -> None:
         guard(request)
         rows = state.all_states(cfg)
         base = base_of(request)
+        default = testers.chapter_of(cfg, None)
         for r in rows:
             r["link"] = testers.link(cfg, r["token"], base) if r.get("token") else None
+            r["chapter_default"] = default
         return {"testers": rows, "totals": state.totals(rows)}
 
     @app.post("/api/admin/testers")
     def admin_create(req: NewTester, request: Request) -> dict:
         guard(request)
         try:
-            return testers.create(cfg, req.label, base=base_of(request), name=req.name)
+            return testers.create(cfg, req.label, base=base_of(request), name=req.name,
+                                  chapter="rehearsal" if req.rehearsal else None)
         except StageError as e:
             raise HTTPException(400, str(e)) from None
 
@@ -294,6 +303,15 @@ def mount(app: FastAPI, cfg: dict) -> None:
         _tester_or_404(lid)
         try:
             return {"debrief_card": testers.set_debrief_card(lid, req.value)["debrief_card"]}
+        except StageError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.post("/api/admin/testers/{lid}/chapter")
+    def admin_chapter(lid: str, req: Card, request: Request) -> dict:
+        guard(request)
+        _tester_or_404(lid)
+        try:
+            return {"chapter": testers.set_chapter(cfg, lid, req.value)["chapter"]}
         except StageError as e:
             raise HTTPException(400, str(e)) from None
 

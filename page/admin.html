@@ -48,9 +48,11 @@
 <main>
   <h1>Testers</h1>
   <p id="total">Loading…</p>
+  <p id="default-chapter" class="sub" hidden>Every tester without their own setting gets rehearsal chapters (demo.chapter).</p>
   <form id="new" autocomplete="off">
     <input id="label" placeholder="Label for a new tester (e.g. Pilot 1)" aria-label="Label" required>
     <input id="name" placeholder="First name to greet them by (optional)" aria-label="Name">
+    <label class="sub"><input type="checkbox" id="rehearsal"> Rehearsal chapters</label>
     <button class="primary">Create link</button>
   </form>
   <div id="greet" class="sub" aria-live="polite"></div>
@@ -97,7 +99,7 @@ function cell(label, html) { return `<td data-label="${label}"><div>${html}</div
 function row(t) {
   const study = (name) => `/api/admin/testers/${encodeURIComponent(t.lid)}/study/${encodeURIComponent(name)}`;
   const stage = esc(t.stage) + (t.left_early ? ' <span class="sub">(left early)</span>' : "");
-  const chapter = t.title ? `${esc(t.title)}<div class="sub">${t.minutes_heard} of ${t.chapter_minutes} min heard</div>`
+  const chapter = t.title ? `${esc(t.title)}${t.rehearsal ? " (rehearsal)" : ""}<div class="sub">${t.minutes_heard} of ${t.chapter_minutes} min heard</div>`
                           : '<span class="sub">–</span>';
   const links = [t.debrief.summary && `<a href="${study(t.debrief.summary)}" target="_blank">summary</a>`,
                  t.debrief.transcript && `<a href="${study(t.debrief.transcript)}" target="_blank">transcript</a>`]
@@ -113,8 +115,11 @@ function row(t) {
   // field is still debrief_card (auto | on | off): the button replaced the library's debrief card (2026-11-18).
   const card = `<select data-do="card" aria-label="End demo button" title="The End demo button when they come back to their page">${["auto", "on", "off"].map((v) =>
     `<option value="${v}"${t.debrief_card === v ? " selected" : ""}>End demo: ${v === "auto" ? "auto" : v === "on" ? "show" : "hide"}</option>`).join("")}</select>`;
+  // Rehearsal: their chapters replay a finished one (faststart/rehearsal.py), for testing the voices at no cost.
+  const kind = `<select data-do="chapter" aria-label="Chapters" title="Real chapters, or a finished one replayed (nothing paid)">${["real", "rehearsal"].map((v) =>
+    `<option value="${v}"${t.chapter_kind === v ? " selected" : ""}>Chapter: ${v}</option>`).join("")}</select>`;
   const actions = `<div class="actions">${t.link ? '<button data-do="revoke">Revoke</button>' : ""}
-    <button data-do="reset">Reset</button>${card}<button class="warn" data-do="delete">Delete all data</button></div>`;
+    <button data-do="reset">Reset</button>${card}${kind}<button class="warn" data-do="delete">Delete all data</button></div>`;
   return `<tr data-lid="${esc(t.lid)}" data-label="${esc(t.label)}">${cell("Tester", tester)}${cell("Stage", stage)}`
        + `${cell("Last active", when(t.last_active))}${cell("Chapter", chapter)}${cell("Questions", t.questions)}`
        + `${cell("Debrief", debrief)}${cell("Cost", cost)}${cell("Actions", actions)}</tr>`;
@@ -127,6 +132,7 @@ async function load() {
     $("total").textContent = `Total ${money(t.total)}: Claude ${money(t.claude)}, GPT-Live ${money(t.gpt_live)}`
       + (t.estimated ? ` (${money(t.estimated)} estimated)` : "") + ` · ${got.testers.length} tester${got.testers.length === 1 ? "" : "s"}`;
     $("rows").innerHTML = got.testers.map(row).join("");
+    $("default-chapter").hidden = !got.testers.some((x) => x.chapter_default === "rehearsal");
   } catch (e) { say("Couldn't load: " + e.message); }
 }
 
@@ -153,8 +159,9 @@ $("new").addEventListener("submit", async (ev) => {
   const label = $("label").value.trim();
   if (!label) return;
   try {
-    const got = await api("/api/admin/testers", { label, name: $("name").value.trim() || null });
-    $("label").value = ""; $("name").value = ""; greetSeq++; $("greet").textContent = "";
+    const got = await api("/api/admin/testers", { label, name: $("name").value.trim() || null,
+                                                   rehearsal: $("rehearsal").checked });
+    $("label").value = ""; $("name").value = ""; $("rehearsal").checked = false; greetSeq++; $("greet").textContent = "";
     await load();
     await copy(got.link, `Created ${got.label}` + (got.name ? `, greeted as ${got.name}.` : "."));
   } catch (e) { say("Couldn't create: " + e.message); }
@@ -178,6 +185,13 @@ $("rows").addEventListener("click", async (ev) => {
 });
 
 $("rows").addEventListener("change", async (ev) => {
+  const k = ev.target.closest("select[data-do=chapter]");
+  if (k) {
+    const tr = k.closest("tr");
+    try { await api(`/api/admin/testers/${encodeURIComponent(tr.dataset.lid)}/chapter`, { value: k.value }); say(`${tr.dataset.label}: ${k.value} chapters.`); }
+    catch (e) { say("Couldn't change their chapters: " + e.message); }
+    return load();
+  }
   const s = ev.target.closest("select[data-do=card]");
   if (!s) return;
   const tr = s.closest("tr");

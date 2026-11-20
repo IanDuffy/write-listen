@@ -357,10 +357,18 @@ def finished_at(root: Path) -> float:
     return mp3.stat().st_mtime if mp3.exists() else 0.0
 
 
+def rehearsal(root: Path) -> bool:
+    """A rehearsal (fast.json "rehearsal", faststart/rehearsal.py): a finished chapter replayed for a voice test.
+    Never the chapter tonight's plan, the morning intro or the library's latest card is built from."""
+    info = read_json(Path(root) / "fast.json")
+    return isinstance(info, dict) and isinstance(info.get("rehearsal"), dict)
+
+
 def latest_chapter(lid: str | None = None, *, listener: Path | None = None) -> Path | None:
     """The newest playable chapter: of the folders with a chapter.mp3, the one that finished last.
-    Not by name: seed and fast runs are named <slug>-YYYYMMDD, overnight ones YYYY-MM-DD-<slug>."""
-    done = [p for p in chapters(lid, listener=listener) if finished(p)]
+    Not by name: seed and fast runs are named <slug>-YYYYMMDD, overnight ones YYYY-MM-DD-<slug>.
+    A rehearsal is never the latest (rehearsal)."""
+    done = [p for p in chapters(lid, listener=listener) if finished(p) and not rehearsal(p)]
     return max(done, key=lambda p: (finished_at(p), p.name)) if done else None
 
 
