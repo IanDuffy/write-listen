@@ -52,6 +52,25 @@ second tester run"; the guide's results: voice/gpt_live/REPORT.md.
 Live checks for this round: $0.46 interviewer (demo/build_costs.jsonl) and $0.15 for the two exit checks, about
 $1.09 guide and page (voice/gpt_live/build_costs.jsonl, now about $17.3 of its $20 cap).
 
+## After Ian's third tester run (2026-11-19)
+
+His notes: the guide less engaging than in his conversations with Pooja and Purnima; End demo should stop the
+chapter being made; the debrief stalled and only asked questions; the intro talked too much; try a listening
+agent over GPT-Live that decides when to do things. Built by three agents, reviewed (four lenses, 23 findings
+confirmed by skeptics, all fixed with tests), then small live checks. Contracts: CLAUDE.md, "After Ian's third
+tester run".
+
+| Note | State |
+| --- | --- |
+| The guide's warmth | Persona and talk rules restored from 720f7d5 (the commit Pooja's conversation ran on); pep and pace kept; starts only on a clear yes, a question about the pitch answered first; the offer to chat after the start is real (the page waits for the answer). 4 live persona conversations: warm, playful lines ("You cook like you're patient. Am I right?"); one wrong day ("Friday" on a Thursday) |
+| End demo stops the chapter | Done (`server.stop_for_debrief`); tested offline, including that a stop never signals the server's own pid. Not run live |
+| The debrief | No delegation, so nothing to wait on; stall lines don't count as replies; a "left hanging" note. 2 live debriefs: no stalls, both ended on the farewell (57 s, 105 s). One turned twice on an acknowledgement alone; "what else?" and "see what I mean?" not reached live |
+| A briefer intro | 47 words after "Hi, is this ...?"; 28 s live, handed over on the words |
+| The director | Built and on by default (`live.director`); replayed on 25 moments (21 acceptable, no wrong active move). Live, the persona mirror only asks after guide lines: 12 decisions, all `wait`. With it on, the offer clock is off, which removed the mid-story cut-in seen with it off; the offer came later (2:25 against 1:17). Its own moves are untested live |
+
+Live checks for this round: $0.70 guide and director (voice/gpt_live/build_costs.jsonl, now $18.34 of its $20
+cap), $0.20 interviewer (demo/build_costs.jsonl). Full suite: 1840 passed before the last two fixes.
+
 ## Acceptance checks
 
 | # | Check | State |

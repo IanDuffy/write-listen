@@ -308,12 +308,14 @@ def activity(listener_dir: Path, cfg: dict | None = None, now: float | None = No
      in all, "taps": taps to talk, "status_asks": times they asked how it was coming along,
      "ready": the opening was ready when they ended (None: no record), "listened": any of it was heard,
      "pauses", "seeks": presses, "asks": taps to ask it something while it was read or paused (whether or not
-     a question of theirs was then heard), "end": the End demo press {"phase", "chapter_t", "t"} or None}
+     a question of theirs was then heard), "end": the End demo press {"phase", "chapter_t", "t"} or None,
+     "stopped": the piece was stopped unfinished (status.json "stopped": End demo while it was made stops it,
+     Ian's third run, 2026-11-19)}
 
     `now` (epoch seconds) is when they ended if no End demo press was recorded: the debrief's start."""
     listener_dir = Path(listener_dir)
     out = {"talk_s": None, "started": False, "quiet_asks": 0, "step_backs": 0, "taps": 0, "status_asks": 0,
-           "ready": None, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None}
+           "ready": None, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None, "stopped": False}
     talk = _conversation(listener_dir, cfg)
     out.update({k: v for k, v in talk.items() if not k.startswith("_")})
     started_at = talk.get("_started_at")
@@ -329,6 +331,7 @@ def activity(listener_dir: Path, cfg: dict | None = None, now: float | None = No
     if root is not None:
         out["started"] = True
         status = _read_json(root / "status.json", {}) or {}
+        out["stopped"] = status.get("state") == "stopped"
         if started_at is None:  # no start_chapter in the transcript: when the run itself says it began
             started_at = _ts(status.get("started")) or _ts((_read_json(root / "fast.json", {}) or {}).get("seed_set_at"))
         player = _read_json(root / "fast" / "player.json", {}) or {}

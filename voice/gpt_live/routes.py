@@ -13,6 +13,9 @@
     POST /api/live/tool       {"session", "name", "args"}: a tool the backend called, run in the conversation
     POST /api/live/line       {"session", "who", "text", ...}: a line for the transcript
     POST /api/live/usage      {"session", "live_id", "seconds", "backend"}: a session's cost, when it ends
+    POST /api/live/direct     {"session", "id", "trigger", "silence_ms", "last_who", "recent", "page"}: the director's
+                              decision on the guide's next move (voice/gpt_live/director.py; Ian, 2026-11-19):
+                              {"id", "move", "note", "why", "ms", "cost_usd"}, "wait" with an "error" on any failure
     GET  /api/live/chapter/{run}            the chapter as paragraphs (voice/gpt_live/chapter.py)
     GET  /api/live/card/{run}               the chapter card (faststart/card.py), with the outline's title once
                                             there is one; 404 until it is written
@@ -45,6 +48,7 @@ from stages import common, guide
 from stages.common import ROOT, Run, StageError
 
 from . import chapter as live_chapter
+from . import director as live_director
 from . import session as live_session
 
 LIVE_JS = ROOT / "page" / "live.js"
@@ -75,6 +79,16 @@ class Line(BaseModel):
     who: str
     text: str = ""
     live_id: str | None = None
+
+
+class Direct(BaseModel):
+    session: str
+    id: int = 0                   # the page's request number (it echoes back; a newer request aborts an older one)
+    trigger: str = "line"         # line (a line ended and a lull followed) or silence (live.director.silence_secs)
+    silence_ms: float = 0
+    last_who: str = ""            # whose line came last: guide or listener
+    recent: list[dict] = []       # the page's last few lines ({who, text}): any the transcript lacks yet are added
+    page: dict = {}               # {seconds, explained, started, turns}: what the page knows of the conversation
 
 
 class Usage(BaseModel):
@@ -126,6 +140,7 @@ LINE_WHO = ("listener", "guide", "page", "event")
 def page_settings(cfg: dict) -> dict:
     return {**cfg["live"]["page"], "notes": live_session.notes(), "restart_bands_secs": cfg["live"]["restart_bands_secs"],
             "opening": str(cfg["live"].get("opening") or "").strip(),
+            "director": live_director.settings(cfg),  # the director's page side (live.director): off, today's cues
             # the local listener's settings (page/wake.js): voice.wake, with live.page.wake over them
             "wake": {**((cfg.get("voice") or {}).get("wake") or {}), **(cfg["live"]["page"].get("wake") or {})}}
 
@@ -364,6 +379,14 @@ def mount(app, cfg: dict, pipe, chat) -> None:
             if req.text.strip() and req.who in LINE_WHO:
                 session.record(req.who, text=req.text.strip(), mode="live")
         return {"ok": True}
+
+    @app.post("/api/live/direct")
+    def direct(req: Direct) -> dict:
+        """The director's decision (voice/gpt_live/director.py). The conversation lock is held only to read and
+        write the transcript, never for the model call (about 2 s), so the page's line posts go on meanwhile."""
+        with chat.lock:
+            session = chat.current(req.session)
+        return live_director.ask(cfg, session, req.model_dump(), lock=chat.lock)
 
     @app.post("/api/live/usage")
     def usage(req: Usage) -> dict:

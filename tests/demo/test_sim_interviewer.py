@@ -202,7 +202,7 @@ def test_an_intro_that_stops_after_every_sentence_like_ians_fails_the_checks():
     tl = [{"t": t, "who": w, "text": x} for t, w, x in IANS_INTRO]
     k = SI.code_checks(p, tl, [], "handover")
     assert len(k["explained"]) == 5 and k["questions"] == 2 == k["questions_max"]
-    assert not k["one_turn"] and k["seconds"] == 50 > k["seconds_max"] == 45 and not k["ok"]
+    assert not k["one_turn"] and k["seconds"] == 50 > k["seconds_max"] == SI.INTRO_SECONDS and not k["ok"]
     # The same words in one turn, in 35 seconds, pass.
     told = " ".join(x for t, w, x in IANS_INTRO[2:10] if w == "guide")
     one = [{"t": t, "who": w, "text": x} for t, w, x in (*IANS_INTRO[:2], (8.0, "guide", told),
@@ -214,7 +214,7 @@ def test_an_intro_that_stops_after_every_sentence_like_ians_fails_the_checks():
              {"t": 34.0, "who": "guide", "text": "About twenty minutes. Ready?"}, {"t": 40.0, "who": "listener", "text": "Yes."},
              {"t": 48.0, "who": "guide", "text": "I'll hand you over now."}]
     k = SI.code_checks(p, asked, [], "handover")
-    assert k["questions"] == 3 == k["questions_max"] and k["seconds_max"] == 60 and k["ok"]
+    assert k["questions"] == 3 == k["questions_max"] and k["seconds_max"] == SI.INTRO_SECONDS + 15 and k["ok"]
 
 
 def test_a_corrected_name_is_the_one_saved():
@@ -246,11 +246,17 @@ ANSWERS = ["The meeting story.", "Quick and clear.", "It came right back. What i
 
 
 def test_a_debrief_run_end_to_end(cfg, monkeypatch, tmp_path):
-    use_ws(monkeypatch, FakeWS([*DEBRIEF[:5], [*DEBRIEF[5], *calls("end_debrief")]]))
+    """The debrief has no delegation since Ian's third run (2026-11-19): the session asks for no backend, and it
+    ends as the page ends it, on the farewell."""
+    cfg.setdefault("demo", {}).setdefault("interviewer", {}).setdefault("page", {})["act_grace_ms"] = 50
+    ws = FakeWS(DEBRIEF)
+    use_ws(monkeypatch, ws)
     lines = iter(ANSWERS)
     p = next(x for x in SI.personas("debrief") if x["key"] == "enjoyed")
     t = arun(SI.converse(cfg, p, tmp_path, reply_fn=lambda tl, m: next(lines), sim_kwargs=FAST, wait_secs=2))
-    assert t["stop"] == "ended"
+    assert t["stop"] == "closed by page"
+    start = next(m for m in ws.sent if m["type"] == "session.start")
+    assert "delegation" not in start["session"] and not [m for m in ws.sent if m["type"] == "response.item.create"]
     k = t["checks"]
     assert k["topics"] == ["stood_out", "asking", "use"] and k["closing"] and not k["first_question_broad"]
     assert k["uses_moment"] and k["unanswered"] == [] and k["silences"] == 0
@@ -525,6 +531,42 @@ def test_a_voice_that_only_hums_is_told_they_are_waiting_and_fails_the_checks(cf
     k = t["checks"]
     assert k["first_question_broad"] and k["unanswered"] == ["What's a different question?"] and k["silences"] >= 1
     assert not k["ok"]
+
+
+def test_a_stall_is_no_reply_and_the_tester_is_said_to_be_waiting(cfg, monkeypatch, tmp_path):
+    """Ian's third run (2026-11-19): to "But what else?" it said "Just a second." and "I'm still here." The page
+    counted those as replies and never said he was waiting; the harness, like the page, no longer does."""
+    assert not SI.real("Just a second.") and not SI.real("I'm still here.") and not SI.real("Right here, still with you.")
+    assert SI.real("What would you change first?") and not SI.real("Mm-hmm.")
+    cfg.setdefault("demo", {}).setdefault("interviewer", {}).setdefault("page", {})["reply_wait_ms"] = 300
+    ws = FakeWS([[says("Welcome back, Ian. What's one thing that stood out to you?")], [says("Just a second.")], []])
+    use_ws(monkeypatch, ws)
+    lines = iter(["The pacing at the start, it jumped in too soon.", "But what else?", SI.SILENT, SI.SILENT])
+    p = next(x for x in SI.personas("debrief") if x["key"] == "fragments")
+    t = arun(SI.converse(cfg, p, tmp_path, reply_fn=lambda tl, m: next(lines), sim_kwargs=FAST, wait_secs=1))
+    notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+    assert any("waiting for you" in n for n in notes)
+    assert t["checks"]["unanswered"] == ["But what else?"] and not t["checks"]["ok"]
+
+
+def test_a_turn_left_hanging_gets_one_note(cfg, monkeypatch, tmp_path):
+    """Ian's third run: "Yeah, I follow you, and that's useful to hear." and then 9.5 s of nothing on both sides.
+    The page's `hanging` note asks for its next question or its farewell, once for that line; never after an
+    invitation to go on."""
+    page = cfg.setdefault("demo", {}).setdefault("interviewer", {}).setdefault("page", {})
+    page["hanging_ms"] = 300
+    for line, want in (("Yeah, I follow you, and that's useful to hear.", 1), ("Sorry, go on.", 0),
+                       ("Mm, a listening agent on top of it. What would it decide first?", 0)):
+        assert SI.hangs(line) == bool(want)
+        ws = FakeWS([[says("Welcome back, Ian. What's one thing that stood out to you?")], [says(line)], []])
+        use_ws(monkeypatch, ws)
+        lines = iter(["I think there should be a listening agent on top of it. Do you see what I mean?",
+                      SI.SILENT, SI.SILENT, SI.SILENT])
+        p = next(x for x in SI.personas("debrief") if x["key"] == "fragments")
+        arun(SI.converse(cfg, p, tmp_path / str(want), reply_fn=lambda tl, m: next(lines), sim_kwargs=FAST, wait_secs=1))
+        notes = [m["content"] for m in ws.sent if m["type"] == "session.instructions.append"]
+        hung = [n for n in notes if n == IV.page_notes("debrief", SI.values_for(p))["hanging"]]
+        assert len(hung) == want, (line, notes)
 
 
 def test_code_checks_catch_product_talk_and_a_missed_deflection():

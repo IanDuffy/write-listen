@@ -321,6 +321,22 @@ def test_personas_and_rules():
     assert people["evening"]["now"] == "Wednesday evening" and "write ... wherever you pause" in people["evening"]["text"]
 
 
+def test_the_listener_from_ians_third_run_and_the_grade_follow_the_new_rules():
+    """Ian's third tester run (2026-11-19): alone in the evening, fragments, a story still going when the guide cut
+    in, and "What would it be about?" with his yes. The persona check gets that listener, and the grade the rules
+    the guide now has (warm and curious, a clear yes, the topic said after the start), not the ones it replaced."""
+    ian3 = P.personas()["ian3"]
+    assert ian3["now"] == "Thursday evening" and "now:" not in ian3["text"]
+    for bit in ("alone", "write ... wherever you pause", "omega-3", "Robert Wright", "What would it be about?"):
+        assert bit in ian3["text"], bit
+    from stages.common import load_prompt
+    grade = load_prompt("live_grade", rules="R", persona="X", transcript="T")
+    assert "- warm:" in grade and "- eager:" not in grade
+    assert "a question is the exception" not in grade and "never in its first two turns" not in grade
+    assert "only on a clear yes" in grade and "never cuts into a story" in grade
+    assert "what the chapter will be about" in grade and "waits for their answer" in grade
+
+
 def test_the_persona_check_can_open_as_the_tester_demo_does(cfg, monkeypatch, tmp_path, capsys):
     """`persona --handoff NAME`: the tester handoff opening was reachable only from a scratch driver."""
     from voice.gpt_live import __main__ as M

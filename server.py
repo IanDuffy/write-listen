@@ -36,7 +36,9 @@ Tester mode (config demo.enabled; docs/tester-demo-design.md): each request runs
 names (TesterScope, common.listener_scope), with a Pipeline and a conversation of their own (state_for);
 without a tester only GET /, /t/<token>, /admin*, /healthz and the gate's script answer. Chapter builds
 share a limit of demo.max_builds at once; more wait their turn (BuildQueue). GET /healthz says the server
-is up. With demo off, one listener as before.
+is up. With demo off, one listener as before. The interviewer's debrief, started by End demo while the
+tester's chapter is still being made, stops that chapter (stop_for_debrief; Ian's third run, 2026-11-19), and
+the real server fetches interviewer recordings it never got at start (demo/interviewer.py fetch_pending).
 
 A run is `python cli.py new <run> --unattended` in its own process and session, so
 the server stays responsive, and stopping or restarting the server does not stop
@@ -224,7 +226,8 @@ class Pipeline:
                 print(f"  chapter card for {root.name} failed: {type(e).__name__}: {e}")
         threading.Thread(target=work, name=f"card-{root.name}", daemon=True).start()
 
-    def stop(self, run: str, cfg: dict) -> dict:
+    def stop(self, run: str, cfg: dict, message: str = "You stopped this chapter.",
+             why: str = "Stopped from the page.") -> dict:
         """Stop the run being made. Ctrl-C first, so the pipeline records where it stopped
         (decisions.md) and its streaming Claude call is dropped; then, if it has not ended within a
         few seconds (research agents run in threads), terminate and kill its process group, which
@@ -238,7 +241,9 @@ class Pipeline:
             status = self._read(run) or {}
             own = self.proc is not None and self.proc.poll() is None and self.run == run
             pid = self.proc.pid if own else status.get("pid")
-            was_running = own or (status.get("state") == "making" and alive(pid))
+            # never this process: a status.json naming the server's own pid (the page tests' worlds write one)
+            # would have it signal itself
+            was_running = own or (status.get("state") == "making" and alive(pid) and pid != os.getpid())
             if was_running:
                 group = own or _leads_group(pid)  # a run started from a terminal shares the shell's group
                 for sig, wait in ((signal.SIGINT, 5.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 2.0)):
@@ -250,11 +255,11 @@ class Pipeline:
             cancelled = _cancel_batches(r.root)
             if was_running or status.get("state") == "making":
                 new_stage.write_status(r, cfg, "stopped", stage=status.get("stage"), label=status.get("label"),
-                                       message="You stopped this chapter.", pid=None,
+                                       message=message, pid=None,
                                        history=status.get("history", []),
                                        # a fast run's fields: the live page still knows the run for what it is
                                        **{k: status[k] for k in ("mode", "voice", "sections", "first_audio") if k in status})
-                r.decide("stopped", "Stopped from the page." + (f" Cancelled batches: {', '.join(cancelled)}."
+                r.decide("stopped", why + (f" Cancelled batches: {', '.join(cancelled)}."
                                                                  if cancelled else ""))
             if own:
                 self.proc = None
@@ -679,6 +684,7 @@ class _Conversation:
 
 
 _APP = {"state_for": None}  # the newest app's registry, for state_for() below
+STOPS: list[threading.Thread] = []  # chapters stopped by End demo, on the side (tests join these)
 
 
 def state_for(lid: str | None) -> State:
@@ -744,7 +750,30 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     chat = _ChatHere(lambda: here().chat)
     app.add_middleware(TesterScope, cfg=cfg, on_request=queue.ensure_watcher if queue is not None else None)
     demo_routes.mount(app, cfg)  # before the page route: with demo.enabled its GET / wins over the one below
-    demo_interviewer.mount(app, cfg)  # the interviewer's sessions (/api/interview/*, /interview.js)
+
+    def stop_for_debrief(ld: Path) -> bool:
+        """End demo while the tester's chapter is still being made stops it as the debrief starts (Ian's third
+        run, 2026-11-19). The stop runs on the side: it can take seconds (SIGINT, then the group), and the
+        tester is waiting for the interviewer. True when a stop began (the debrief is told so)."""
+        p = here().pipe
+        status = p.status() or {}
+        if not demo_interviewer.stop_on_end(ld, status):
+            return False
+        run = status["run"]
+
+        def work():
+            try:
+                p.stop(run, cfg, message="Stopped when the demo ended.", why="Stopped: End demo, as the debrief began.")
+            except Exception as e:  # never the debrief's problem
+                print(f"  stopping {run} for the debrief failed: {type(e).__name__}: {e}")
+        t = threading.Thread(target=work, name=f"stop-{run}", daemon=True)
+        STOPS.append(t)
+        t.start()
+        return True
+
+    demo_interviewer.mount(app, cfg, on_debrief=stop_for_debrief)  # the interviewer's sessions (/api/interview/*, /interview.js)
+    if remember_on_start:  # interviewer recordings a stopped server never fetched (the debrief's, run 3)
+        demo_interviewer.fetch_pending(cfg)
 
     def drop(lid: str, action: str) -> None:
         """The admin resets, deletes or revokes a tester: their chapter being made stops and their

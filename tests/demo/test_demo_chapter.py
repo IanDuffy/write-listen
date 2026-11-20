@@ -232,6 +232,8 @@ def test_the_handback_notes_exist():
     assert "End demo" in n["handback_done"] and "Stop reading now" in n["handback_done"]  # (it was I'm done)
     for k in ("handback_talk", "handback_making"):  # End demo in conversation, and while the chapter is made
         assert "End demo" in n[k] and "handing them back to the person who welcomed them" in n[k]
-    assert "isn't stopped" in n["handback_making"]
+    # End demo stops a chapter still being made (Ian's third run, 2026-11-19: server.py stop_for_debrief): the
+    # guide no longer promises it.
+    assert "isn't stopped" not in n["handback_making"] and "stops with it" in n["handback_making"]
     assert "{name}" in n["handoff"]
 

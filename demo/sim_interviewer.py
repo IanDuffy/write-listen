@@ -16,17 +16,21 @@
 Claude plays a tester (prompts/interviewer_tester.md, a persona from prompts/interviewer_testers.md, cycled to
 --runs) and talks by voice to the interviewer's real session through voice/gpt_live/sim.Sim (the session the
 page opens: demo/interviewer.session_config, over the WebSocket). The page's side is played too: the opening
-note as speakable context, the `waiting` note when the tester has finished and the voice hasn't replied, the
-handover the page acts on when the voice says it without the tool, and the debrief's time note (at checks.time_note_minutes: a compressed clock, since one check is capped at
+note as speakable context, the `waiting` note when the tester has finished and the voice hasn't replied (a line
+that only stalls, "Just a second.", is no reply), the debrief's `hanging` note when its last line answered with no
+question and no farewell and the tester stays quiet (Ian's third run, 2026-11-19), the handover the page acts on
+when the voice says it without the tool, the debrief's close on the farewell (it has no delegation since that
+run: `ended` is the page's close), and the debrief's time note (at checks.time_note_minutes: a compressed clock, since one check is capped at
 live.checks.run_cap_usd). Code checks every run (`checks`); `--grade` adds a fresh-context judge
 (prompts/interviewer_grade.md, live.checks.grade_role) whose quotes code checks against the transcript.
 
 The exact code checks since Ian's notes of 2026-11-18 (code_checks):
     intro    `one_turn`: no line of the tester's falls between the first and the last line of the explanation
              (someone else, listening, interrupting, End demo, afterwards). `questions` (the interviewer's
-             lines with a question mark) is at most 2, the who-check and "any questions, or ready?", plus one
+             lines with a question mark) is at most 2, the who-check and "Ready?", plus one
              per question the tester asked and one for a name it had to confirm. `seconds` (to its last line)
-             is at most 45, plus 15 per question the tester asked and 10 for a name it had to confirm.
+             is at most 35 (45 before Ian's third run, 2026-11-19), plus 15 per question the tester asked and
+             10 for a name it had to confirm.
     debrief  `questions`: the interviewer's lines with a question mark before the closing question are at most
              4 (the opening question, two more, one follow-up), plus one each time the tester asked for a
              different question. `not_happened`: none of its lines asks about what the persona's record rules
@@ -77,9 +81,11 @@ GRADE_USD = 0.15
 PRODUCT_WORDS = re.compile(r"\b(chapters?|audio|podcasts?|lessons?|stor(y|ies)|research\w*|guides?|narrat\w*|"
                            r"episodes?|learn(ing)? about|an app)\b", re.I)
 # How this will go, as the intro tells it (prompts/interviewer_intro.md, step 2).
+# "interrupt" is no longer said (Ian's third run, 2026-11-19: the intro is about 40 words); it still counts when it
+# comes up, and four of the five are owed.
 EXPLAINS = {"someone_else": r"someone else", "listen": r"ten minutes|\blisten", "interrupt": r"interrupt|ask (a |any )?questions?",
-            "done": r"end demo|\bstop\b", "afterwards": r"afterwards?|come back|after that"}
-INTRO_QUESTIONS, INTRO_SECONDS = 2, 45      # the who-check and "any questions, or ready?"; 30-40 s and some slack
+            "done": r"end demo|\bstop\b", "afterwards": r"afterwards?|come back|after that|back (to|with) me"}
+INTRO_QUESTIONS, INTRO_SECONDS = 2, 35      # the who-check and "Ready?"; 20-30 s and some slack (45 before 2026-11-19)
 DEBRIEF_QUESTIONS = 4                       # before the closing question: the opening, two more, one follow-up
 DEBRIEF_MORE = 2                            # ... of which at most two open a new topic after the opening
 # A debrief that ends after the opening question, unasked, needs this many words from the tester before the
@@ -251,9 +257,28 @@ def _overlap(words: str, line: str) -> float:
     return len(a & set(P._norm(line).split())) / len(a) if a else 0.0
 
 
-def real(text: str | None, words: int = IV.PAGE_DEFAULTS["reply_words"]) -> bool:
-    """More than a backchannel ("Mm-hmm.", "Hmm."): page/interview.js's rule for a reply."""
+def real(text: str | None, words: int = IV.PAGE_DEFAULTS["reply_words"], page: dict | None = None) -> bool:
+    """More than a backchannel ("Mm-hmm.", "Hmm."), and not a line that only stalls ("Just a second.", "I'm still
+    here.", Ian's third run): page/interview.js's rule for a reply (lineSaid)."""
+    page = {**IV.PAGE_DEFAULTS, **(page or {})}
+    if re.search(page["stall"], IV.norm_quotes(text), re.I):
+        return False
     return len(str(text or "").split()) >= words
+
+
+def last_reply(turns: list[dict], page: dict | None = None) -> dict | None:
+    """The voice's latest turn that isn't only a stall (a stall leaves the line before it standing, as on the page)."""
+    page = {**IV.PAGE_DEFAULTS, **(page or {})}
+    return next((x for x in reversed(turns) if not re.search(page["stall"], IV.norm_quotes(x["text"]), re.I)), None)
+
+
+def hangs(text: str | None, page: dict | None = None) -> bool:
+    """A debrief line that may leave them hanging (page/interview.js lineSaid): a reply with no question and no
+    farewell, and not an invitation to go on ("Sorry, go on.")."""
+    page = {**IV.PAGE_DEFAULTS, **(page or {})}
+    said = IV.norm_quotes(text)
+    return (real(said, page["reply_words"], page) and "?" not in said and not re.search(page["go_on"], said, re.I)
+            and not re.search(page["farewell"], said, re.I))
 
 
 def unanswered(timeline: list[dict]) -> list[str]:
@@ -411,16 +436,18 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
     since, said, silent, stop, by_page, noted = 0, 0, 0, "turns", None, False
     done_tool = "handoff_to_guide" if mode == "intro" else "end_debrief"
     reply_wait = min(float(PAGE["reply_wait_ms"]) / 1000, wait_secs)
+    hanging = min(float(PAGE["hanging_ms"]) / 1000, wait_secs)
+    hung_for = None  # the line the `hanging` note was sent for (once a line)
     spoke_at = None  # when the tester last finished a line the voice hasn't answered
     try:
         while True:
             new = await sim.wait_guide(since, reply_wait if spoke_at is not None else wait_secs)
-            if spoke_at is not None and not any(real(x["text"], PAGE["reply_words"]) for x in new):
+            if spoke_at is not None and not any(real(x["text"], PAGE["reply_words"], PAGE) for x in new):
                 # The page's `waiting` note: they finished reply_wait ago and it has said nothing but "mm".
                 await asyncio.sleep(max(0.0, reply_wait - (sim.now() - spoke_at)))
                 if sim.speaking:  # mid-reply: the page waits for the line too
                     await sim.wait_guide(since, 0.1)
-                if (not any(real(x["text"], PAGE["reply_words"]) for x in sim.turns[since:])
+                if (not any(real(x["text"], PAGE["reply_words"], PAGE) for x in sim.turns[since:])
                         and not any(c["name"] == done_tool for c in sim.calls) and not sim.closed.is_set()):
                     await sim.note("instructions", notes["waiting"])
                     await sim.wait_guide(len(sim.turns), wait_secs)
@@ -464,6 +491,18 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
             if reply == SILENT:
                 sim.timeline.append({"t": sim.now(), "who": "listener", "text": None})
                 silent += 1
+                last = last_reply(sim.turns, PAGE)
+                theirs = [x["t"] for x in sim.timeline if x["who"] == "listener" and x.get("text")]
+                if (mode == "debrief" and last is not None and hangs(last["text"], PAGE) and hung_for is not last
+                        and theirs and max(theirs) < last["t"] and not page_closes(sim.timeline, PAGE)):
+                    # The page's `hanging` note: its last line answered them with no question and no farewell,
+                    # they haven't spoken since, and both sides have been quiet hanging_ms (page/interview.js).
+                    hung_for = last
+                    await asyncio.sleep(max(0.0, hanging - (sim.now() - last["closed"])))
+                    if not sim.speaking and not sim.closed.is_set() and last_reply(sim.turns, PAGE) is last:
+                        await sim.note("instructions", notes["hanging"])
+                        silent = 0
+                        continue
                 if silent >= 2 and not new:
                     stop = "both quiet"
                     break

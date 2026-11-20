@@ -14,6 +14,36 @@ in how the transcript spells them. The persona is better than at the start but d
 (graded 3-6/10): praise and long pitches persist, and going back after a question still leans on the
 page's own cues. Costs: $0.05 per connected minute; a 20-minute live chapter is about $1.10 of voice.
 
+## After Ian's third tester run (2026-11-19): warmth back, and a director
+
+**What he said.** The guide was peppier but not engaging; his conversations with Pooja and Purnima had been more
+curious and "a little more flirtatious, in a platonic way". He asked for a listening agent over GPT-Live to decide
+what to do when. In his run the 50 s offer clock fired while he was mid-story about omega-3s, and the chapter
+started on an "Um" while he was asking what it would be about.
+
+**Changed.** The 720f7d5 persona and talk rules are back (warm, curious, a little wry; conversation, not interview;
+about a third of turns a question; stay on what lights them up), with the 2026-11-18 pep and pace and the no-body
+rule kept. Clear-yes starts; started notes name the topic; the offer to chat after the start waits for an answer.
+The director (`voice/gpt_live/director.py`, `prompts/live_director.md`): Sonnet 5.5 at effort low, asked by the
+page after each line and on silences, its note delivered only in a lull and dropped if anyone spoke; while it is
+up the offer clock is off and the pitch clocks are late fallbacks.
+
+**Replay** (offline, 25 moments, written by the builder): 21 acceptable, median 2.0 s, about $0.003 a call cached;
+the omega-3 moment is now `draw_out` (it was an offer); the 4 misses were all `wait` a second after a listener line.
+
+**Live** (`persona --personas ian3,reserved --handoff Ian`, director on, then off; `_runs/20261119-225121` and
+`_runs/20261119-230211`):
+
+| | ian3 on | ian3 off | reserved on | reserved off |
+| --- | --- | --- | --- | --- |
+| Said what it does | 2:25 | 1:17 (offer clock fired mid-line; cut into his pause) | 1:15 | 0:58 (offered and explained in one turn) |
+| Pitch / start | none in 2:47 | pitch begun at 2:46 over his story | 1:53 / 2:13 | 1:53 / 2:21 (a second nudge after the pitch) |
+| Questions | 3 of 8 turns | 5 of 11 | 5 of 8 | 5 of 7 |
+
+All 12 director decisions were `wait`: the mirror asks only after guide lines, most of which end in a question.
+So "on" here measures "clocks off". It removed the cut-ins, at the cost of a slower offer. The director's
+own moves are first heard on the real page. One slip: "Friday night salmon" on a Thursday session. Cost $0.70.
+
 ## After Ian's second tester run (2026-11-18): fewer questions, more eager
 
 **What he said.** "Too many questions now from the narrator, it should pick up on silence or try to get the

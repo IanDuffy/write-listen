@@ -172,7 +172,8 @@ def test_ians_run_he_asked_for_quiet_tapped_once_and_heard_none_of_it(tmp_path):
     cfg = {"live": {"page": {"quiet_ask": QUIET_ASK}}}
     act = debrief.activity(lis, cfg, now=at("18:52:39"))
     assert act == {"talk_s": 314.0, "started": True, "quiet_asks": 2, "step_backs": 2, "taps": 1, "status_asks": 1,
-                   "ready": False, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None}
+                   "ready": False, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None,
+                   "stopped": False}
     ctx = debrief.chapter_context(lis, cfg)
     assert ctx["minutes_heard"] == 0
     v = interviewer.values_from("Ian", ctx, debrief.moments(lis, cfg), act)
@@ -210,7 +211,8 @@ def test_the_account_says_only_what_the_records_show(tmp_path):
     # Nothing at all: no claim.
     empty = debrief.activity(tmp_path / "nobody", cfg)
     assert empty == {"talk_s": None, "started": False, "quiet_asks": 0, "step_backs": 0, "taps": 0, "status_asks": 0,
-                     "ready": None, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None}
+                     "ready": None, "listened": False, "pauses": 0, "seeks": 0, "asks": 0, "end": None,
+                     "stopped": False}
     none = {"run": None, "title": None, "summary": None, "minutes_heard": 0, "minutes": None}
     assert interviewer.account(none, [], empty) == ["The app has no record of what they did: ask, don't assume."]
     # A conversation and End demo, no chapter started.

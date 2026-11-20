@@ -105,7 +105,7 @@
       out: "", outAt: 0, inp: "", inAt: 0, spokeAt: 0, heardAt: 0, spoken: false, seconds: 0,
       backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(), pending: null, name: null,
       act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, farewellAt: 0, said: 0,
-      graceAt: 0, graceAct: null, stateNow: null });
+      graceAt: 0, graceAct: null, stateNow: null, hang: null, noteAt: 0, noteKind: null, handHeld: false });
   }
 
   async function start(mode, opts = {}) {
@@ -195,6 +195,9 @@
       I.backend.input += u.input_tokens || 0;
       I.backend.output += u.output_tokens || 0;
       I.backend.cached += (u.input_tokens_details && u.input_tokens_details.cached_tokens) || 0;
+      // Each backend answer in the transcript, by what it held: a run-3 post-mortem had only token sums to go on.
+      const kinds = (e.response.output || []).map((x) => x.type === "function_call" ? `function_call ${x.name}` : x.type);
+      if (I.sid) quiet("/api/interview/line", { sid: I.sid, who: "backend", text: `completed: ${kinds.join(", ") || "empty"}` });
       return;
     }
     if (e.type !== "response.output_item.done" || !e.item || e.item.type !== "function_call") return;
@@ -246,21 +249,38 @@
 
   // The page acts on the handover's words only once the tester has spoken and the intro is handover_min_ms
   // old: never in its opening, where "hand you over" may come up while it says how this will go. The tool
-  // and the clock at intro_max_minutes are not held by this.
+  // and the clock at intro_max_minutes are not held by this. A tester who never speaks (a nod, a mic not heard) is
+  // handed over too, at twice that; words said past handover_min_ms but before then are held (I.handHeld) and
+  // acted on once it is (the shorter intro of 2026-11-19 says them about 20-28 s in: under the old 3x they were
+  // dropped, and a silent tester sat until the 2-minute clock). Words in the opening are never held.
   function mayHandOver() {
     const min = I.S.handover_min_ms == null ? 15000 : I.S.handover_min_ms;
-    const el = now() - I.startedAt;  // a tester who never speaks (a nod, a mic not heard) is handed over too, later
-    return !!I.startedAt && el >= min && (!!I.heardAt || el >= 3 * min);
+    const el = now() - I.startedAt;
+    return !!I.startedAt && el >= min && (!!I.heardAt || el >= 2 * min);
   }
 
   const rx = (k) => { try { return I.S[k] ? new RegExp(I.S[k], "i") : null; } catch (e) { return null; } };
 
   function lineSaid(raw, t) {  // a line of the voice's, finished
     I.said++;
-    if (String(raw || "").split(/\s+/).filter(Boolean).length >= (I.S.reply_words || 3)) I.repliedAt = I.outAt;  // more than "Mm-hmm."
     const text = String(raw || "").replace(/[‘’]/g, "'");  // transcripts may write didn’t: the patterns use '
     const hand = rx("handover"), ask = rx("closing_question"), thanks = rx("thanks"), bye = rx("farewell");
-    if (I.mode === "intro" && hand && hand.test(text) && !I.act && mayHandOver()) { I.graceAt = t; I.graceAct = "handover"; }
+    // A reply is more than "Mm-hmm.", and never a line that only stalls ("Just a second.", "I'm still here."):
+    // those counted as replies in Ian's third run, and the page never told the voice he was waiting.
+    const stall = rx("stall"), goOn = rx("go_on");
+    const stalled = !!(stall && stall.test(text));
+    const reply = text.split(/\s+/).filter(Boolean).length >= (I.S.reply_words || 3) && !stalled;
+    if (reply) I.repliedAt = I.outAt;
+    // A line that may leave them hanging (debrief): a reply with no question and no farewell, and not an
+    // invitation to go on ("Sorry, go on."). A stall leaves the last one standing; any other line replaces it.
+    if (!stalled) {
+      I.hang = I.mode === "debrief" && reply && !text.includes("?") && !(goOn && goOn.test(text)) && !(bye && bye.test(text))
+        ? { at: I.outAt, sent: false } : null;
+    }
+    if (I.mode === "intro" && hand && hand.test(text) && !I.act) {
+      if (mayHandOver()) { I.graceAt = t; I.graceAct = "handover"; }
+      else if (!I.heardAt && now() - I.startedAt >= (I.S.handover_min_ms == null ? 15000 : I.S.handover_min_ms)) I.handHeld = true;
+    }
     if (I.mode !== "debrief") return;
     // The debrief ends itself. Its fixed last words are the end whenever they come, and the page acts on them
     // if the tool call hasn't arrived act_grace_ms later: it once had no way out but the last question (Ian was
@@ -294,11 +314,23 @@
       if ((calm && t - p.since >= p.min) || t - p.since > p.max) { I.pending = null; p.fn(); return; }
     }
     if (I.graceAct && !I.act && t - I.graceAt > (S.act_grace_ms || 3500)) { const w = I.graceAct; I.graceAct = null; selfCall(w); }
+    if (I.mode === "intro" && I.handHeld && !I.act && !I.graceAct && mayHandOver()) { I.handHeld = false; I.wordsAt = t; selfCall("handover"); }
     waiting(t, speaking);
+    hanging(t, speaking);
     clock(t);
   }, 100);
 
-  function cue(key, text) { if (!I.cues[key] && text) { I.cues[key] = true; instruct(text); } }
+  // The page's notes to the voice, one kind at a time: two different notes are never sent closer together than
+  // note_gap_ms (waiting, a turn left hanging and the clock's could otherwise stack in a few seconds).
+  function gapOk(kind, t) { return !I.noteAt || I.noteKind === kind || t - I.noteAt > (I.S.note_gap_ms || 5000); }
+  function pageNote(kind, text) {
+    if (!text) return;
+    I.noteAt = now(); I.noteKind = kind;
+    instruct(text);
+  }
+  function cue(key, text, t) {
+    if (!I.cues[key] && text && gapOk(key, t || now())) { I.cues[key] = true; pageNote(key, text); }
+  }
 
   // They finished and the voice has said nothing since but a word or two ("Mm-hmm.", "Hmm."), or nothing at
   // all: it is told they are waiting, after reply_wait_ms and once more after three times that. The voice
@@ -309,21 +341,34 @@
     if (!I.heardAt || I.repliedAt > I.heardAt || I.act || I.pending || speaking || I.inp || I.out) return;
     const wait = I.S.reply_wait_ms || 6000, again = I.waitFor === I.heardAt;
     if (again && I.waitSent > 1) return;
-    if (t - Math.max(I.heardAt, I.spokeAt) > (again ? wait * 3 : wait)) {
+    if (t - Math.max(I.heardAt, I.spokeAt) > (again ? wait * 3 : wait) && gapOk("waiting", t)) {
       I.waitSent = again ? 2 : 1; I.waitFor = I.heardAt;
-      instruct(I.notes.waiting);
+      pageNote("waiting", I.notes.waiting);
     }
+  }
+
+  // Left hanging (the debrief; Ian's third run): it answered him ("Yeah, I follow you, and that's useful to hear.")
+  // with no question and no farewell, and then neither side spoke for 9.5 s until he asked "But what else?". Once
+  // both have been quiet hanging_ms after such a line (and he hasn't spoken since it), one note asks for its next
+  // question or its farewell. Never after an invitation to go on, a question or the farewell (lineSaid).
+  function hanging(t, speaking) {
+    const h = I.hang;
+    if (I.mode !== "debrief" || !h || h.sent || I.farewellAt || I.act || I.pending || speaking || I.inp || I.out) return;
+    if (!I.heardAt || I.heardAt > h.at) return;  // they spoke since: theirs to finish, or `waiting`'s
+    if (t - Math.max(h.at, I.spokeAt, I.heardAt) <= (I.S.hanging_ms || 8000) || !gapOk("hanging", t)) return;
+    h.sent = true;
+    pageNote("hanging", I.notes.hanging);
   }
 
   function clock(t) {
     const mins = (t - I.startedAt) / 60000, S = I.S;
     if (I.mode === "intro") {
       const max = S.intro_max_minutes || 3;
-      if (mins > max - 0.5) cue("handover", I.notes.handover_now);
+      if (mins > max - 0.5) cue("handover", I.notes.handover_now, t);
       if (mins > max && !I.act) selfCall("handover");
     } else {
-      if (!I.farewellAt && mins > (S.debrief_target_minutes || 8)) cue("time", I.notes.time_up);
-      if (!I.farewellAt && mins > (S.debrief_max_minutes || 9)) cue("wrap", I.notes.wrap_now);
+      if (!I.farewellAt && mins > (S.debrief_target_minutes || 8)) cue("time", I.notes.time_up, t);
+      if (!I.farewellAt && mins > (S.debrief_max_minutes || 9)) cue("wrap", I.notes.wrap_now, t);
       if (mins > (S.debrief_max_minutes || 9) + 1 && !I.act) { I.act = "timeout"; finish("timeout"); }
     }
   }

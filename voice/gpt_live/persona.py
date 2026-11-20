@@ -30,12 +30,14 @@ from stages.common import Run, StageError, load_prompt, parse_json
 from stages.guide import NO_EARLIER, day_part
 
 from . import chapter as live_chapter
+from . import director as live_director
 from . import session as live
 from . import sim as S
 
 SILENT, LEAVE = "[SILENT]", "[LEAVE]"
 GUIDE_WAIT_SECS = 20  # the guide has said nothing for this long: the listener is asked what they'd do
 LISTENER_USD = 0.03  # an upper estimate for one listener reply (Sonnet, effort low)
+DIRECTOR_USD = 0.015  # and for one director decision (Sonnet, effort low; measured about $0.002-0.007)
 GRADE_USD = 0.15  # and for one grade (Sonnet, effort medium: config live.checks.grade_role)
 ONBOARDING_PARTS = ("00_system.md", "10_talk.md", "20_meeting.md", "30_pitch.md", "80_policies.md")
 ASIDE_PARTS = ("40_reading.md", "50_asides.md", "80_policies.md")
@@ -172,6 +174,41 @@ PAUSE = re.compile(r"\s*(?:\.\.\.|…)\s*")  # a listener's line with "..." in i
 PAUSE_SECS = 2.5
 
 
+TAG = re.compile(r"\[[^\]]*\]?|\]")
+
+
+def listener_turns(timeline: list[dict]) -> list[int]:
+    """The listener's turns as the page counts them for engaged() (live.js countLine): their lines with no guide
+    line between are one turn (the page merges fragments heard within engaged_merge_ms; the simulated listener's
+    pieces are one line apart), words without sound tags, turns of no words left out."""
+    out, open_ = [], False
+    for x in sorted(timeline, key=lambda r: r["t"]):
+        if x["who"] == "guide":
+            open_ = False
+        elif x["who"] == "listener" and x.get("text"):
+            n = len([w for w in TAG.sub(" ", x["text"]).split() if re.search(r"[A-Za-z0-9]", w)])
+            if open_ and out:
+                out[-1] += n
+            else:
+                out.append(n)
+                open_ = True
+    return [n for n in out if n > 0]
+
+
+def director_lines(timeline: list[dict]) -> list[dict]:
+    """The simulated conversation as the director reads the page's (director.lines_from_transcript)."""
+    out = []
+    for x in sorted(timeline, key=lambda r: r["t"]):
+        secs = int(x["t"])
+        if x["who"] in ("guide", "listener") and x.get("text"):
+            out.append({"secs": secs, "who": x["who"], "text": x["text"]})
+        elif x["who"] == "app" and x.get("kind") in ("instructions", "commentary") and x.get("text"):
+            out.append({"secs": secs, "who": "app", "text": x["text"]})
+        elif x["who"] == "tool":
+            out.append({"secs": secs, "who": "tool", "text": x.get("name", "")})
+    return out
+
+
 def explained_at(timeline: list[dict]) -> float | None:
     """When the guide first said what it does (session.EXPLAINED, as the page's L.explainedAt)."""
     return next((x["t"] for x in timeline if x["who"] == "guide" and live.EXPLAINED.search(x.get("text") or "")), None)
@@ -179,12 +216,20 @@ def explained_at(timeline: list[dict]) -> float | None:
 
 async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 12, after_start: int = 2,
                    max_minutes: float = 6, log_run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None,
-                   handoff: str | None = None, pause_secs: float = PAUSE_SECS) -> dict:
+                   handoff: str | None = None, pause_secs: float = PAUSE_SECS, director: bool = False,
+                   director_fn=None) -> dict:
     """One onboarding conversation by voice; returns (and saves) its transcript. `handoff`: the name a
     tester gave the interviewer: the conversation opens with the page's `handoff` note (the guide greets
     them by name) instead of the hello, as in the Tester Demo. A listener's line with "..." in it is
     spoken in pieces with `pause_secs` of silence at each (someone who talks in fragments: does the guide
-    wait, or cut in?)."""
+    wait, or cut in?).
+
+    `director` (live.director, Ian 2026-11-19): as the page does with it on, the director decides after each
+    guide line (and each silence) while the simulated listener thinks of a reply, both at once; its move goes in
+    as the `direct` note only if it lands before the listener speaks (the page delivers only in a lull, and drops
+    a move once anyone has spoken since it was asked for) and isn't done already; the offer cue is off and the
+    pitch nudges are the late fallbacks, in silences only. `director_fn(user) -> decision`: for tests (default:
+    director.decide, a Claude call logged to build_costs.jsonl)."""
     log_run = log_run or claude_run()
     name = persona["name"]
     values = first_meeting_values(persona["now"])
@@ -202,9 +247,55 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
         await sim.note("commentary", notes["handoff"].replace("{name}", handoff))
     since, said, silent, stop = 0, 0, 0, "turns"
     page = cfg["live"]["page"]
-    nudges, nudged = page.get("pitch_nudge_secs") or [], 0
-    offer, offered, hold = page.get("offer_nudge") or {}, False, page.get("pitch_hold") or {}
+    DC = cfg["live"].get("director") or {}
+    nudges, nudged = (((DC.get("fallback") or {}).get("pitch_nudge_secs") if director else page.get("pitch_nudge_secs"))
+                      or []), 0
+    offer, offered, hold = ({} if director else page.get("offer_nudge") or {}), False, page.get("pitch_hold") or {}
     after_noted = False
+    dstate = {"noted_at": None, "offered": False, "checked_in": False, "moves": []}
+
+    def decide_sync(moment_secs: float) -> dict:
+        tl = sim.timeline
+        started_ = any(c["name"] == "start_chapter" for c in sim.calls)
+        last = next((x["who"] for x in sorted(tl, key=lambda r: r["t"], reverse=True)
+                     if x["who"] in ("guide", "listener") and x.get("text")), "guide")
+        user = live_director.moment(
+            phase=live_director.PHASES["company" if started_ else "talk"], seconds=int(sim.now()),
+            explained=explained_at(tl) is not None, started=started_, turns=len(listener_turns(tl)),
+            silence_secs=moment_secs, last_who=last, profile=values["profile"],
+            transcript=live_director.transcript_text(director_lines(tl)))
+        if director_fn:
+            return director_fn(user)
+        S.check_cap(cfg, DIRECTOR_USD, "Claude director")
+        got = live_director.decide(cfg, log_run, user)
+        S.log_cost("claude director", got.get("cost_usd") or 0.0)
+        return got
+
+    async def direct(moment_secs: float, reply_task: asyncio.Task) -> None:
+        """The director's decision raced against the listener's reply: delivered only if it lands first."""
+        d_task = asyncio.create_task(asyncio.to_thread(decide_sync, moment_secs))
+        done, _ = await asyncio.wait({d_task, reply_task}, return_when=asyncio.FIRST_COMPLETED)
+        got = await d_task
+        move, note = got.get("move"), got.get("note") or ""
+        started_ = any(c["name"] == "start_chapter" for c in sim.calls)
+        told = explained_at(sim.timeline) is not None
+        gap = DC.get("min_gap_secs") or 0
+        drop = (reply_task in done and d_task not in done and reply_task.result() != SILENT) \
+            or move in (None, "wait") or not note \
+            or (move == "offer_what_i_do" and (told or dstate["offered"])) \
+            or (move in ("pitch", "ask_interest", "start_chapter", "offer_what_i_do") and started_) \
+            or (move == "check_in" and (dstate["checked_in"] or bool(listener_turns(sim.timeline)))) \
+            or (move not in ("step_back", "start_chapter") and dstate["noted_at"] is not None
+                and sim.now() - dstate["noted_at"] < gap)
+        dstate["moves"].append({"t": sim.now(), "move": move, "note": note, "why": got.get("why"), "error": got.get("error"),
+                                "delivered": not drop})
+        if drop:
+            return
+        dstate["noted_at"] = sim.now()
+        dstate["offered"] = dstate["offered"] or move == "offer_what_i_do"
+        dstate["checked_in"] = dstate["checked_in"] or move == "check_in"  # once, before their first word (the page's rule)
+        key = "direct_start" if move == "start_chapter" else "direct"
+        await sim.note("instructions", notes[key].replace("{note}", note))
     try:
         while True:
             new = await sim.wait_guide(since, GUIDE_WAIT_SECS)
@@ -213,12 +304,14 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                 # The page's note once the chapter starts (live.js afterStart): step back, or keep them company
                 # if they've been chatting (engaged_lines lines, the last four averaging engaged_words words).
                 after_noted = True
-                lines = [x["text"] for x in sim.timeline if x["who"] == "listener" and x.get("text")]
-                recent = [len(x.split()) for x in lines[-4:]]
+                turns = listener_turns(sim.timeline)
+                recent = turns[-4:]
                 P = cfg["live"]["page"]
-                engaged = len(lines) >= P["engaged_lines"] and recent and sum(recent) / len(recent) >= P["engaged_words"]
+                engaged = len(turns) >= P["engaged_turns"] and recent and sum(recent) / len(recent) >= P["engaged_words"]
                 key = "started_company" if engaged else "started_step_back"
-                await sim.note("instructions", notes[key].replace("{when}", "about 4 minutes"))
+                call = next(c for c in sim.calls if c["name"] == "start_chapter")
+                topic = str((call.get("args") or {}).get("topic") or "").strip() or "the one you pitched"
+                await sim.note("instructions", notes[key].replace("{when}", "about 4 minutes").replace("{topic}", topic))
                 new = await sim.wait_guide(since, GUIDE_WAIT_SECS) or new
                 since = len(sim.turns)
             if sim.closed.is_set():
@@ -235,7 +328,12 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                     break
             moment = ("The guide has just finished speaking." if new else
                       f"The guide has said nothing for {GUIDE_WAIT_SECS} seconds.")
-            reply = await asyncio.to_thread(reply_fn, sim.timeline, moment)
+            if director:
+                reply_task = asyncio.create_task(asyncio.to_thread(reply_fn, sim.timeline, moment))
+                await direct(1.0 if new else GUIDE_WAIT_SECS, reply_task)
+                reply = await reply_task
+            else:
+                reply = await asyncio.to_thread(reply_fn, sim.timeline, moment)
             if sim.speaking or len(sim.turns) > since:  # it spoke again while the listener was thinking
                 await sim.wait_guide(since, GUIDE_WAIT_SECS)
                 since = len(sim.turns)
@@ -264,7 +362,7 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
                              and re.search(offer["offered"], sim.turns[-1]["text"], re.I))):
                 await sim.note("instructions", notes["offer_nudge"])
                 offered = True
-            elif (nudged < len(nudges) and sim.now() > nudges[nudged] and no_chapter
+            elif (nudged < len(nudges) and sim.now() > nudges[nudged] and no_chapter and not (director and new)
                     and not (told is not None and sim.now() - told < (hold.get("explained_secs") or 0))):
                 await sim.note("instructions", notes["pitch_nudge" if nudged == 0 else "pitch_nudge_again"])
                 nudged += 1
@@ -289,6 +387,7 @@ async def converse(cfg: dict, persona: dict, out_dir: Path, *, max_turns: int = 
         "values": values, "session_id": sim.session_id, "stop": stop,
         "timeline": split_turns(sim.timeline), "calls": sim.calls, "errors": sim.errors,
         "cost": cost, "listener_usd": _listener_usd(before, name),
+        **({"director": dstate["moves"]} if director else {}),
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{name}.json").write_text(json.dumps(transcript, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -391,6 +490,10 @@ def summary(name: str, transcript: dict, g: dict | None) -> str:
     at = lambda v: "never" if v is None else f"{int(v) // 60}:{int(v) % 60:02d}"  # noqa: E731
     lines.append(f"  said what it does at {at(k['explained'])}, pitched at {at(k['pitched'])}, started at "
                  f"{at(k['started'])}; {k['questions']} of its {k['turns']} turns up to then asked something")
+    moves = transcript.get("director")
+    if moves is not None:
+        sent = [m["move"] for m in moves if m.get("delivered")]
+        lines.append(f"  director: {len(moves)} decisions, delivered: {', '.join(sent) or 'none'}")
     if g:
         failed = [r for r in g["rules"] if r["verdict"] == "fail"]
         lines.append(f"  score {g['score']}/10; failed: {', '.join(r['id'] for r in failed) or 'none'}; "

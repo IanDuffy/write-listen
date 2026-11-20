@@ -44,8 +44,16 @@
   const EXPLAINED = new RegExp(S.explained || "$^", "i");   // the guide telling them what it does (holds the pitch nudge)
   const MIC_OFF = new RegExp(S.mic_off_ask, "i");           // "turn off your mic": then only a tap wakes it
   const STALL = new RegExp(S.stall, "i");
-  const STEPPING = /\b(step (back|away)|tap (my|the) (circle|dot)|speak up)\b/i;  // the guide's step-back line, question or not
   const DECLINE = /^\W*(no|nope|nah|okay|ok|sure|thanks|thank you|sounds good|go ahead|i'?m good|all good|perfect|great|not really|that'?s fine)\b/i;                   // "Let me give that a thought": not an answer (the whole line)
+  const FILLER = /^\W*((um+|uh+|er+|hmm+|mm+|ah+|oh)\W*)+$/i;  // a sound, not yet an answer
+  // "No" to "anything else you'd like to chat about first?" (a "sure" or a "yes" is a yes to chatting). NO_CHAT is a
+  // whole line of decline words ("Okay, thanks."; "Okay, sure, let's chat!" is a yes); NO_LEAD the sounds and
+  // acknowledgements a no may open with ("Um, no, I'm good", "Sure, go ahead"); NO_ANY a no anywhere in a short reply
+  // ("I think I'm good"), unless it also asks for talk (YES_CHAT). Ian's third tester run, 2026-11-19.
+  const NO_CHAT = /^\W*(?:(?:no|nope|nah|not really|not right now|nothing(?: else)?|maybe later|i'?m (?:good|fine|all set)|all good|that'?s (?:all|fine|it)|go ahead|go for it|thanks|thank you|ok(?:ay)?|sounds good|perfect|great)\b\W*)+$/i;
+  const NO_LEAD = /^\W*((um+|uh+|er+|hmm+|mm+|ah+|oh|well|so|yeah|yep|sure)\b\W*)+/i;
+  const NO_ANY = /\b(go ahead|go for it|i'?m (good|fine|all set)|all good|not (right )?now|maybe later)\b/i;
+  const YES_CHAT = /\b(tell me|let'?s|chat|talk)\b/i;
   const ACK = /^\W*(ok(ay)?|yeah|yes|sure|right|alright|go ahead|go on|mm+[- ]?hmm|uh[- ]huh|got it|of course)\W*$/i;  // nor a bare "Okay."               // the guide leading into the chapter
   const WPS = S.words_per_second || 2.5;
   const $ = (id) => document.getElementById(id);
@@ -95,6 +103,12 @@
     demo: null,             // /api/live/demo {show, done, setting}: End demo for a tester back on a page of their own
     demoBegun: false,       // ... who has started a conversation here
     micRefused: false,      // a tester's mic was refused: the line asks for it, a tap or Try again asks again
+    // The director (voice/gpt_live/director.py, config live.director; Ian, 2026-11-19): a model that reads the
+    // conversation and decides the guide's next move. {fails, down, ctl, id, next, want, silenceIx, noteAt, offered}
+    dir: null,
+    recent: [],             // the last few lines ({who, text}) for the director (any the transcript lacks yet)
+    turnWords: [], turnEnd: 0, inStart: 0,  // the listener's turns for engaged(): fragments merged, words per turn
+    replyWait: null,        // the guide offered to chat before stepping back: {at} its line ended; the page waits for a reply
   };
   if (L.tester) L.skin.add("tester");
   window.Live = { L, S, state: () => L.phase };  // S: tests turn the clock-driven cues on
@@ -140,12 +154,15 @@
     if (L.mic) L.mic.enabled = !on;  // nothing leaves the laptop while muted
     send(on ? "session.input_audio.mute" : "session.input_audio.unmute");
   }
-  function instruct(text) {  // a note from the page; GPT-Live only acts on it with the mic open
+  function instruct(text, stamp = true) {  // a note from the page; GPT-Live only acts on it with the mic open
     mute(false);
+    if (stamp) L.noteAt = now();  // the director's min gap counts from any page note (its own, a clock's, a started note)
     send("session.instructions.append", { delegation_id: null, content: text });
     mark("instruct", text.slice(0, 80));
+    remember("page", text);
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "page", text });  // in the transcript, so a line has its cause
   }
+  function remember(who, text) { L.recent = L.recent.concat([{ who, text }]).slice(-12); }
   function think(text) { send("session.thinking.append", { delegation_id: null, content: text }); }
   function speakable(text) { send("session.commentary.append", { delegation_id: null, content: text }); }
 
@@ -366,10 +383,14 @@
     L.run = null; L.chapter = null; L.chapterAt = ""; L.feed = { items: [], next: 0, cur: null, ahead: null };
     L.readStarted = false; L.finished = false; L.archived = false; L.aside = null; L.wait = null; L.dropAt = null;
     L.runEnded = false; L.leading = false; L.lastAt = null; L.stalled = null; L.lastGuideLine = ""; L.lastGuideAt = 0; L.lastListenerAt = 0;
-    L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.explainedAt = 0; L.askedAt = 0; L.pitchNudgeAt = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
+    L.offer = null; L.pausedAt = null; L.convAt = 0; L.pitchNudges = 0; L.pitchSent = 0; L.explainedAt = 0; L.askedAt = 0; L.pitchNudgeAt = 0; L.helloChecked = false; L.quietAt = 0; L.ringMax = 0;
     L.seekTo = null; L.replaying = false; L.ending = false; L.wokeAt = 0;
-    L.heardLines = 0; L.recentWords = []; L.stepBackAt = 0;
+    L.turnWords = []; L.turnEnd = 0; L.stepBackAt = 0; L.replyWait = null;
     L.handoffOpen = null; L.handingBack = null;
+    if (L.dir && L.dir.ctl) L.dir.ctl.abort();
+    L.dir = { fails: 0, down: false, ctl: null, id: 0, next: null, want: false, silenceIx: 0, offered: false, checkedIn: false };
+    L.noteAt = 0;
+    L.recent = [];
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
   }
@@ -512,6 +533,7 @@
   }
 
   function heardListener(delta) {
+    if (!L.inp) L.inStart = now();
     L.heardAt = L.inAt = now();
     L.inp += delta;
   }
@@ -528,6 +550,8 @@
       if (text && !tail) {
         note(text, "guide");
         L.lastGuideLine = text; L.lastGuideAt = t;
+        remember("guide", text);
+        if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }  // the director is asked at the lull after it
         guideSaid(text, t, L.lineAt || t);
         if (!L.explainedAt && EXPLAINED.test(text)) L.explainedAt = t;  // the pitch nudge waits for these (conversationCues)
         if (text.includes("?")) L.askedAt = t;
@@ -557,7 +581,9 @@
       if (text) {
         note("You: " + text, "you");
         L.lastListenerAt = t;
-        countLine(text);
+        countLine(text, L.inStart || L.inAt, L.inAt);
+        remember("listener", text);
+        if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }
         listenerSaid(text, t);
         if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
         if (L.aside || L.wait) (L.aside || L.wait).lines.push({ who: "listener", text });
@@ -608,10 +634,21 @@
       mark("rest-said", "after start, unsaid");
       rest();
     }
+    // The guide said it would step back unless they'd like to chat, and asked: a real offer, so the page waits for
+    // their answer (Ian's third tester run: it rested 6 s after the offer, before he could take it up). Silence for
+    // step_back_reply_secs after anyone last spoke, and it rests; their answer is read in listenerSaid.
+    if (L.replyWait && L.phase === "talk" && !L.inp && !L.out && !L.pending
+        && t - Math.max(L.replyWait.at, L.spokeAt, L.heardAt) > (S.step_back_reply_secs || 8) * 1000) {
+      L.replyWait = null;
+      mark("rest-said", "after start, no reply");
+      rest();
+    }
     // When this stretch of talk began (a new session after a rest, a tap, a sound): the long-silence rest counts
     // from here. Without it a tap after 90 s of rest rested again within a second, the last words being that old
     // (Ian's tester run, 2026-11-16: "Tap to talk doesn't work once turned off").
     if (L.phase !== L.wasPhase) { if (L.phase === "talk") L.talkAt = t; L.wasPhase = L.phase; }
+    if (L.dir && L.dir.next) directorDeliver(t);
+    if (L.dir && dirHere()) directorTick(t);
     if (L.dc && L.dc.readyState === "open") conversationCues(t);
     if (L.phase === "paused" && L.pc && !L.closing) closeLive();  // never open while paused (a session that came up meanwhile)
     if (L.phase === "ended" && t - L.endedAt > S.end_hold_secs * 1000) endConversation();
@@ -634,11 +671,19 @@
   // Notes the page sends into the conversation on a clock: a hello nobody answered, a conversation running
   // long with no chapter, a ready chapter not taken up. A note goes while the listener is speaking (the
   // guide's reply to them takes it in) or after a few seconds' quiet, never on top of the guide.
+  // With the director up (dirOn), it reads the conversation instead of these clocks: no offer cue, no hello check
+  // (its silence check), and the pitch nudges are late fallbacks (live.director.fallback) that go only in a lull,
+  // never while they talk, and not within min_gap_secs of the director's last note (Ian's third tester run: the
+  // offer cue went 50 s in, mid-sentence). With it off, exactly the clocks as they were; gone down mid-conversation
+  // (two failures in a row), the same clocks but in a lull only (fb): by then they are long overdue, and would go
+  // into the listener's sentence on the next tick.
   function conversationCues(t) {
     if (L.phase !== "talk" || L.pending) return;
+    const dir = dirOn(), DC = S.director || {};
+    const fb = !dir && !!(DC.enabled && L.dir && L.dir.down);
     const theyTalk = L.inp && t - L.inAt < 600 && !L.out && t - L.spokeAt > 1500;
     const lull = !L.inp && !L.out && t - L.spokeAt > 4000 && t - L.heardAt > 4000;
-    if (!L.cont && !L.helloChecked && L.sessionWord && L.lastGuideAt && !(L.heardAt > L.convAt) && !L.inp
+    if (!dir && !L.cont && !L.helloChecked && L.sessionWord && L.lastGuideAt && !(L.heardAt > L.convAt) && !L.inp
         && t - L.spokeAt > S.hello_silence_secs * 1000) {
       L.helloChecked = true;
       mark("hello-silence");
@@ -649,11 +694,11 @@
     // of turns. Once the listener has spoken and the conversation is after_secs old, the first lull is the
     // guide's cue (offer_nudge); by max_secs it goes even while they talk. Once a conversation (kept by its
     // start time), never once the guide has said what it does, nor while its own offer is the line being answered.
-    const O = S.offer_nudge;
+    const O = dir ? null : S.offer_nudge;
     if (O && L.offerNudgeFor !== L.convAt && !L.explainedAt && !L.own && !L.startCalled && !L.cont && L.convAt
         && L.heardAt > L.convAt && t - L.convAt > O.after_secs * 1000
-        && !(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || ""))
-        && (lull || (theyTalk && t - L.convAt > O.max_secs * 1000))) {
+        && !(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || "")) && !(L.dir && L.dir.offered)
+        && (lull || (!fb && theyTalk && t - L.convAt > O.max_secs * 1000))) {
       L.offerNudgeFor = L.convAt;
       mark("offer-nudge");
       return instruct(N.offer_nudge);
@@ -664,16 +709,26 @@
     // bounded: a guide that asks every turn is still nudged); the second comes no sooner after the first
     // than the settings' gap. And it waits for a lull rather than going while they talk (an answer longer
     // than the question hold was still cut into), until max_secs past due.
-    const nudges = S.pitch_nudge_secs || [], H = S.pitch_hold || {}, n = L.pitchNudges;
+    const nudges = (dir ? (DC.fallback || {}).pitch_nudge_secs : S.pitch_nudge_secs) || [], H = S.pitch_hold || {}, n = L.pitchNudges;
     const due = n < nudges.length && L.convAt
       ? Math.max(L.convAt + nudges[n] * 1000, n ? L.pitchNudgeAt + (nudges[n] - nudges[n - 1]) * 1000 : 0) : 0;
     const held = (L.explainedAt && t - L.explainedAt < (H.explained_secs || 0) * 1000)
       || (L.askedAt && t - L.askedAt < (H.question_secs || 0) * 1000 && t - due < (H.max_secs || 0) * 1000);
-    const opening = lull || (theyTalk && t - due >= (H.max_secs || 0) * 1000);
+    const opening = dir ? lull && !(L.noteAt && t - L.noteAt < (DC.min_gap_secs || 0) * 1000)
+      : fb ? lull : lull || (theyTalk && t - due >= (H.max_secs || 0) * 1000);
     if (!L.own && !L.startCalled && !L.cont && due && t > due && !held && opening) {
+      // The director has no offer clock, so with it up nothing has made sure the guide said what it does: the first
+      // fallback is the offer cue then (it says to ask what they've been listening to if they already know).
+      const O2 = S.offer_nudge || {};
+      if (dir && !L.explainedAt && !L.dir.offered && L.offerNudgeFor !== L.convAt
+          && !(O2.offered && new RegExp(O2.offered, "i").test(L.lastGuideLine || ""))) {
+        L.offerNudgeFor = L.convAt; L.pitchNudges++; L.pitchNudgeAt = t;  // takes the first fallback's place
+        mark("offer-nudge", "fallback");
+        return instruct(N.offer_nudge);
+      }
       L.pitchNudges++; L.pitchNudgeAt = t;
       mark("pitch-nudge", L.pitchNudges);
-      return instruct(L.pitchNudges === 1 ? N.pitch_nudge : N.pitch_nudge_again);
+      return instruct(L.pitchSent++ ? N.pitch_nudge_again : N.pitch_nudge);
     }
     // Nobody has said anything for a long while: the mic goes off (tap to talk), as if they'd asked for quiet.
     if (S.talk_rest_secs && !L.inp && !L.out && t - L.spokeAt > S.talk_rest_secs * 1000 && t - L.heardAt > S.talk_rest_secs * 1000
@@ -688,16 +743,124 @@
     }
   }
 
+  // --- the director (voice/gpt_live/director.py; Ian, 2026-11-19) -------------------------------------------
+  // "A listening agent on top of the gptlive model, in order to direct it when to do things." A Claude call reads
+  // the conversation and decides the guide's next move (wait, draw_out, offer_what_i_do, ask_interest, pitch,
+  // answer, start_chapter, step_back, check_in) and a note for it. Asked in conversation only (before a chapter
+  // starts, and while it is made: company), never while reading, in an aside or check-in, resting, after a sound
+  // wake, while the guide offers to chat before stepping back, or around the handover and handback; asked once a
+  // line has ended and nobody has spoken for min_quiet_ms, and at each of silence_secs of silence. One request at a
+  // time: a newer one aborts the older. A decision lands about 2 s later, after GPT-Live has already answered the
+  // line (it replies in about 0.9 s), so it steers the next opening: it is delivered only in a real lull, and
+  // dropped if anyone has spoken since it was asked for, the move is already done, or it is too old. Two failures in
+  // a row (an error, a timeout, a cap) and the clocks take over for the rest of the conversation.
+  function dirOn() { return !!((S.director || {}).enabled && L.dir && !L.dir.down); }
+  function dirHere() {
+    return dirOn() && L.phase === "talk" && !!L.session && !!L.dc && L.dc.readyState === "open" && !L.muted && !L.pending
+      && !L.handingBack && !L.debriefing && !L.hold && !L.readStarted && !L.offer && !offerShown() && !L.stepBackAt
+      && !L.replyWait && !L.wokeAt && !!L.lastGuideAt;
+  }
+
+  function directorTick(t) {
+    const D = L.dir, C = S.director || {};
+    if (L.inp || L.out) return;
+    const quietFor = t - Math.max(L.spokeAt, L.heardAt);
+    if (D.want && quietFor >= (C.min_quiet_ms || 1000)) { D.want = false; return directorAsk(t, "line"); }
+    const secs = C.silence_secs || [];
+    if (!D.want && D.silenceIx < secs.length && quietFor >= secs[D.silenceIx] * 1000) {
+      D.silenceIx++;
+      directorAsk(t, "silence");
+    }
+  }
+
+  function directorAsk(t, trigger) {
+    const D = L.dir, C = S.director || {};
+    if (D.ctl) D.ctl.abort();
+    const ctl = new AbortController(), id = ++D.id;
+    D.ctl = ctl;
+    const body = {
+      session: L.session, id, trigger, silence_ms: t - Math.max(L.spokeAt, L.heardAt),
+      last_who: L.lastListenerAt > L.lastGuideAt ? "listener" : "guide", recent: L.recent.slice(-8),
+      page: { seconds: Math.round((t - (L.convAt || t)) / 1000), explained: !!L.explainedAt,
+              started: !!(L.own || L.startCalled), turns: turns().length },
+    };
+    mark("direct-ask", trigger);
+    const timer = setTimeout(() => ctl.abort(), (C.timeout_ms || 4000) + 1500);
+    fetch("/api/live/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+                                signal: ctl.signal })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t, body.last_who); } })
+      .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e)); } })
+      .finally(() => clearTimeout(timer));
+  }
+
+  function directorGot(got, askedAt, lastWho) {
+    const D = L.dir;
+    if (!got || got.error) return directorFailed((got && got.error) || "no answer");
+    D.fails = 0;
+    mark("direct", got.move);
+    if (got.move && got.move !== "wait" && got.note) D.next = { move: got.move, note: got.note, askedAt, at: now(), lastWho };
+  }
+
+  function directorFailed(why) {
+    const D = L.dir;
+    D.fails++;
+    mark("direct-fail", why);
+    if (D.fails >= 2 && !D.down) { D.down = true; D.next = null; mark("director-down"); }  // the clocks take over
+  }
+
+  // Whether a decision goes now: "send", "hold" (not yet a lull) or "drop". Pure: tested with any state.
+  // The quiet is counted from the decision's arrival too: the input transcript runs seconds behind the voice, so a
+  // listener who has just started again may not show in heardAt yet (deliver_quiet_ms). After the guide's own line
+  // (nearly every decision: GPT-Live answers in about 0.9 s) it waits for a real pause the listener let go by
+  // (deliver_after_guide_ms; Ian pauses 4-8 s before answering). One check-in a conversation, and only while the
+  // listener hasn't said a word (the old hello check): any other pause is theirs to leave.
+  function directorVerdict(n, t, st, C) {
+    if (!st.here) return "drop";
+    if (t - n.at > (C.max_age_ms || 12000)) return "drop";
+    if (st.heardAt > n.askedAt || st.spokeAt > n.askedAt) return "drop";  // someone spoke since: the moment has moved
+    if (n.move === "offer_what_i_do" && (st.explained || st.offered)) return "drop";
+    if (["pitch", "ask_interest", "start_chapter", "offer_what_i_do"].includes(n.move) && st.started) return "drop";
+    if (n.move === "check_in" && (st.listenerSpoke || st.checkedIn)) return "drop";
+    const quiet = C.deliver_quiet_ms || 0;
+    const gap = n.lastWho === "guide" ? Math.max(C.deliver_after_guide_ms || 0, quiet) : quiet;
+    if (st.speaking || t - Math.max(st.heardAt, st.spokeAt) < gap || t - n.at < quiet) return "hold";
+    if (!["step_back", "start_chapter"].includes(n.move) && st.noteAt && t - st.noteAt < (C.min_gap_secs || 0) * 1000) return "drop";
+    return "send";
+  }
+
+  function directorDeliver(t) {
+    const D = L.dir, n = D.next, C = S.director || {};
+    const O = S.offer_nudge || {};
+    const verdict = directorVerdict(n, t, {
+      here: dirHere(), heardAt: L.heardAt, spokeAt: L.spokeAt, speaking: !!(L.inp || L.out), noteAt: L.noteAt || 0,
+      explained: !!L.explainedAt, started: !!(L.own || L.startCalled),
+      listenerSpoke: L.heardAt > L.convAt, checkedIn: !!D.checkedIn,
+      offered: D.offered || !!(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || "")),
+    }, C);
+    if (verdict === "hold") return;
+    D.next = null;
+    if (verdict === "drop") return mark("direct-drop", n.move);
+    if (n.move === "offer_what_i_do") D.offered = true;
+    if (n.move === "check_in") D.checkedIn = true;
+    mark("direct-sent", n.move);
+    instruct(((n.move === "start_chapter" ? N.direct_start : N.direct) || "[{note}]").replace("{note}", n.note));
+    if (n.move === "step_back") restSoon();  // the mic off once it has said its parting words, unless they speak first
+  }
+
   // --- cues in what was said (Ian's second test, 2026-11-15) -------------------------------------------
   // Delegation misses tools (step_back never came when he asked for quiet), so the page also reads the lines.
   function guideSaid(text, t, began = t) {
     const asks = text.includes("?");
-    // Its line about stepping back (one begun after the note, not an "I'm on it" already under way): then the mic off.
-    if (L.stepBackAt && (began > L.stepBackAt || L.outAt - L.stepBackAt > 1500) && L.phase === "talk" && !L.pending
-        && (!asks || STEPPING.test(text))) {
+    // Its line about stepping back (one begun after the note, not an "I'm on it" already under way), whatever its
+    // words: it now ends by asking whether they'd like to chat first (notes.md started_step_back), so the page waits
+    // for their answer (the loop rests after step_back_reply_secs of silence; listenerSaid reads the answer). Run 3's
+    // guide paraphrased it with none of the step-back words, and the 12 s fallback rested before he could answer.
+    if (L.stepBackAt && (began > L.stepBackAt || L.outAt - L.stepBackAt > 1500) && L.phase === "talk" && !L.pending) {
       L.stepBackAt = 0;
-      mark("rest-said", "after start");
-      return restSoon(true);
+      L.replyWait = { at: t };
+      mark("step-back-offer", text.slice(0, 60));
+      return;
     }
     // Quiet: the guide's first line after the listener asked for it (or its own plain parting words) says
     // whether it is stepping back; a line that asks something means it isn't. The mic goes off once it has
@@ -719,10 +882,20 @@
     }
   }
 
-  function countLine(text) {  // for engaged(): spoken or typed
-    L.heardLines = (L.heardLines || 0) + 1;
-    L.recentWords = (L.recentWords || []).concat([text.split(/\s+/).length]).slice(-4);
+  // For engaged(): the listener's turns, spoken or typed. GPT-Live transcribes a halting speaker in fragments
+  // ("[inhale", "]Yeah", "Um", Ian's third tester run), so a line heard within engaged_merge_ms of the last, with no
+  // guide line between, is the same turn; sound tags are not words, and a turn of no words doesn't count.
+  function words(text) {
+    return text.replace(/\[[^\]]*\]?|\]/g, " ").split(/\s+/).filter((w) => /[a-z0-9]/i.test(w)).length;
   }
+  function countLine(text, start = now(), end = start) {
+    const n = words(text), last = L.turnWords.length - 1;
+    const same = last >= 0 && start - L.turnEnd < (S.engaged_merge_ms || 1500) && !(L.lastGuideAt > L.turnEnd);
+    if (same) L.turnWords[last] += n;
+    else L.turnWords = L.turnWords.concat([n]).slice(-50);
+    L.turnEnd = end;
+  }
+  function turns() { return L.turnWords.filter((n) => n > 0); }
 
   function listenerSaid(text, t) {
     // An ask for quiet waits for the guide's next line; anything else said clears it.
@@ -732,6 +905,18 @@
     if (talk) L.talkedAt = t;
     if (L.stepBackAt && talk) { L.stepBackAt = 0; mark("step-back-cancelled"); }
     if (MIC_OFF.test(text)) L.micOffAt = t;
+    // Their answer to "...unless you'd like to chat first?": a plain no ("no, go ahead", "okay, thanks") rests once
+    // the guide has said its few words; anything else they say keeps the company going (the offer was real). A
+    // sound tag or an "um" alone is not an answer yet: the wait goes on. A quiet ask is the quiet rule's (guideSaid).
+    if (L.replyWait) {
+      const said = text.replace(/\[[^\]]*\]?|\]/g, " ").trim();
+      if (said && !FILLER.test(said)) {
+        L.replyWait = null;
+        if (L.quietAt || MIC_OFF.test(said)) mark("step-back-answer", "quiet");
+        else if (declinesChat(said)) { mark("step-back-answer", "no"); restSoon(true); }
+        else mark("step-back-cancelled", "chat");
+      }
+    }
     // Their answer to the guide's offer (the first thing they say after it): a short yes, with no "not yet"
     // in it, starts the reading once the guide's few words of lead-in are said (start_reading usually comes
     // too; whichever is first starts it, once). The yes may open any sentence ("Ha, okay. Yeah, let's hear it.").
@@ -752,6 +937,14 @@
         afterGuide(() => startFromOffer("yes"), S.lead_in_max_ms, 4000);
       }
     }
+  }
+
+  // A plain no to "anything else you'd like to chat about first?": short, no question, and decline words only once
+  // the sounds and acknowledgements it opens with are set aside, or a no anywhere that doesn't also ask for talk.
+  function declinesChat(said) {
+    if (said.includes("?") || words(said) > 6) return false;
+    const core = said.replace(NO_LEAD, "").trim();
+    return NO_CHAT.test(said) || (!!core && NO_CHAT.test(core)) || (NO_ANY.test(said) && !YES_CHAT.test(said));
   }
 
   // Rest once the guide has finished, unless the listener starts speaking first (a parting line they answer).
@@ -880,30 +1073,34 @@
       L.own = own;
       note("Making your chapter…");
       if (L.status.run === own) onStatus(L.status);  // its status may have come first
-      if (!L.handingBack) afterStart(out);
+      if (!L.handingBack) afterStart(out, args);
     }
   }
 
   // Started (Ian's fifth note): by default the guide steps back while it researches (the mic off, GPT-Live
-  // closed), saying they can speak up or tap the circle any time; if they've been chatting easily, it offers
-  // to keep them company while it works instead. Engaged: engaged_lines lines so far, their last few
-  // averaging engaged_words words or more.
+  // closed), saying they can speak up or tap the circle any time, and asking whether they'd like to chat first (the
+  // page waits for that answer: L.replyWait); if they've been chatting easily, it offers to keep them company while
+  // it works instead. Engaged: engaged_turns turns so far, their last few averaging engaged_words words or more.
+  // Both notes name the topic ({topic}: start_chapter's, as pitched), so the guide can say in a sentence what it
+  // will be about (Ian's third tester run: "What would it be about?" went unanswered).
   function engaged() {
-    const r = L.recentWords || [];
-    const words = r.length ? r.reduce((a, b) => a + b, 0) / r.length : 0;
-    return (L.heardLines || 0) >= S.engaged_lines && (!S.engaged_words || words >= S.engaged_words);
+    const all = turns(), r = all.slice(-4);
+    const avg = r.length ? r.reduce((a, b) => a + b, 0) / r.length : 0;
+    return all.length >= (S.engaged_turns || 0) && (!S.engaged_words || avg >= S.engaged_words);
   }
 
-  function afterStart(out) {
+  function afterStart(out, args) {
     const m = out && out.first_audio_minutes;
     const when = m ? `about ${m} minute${m === 1 ? "" : "s"}` : "a few minutes";
+    const topic = String((args && args.topic) || (out && (out.topic || out.title)) || "").trim() || "the one you pitched";
+    const fill = (note) => note.replace("{when}", when).replace(/\{topic\}/g, topic);
     if (engaged()) {
       mark("after-start", "company");
-      return instruct(N.started_company.replace("{when}", when));
+      return instruct(fill(N.started_company));
     }
     mark("after-start", "step back");
     L.stepBackAt = now();
-    instruct(N.started_step_back.replace("{when}", when));
+    instruct(fill(N.started_step_back));
   }
 
   // The guide stepped back: the mic off and GPT-Live closed (it bills per connected minute; Ian's fifth note:
@@ -916,7 +1113,7 @@
       L.restWaitAt = L.restWaitAt || now();
       return setTimeout(rest, 400);
     }
-    L.restWaitAt = 0; L.stepBackAt = 0;
+    L.restWaitAt = 0; L.stepBackAt = 0; L.replyWait = null;
     // It said it would start the chapter and hasn't: remind it while the session is still open, then rest.
     if (L.promiseAt && !L.startCalled && !L.own && L.nudges < 2 && L.dc && L.dc.readyState === "open") {
       L.promiseAt = 0; L.nudges++;
@@ -1460,7 +1657,8 @@
   // in a sentence or two and says it is handing them back; once it has said so the conversation ends as any other
   // (its cost, the memory pass, the archive of a chapter heard to the end) and the interviewer's debrief starts
   // on the same mic, the screen cooled. `kind`: "end" (the chapter's end), "done" (End demo while the chapter is
-  // read or asked about: the reading stops there), "talk" (End demo in conversation; a chapter being made goes on).
+  // read or asked about: the reading stops there), "talk" (End demo in conversation; a chapter still being made is stopped
+  // by the server as the debrief starts: server.py stop_for_debrief, the handback_making note).
   const HANDED_BACK = /\b(hand(ing)?|pass(ing)?)\b.*\bback\b|\bback to\b|\bwelcomed\b/i;  // its words for handing back
   async function handback(kind) {
     if (L.handingBack || L.debriefing || L.debriefDone) return;  // one debrief per tester: later chapters just end
@@ -1611,7 +1809,8 @@
   // interviewer's intro (the gate covers this page) or the debrief, and never again once the debrief is done.
   // A tap goes on to the debrief, with nothing to confirm: with the guide's session open the guide closes in a
   // sentence and hands back (handback); with none (resting, paused, idle) the debrief starts at once. A chapter
-  // being made is not stopped: it finishes and shows in the library.
+  // still being made is stopped as the debrief starts (server.py stop_for_debrief, Ian's third run, 2026-11-19); the
+  // library shows it as stopped. One that has finished is untouched.
   // A tester back on a page of their own (not handed over here) sees it as Ian's setting for them says
   // (/api/live/demo, the admin page's "End demo" control): always, never, or (auto) once they have a chapter or
   // have started a conversation here.
@@ -2343,14 +2542,17 @@
     if (!L.pc) return typedChat(text);
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
     L.heardAt = L.inAt = L.lastListenerAt = now();  // typed counts as said for every cue
+    L.turnEnd = 0;  // a typed line is its own turn: never merged on timing
     countLine(text);
+    remember("listener", text);
+    if (L.dir) { L.dir.want = true; L.dir.silenceIx = 0; }
     listenerSaid(text, now());
     if (L.phase === "waiting" && L.wait) { L.wait.checkedIn = true; L.phase = "checkin"; }
     if (L.phase === "reading") ask();
     const conv = L.aside || L.wait;  // typed counts as said: the silent context and the aside's lines
     if (conv) { conv.lastListener = now(); conv.lines.push({ who: "listener", text }); }
     if (L.phase === "resting" || L.phase === "ended") { L.phase = "talk"; L.restAt = 0; }
-    instruct(N.typed.replace("{text}", text));
+    instruct(N.typed.replace("{text}", text), false);  // their line, not a page note: no min gap for the director
   });
 
   $("orb").addEventListener("click", async () => {
@@ -2447,7 +2649,7 @@
     if (L.session) navigator.sendBeacon("/api/chat/end", new Blob([JSON.stringify({ session: L.session })], { type: "application/json" }));
   });
 
-  Object.assign(window.Live, { handoff, spot, handback, debrief, endDemo, endDemoShown, loadDemo,
+  Object.assign(window.Live, { handoff, spot, handback, debrief, endDemo, endDemoShown, loadDemo, directorVerdict, declinesChat, engaged, turns,
                                onEvent, connect, endConversation, ask, startReading, where, beginChapter, onStatus,
                                pauseReading, play, seek, timeline, placeAt, playedSecs: () => { const tl = timeline(); return tl ? playedSecs(tl) : null; } });
 })();

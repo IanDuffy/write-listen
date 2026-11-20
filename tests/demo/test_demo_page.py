@@ -700,7 +700,10 @@ def test_end_demo_as_a_reply_ends_lets_the_goodbye_be_heard(demo):
     p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
 
 
-def test_end_demo_while_the_chapter_is_made_says_it_will_be_there_and_does_not_stop_it(demo):
+def test_end_demo_while_the_chapter_is_made_closes_without_promising_it(demo):
+    """Ian's third tester run (2026-11-19): "We definately need to stop the run of the chapter once the post
+    inverview starts, if the user clicks stop demo." The server stops it as the debrief starts (not the page:
+    it never posts the stop itself), so the guide's goodbye no longer says it will be there."""
     w = demo
     p = w.open_demo()
     p.page.click("#orb")
@@ -714,16 +717,14 @@ def test_end_demo_while_the_chapter_is_made_says_it_will_be_there_and_does_not_s
     p.page.click("#end-demo")
     p.wait("L.phase === 'handback'")
     assert [e["content"] for e in p.sent("session.commentary.append")][-1] == w.notes["handback_making"]
-    assert "isn't stopped" in w.notes["handback_making"]
+    assert "isn't stopped" not in w.notes["handback_making"] and "stops" in w.notes["handback_making"]
     p.page.wait_for_timeout(400)
     assert not debriefs(p)
-    p.say("Your chapter will be here when it's done. I'm handing you back to the person who welcomed you.")
+    p.say("Thanks for the chat. I'm handing you back to the person who welcomed you.")
     p.page.wait_for_function("window.__interview.length === 1", timeout=8000)
     p.wait("!L.handingBack", timeout=6000)
     assert events(p)[-1]["event"] == "end_demo" and events(p)[-1]["phase"] == "making"
-    assert not [path for path, _ in p.posts if path.endswith("/stop")]  # the chapter goes on being made
-    assert w.player().get("state") != "done"  # and, unheard, may still be offered when they come back
-    assert json.loads((w.root / "status.json").read_text())["state"] == "making"
+    assert not [path for path, _ in p.posts if path.endswith("/stop")]  # the server's to stop, not the page's
 
 
 def test_end_demo_while_the_guide_rests_starts_the_debrief_at_once(demo):

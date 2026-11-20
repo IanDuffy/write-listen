@@ -10,6 +10,19 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## After Ian's third tester run (2026-11-19): what to look and listen for on the next one
+- **The intro**: "Hi, is this Ian?", then about 15 seconds on what to expect, "Ready?", and the handover.
+- **The guide**: warmer and more curious, closer to Pooja's and Purnima's conversations: guesses about you,
+  reactions, about a third of turns a question. It should never cut into a story to say what it does.
+- **The director** (on): it should mostly stay out of the way; when you go quiet for a while, the guide should
+  pick something up rather than sit there. If it ever talks over you or feels slow to get to the point, note
+  when. `live.director.enabled: false` in config.yaml puts back the old timers.
+- **The start**: the chapter begins only after a clear yes; "What would it be about?" gets an answer first. Then
+  it offers to keep chatting and waits for your answer: "no, go ahead" rests it, anything else keeps talking.
+- **End demo while it's being made**: the chapter stops (the admin page shows it stopped) and the debrief says so.
+- **The debrief**: no "Just a second" or "I'm still here"; it asks, responds, and ends on "Thank you, Ian. That
+  really helps. That's everything from me." (testers hear "That really helps Ian.").
+
 ## After Ian's second tester run (2026-11-18): what to look and listen for on the next one
 - **The intro.** "Hi, is this Ian?", then one turn on what to expect (it names the End demo button), then "Any
   questions, or are you ready to try it?" and the handover: 30 to 40 seconds.

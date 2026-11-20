@@ -532,6 +532,65 @@ def test_a_tester_left_waiting_has_the_voice_told_so(site, page):
     assert sum("waiting for you" in x["text"] for x in said) == 2  # in the transcript, for whoever reads it later
 
 
+def test_a_stall_is_no_reply_so_the_tester_is_still_said_to_be_waiting(site, page):
+    """Ian's third run (2026-11-19): to "But what else?" it said "Just a second." and then "I'm still here.", three
+    words each, which the page counted as replies: it never told the voice he was waiting. Now a line that only
+    stalls is no reply; a real one still stops the notes."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { Interview.I.S.reply_wait_ms = 500; }")
+    notes = lambda: [e["content"] for e in page.sent("session.instructions.append") if "waiting for you" in e["content"]]  # noqa: E731
+    page.say("Welcome back, Sam. What's one thing that stood out to you?")
+    time.sleep(0.4)
+    heard(page, "The pacing. But what else?")
+    time.sleep(0.3)
+    page.say("Just a second.")
+    wait_for(lambda: len(notes()) == 1)
+    page.say("I’m still here.")  # curly, as GPT-Live writes it
+    wait_for(lambda: len(notes()) == 2, timeout=4)
+    heard(page, "Where did you go?")
+    time.sleep(0.1)
+    page.say("Right here, still with you.")
+    wait_for(lambda: len(notes()) == 3, timeout=4)
+    heard(page, "Hello?")
+    time.sleep(0.1)
+    page.say("Sorry. What would you change first?")  # a reply: nothing more
+    time.sleep(2.0)
+    assert len(notes()) == 3
+
+
+def test_a_turn_left_hanging_gets_one_note_and_an_invitation_to_go_on_gets_none(site, page):
+    """Ian's third run: "Yeah, I follow you, and that's useful to hear." and then 9.5 s of quiet on both sides
+    until he asked "But what else?". After hanging_ms of quiet the page asks once for its next question or its
+    farewell. Never after "Sorry, go on." (it is their turn), a question, or while they talk."""
+    page.js(DEBRIEF_JS)
+    page.wait("window.Interview.I.started && window.Interview.I.sid")
+    page.js("() => { const S = Interview.I.S; S.reply_wait_ms = 300; S.hanging_ms = 700; S.note_gap_ms = 1500; }")
+    hanging = page.js("Interview.I.notes.hanging")
+    assert hanging and "waiting for you" not in hanging
+    notes = lambda: [e["content"] for e in page.sent("session.instructions.append") if e["content"] == hanging]  # noqa: E731
+    page.say("Welcome back, Sam. What's one thing that stood out to you?")
+    time.sleep(0.4)
+    heard(page, "It jumped in too soon. There should be something listening on top of it.")
+    time.sleep(0.3)
+    page.say("Sorry, go on.")  # an invitation: their turn, never a turn left hanging
+    time.sleep(1.5)
+    assert notes() == []
+    heard(page, "That's the idea. Do you see what I mean?")
+    time.sleep(0.3)
+    page.say("Yeah, I follow you, and that's useful to hear.")
+    wait_for(lambda: len(notes()) == 1, timeout=4)
+    # The clock's note, due now, waits note_gap_ms behind it rather than stacking on it.
+    hung_at = page.js("() => { Interview.I.S.debrief_target_minutes = 0.001; return Interview.I.noteAt; }")
+    wait_for(lambda: any("at time" in e["content"] for e in page.sent("session.instructions.append")), timeout=4)
+    assert page.js("Interview.I.noteKind") == "time" and page.js("Interview.I.noteAt") - hung_at >= 1500
+    time.sleep(0.5)
+    assert len(notes()) == 1  # once for that line
+    page.say("What would you change first?")  # a question: nothing hangs
+    time.sleep(1.5)
+    assert len(notes()) == 1
+
+
 def test_saying_someone_else_comes_next_is_not_the_handover(site, page):
     """The intro now explains how this will go; "I'll hand you over to someone else" in that explanation would
     have counted as the handover itself (the page acts on the words when no tool call follows)."""
@@ -572,7 +631,7 @@ def test_the_handover_words_do_nothing_in_the_intros_opening(site, page):
 
 def test_the_handover_words_need_the_tester_to_have_spoken_but_the_tool_does_not(site, page):
     started(page)
-    page.js("() => { Interview.I.S.handover_min_ms = 60000; }")  # (a silent tester is handed over at three times this)
+    page.js("() => { Interview.I.S.handover_min_ms = 60000; }")  # (a silent tester is handed over at twice this)
     page.say("I'll hand you over now.")
     time.sleep(0.9)
     assert page.posted("api/interview/tool") == [] and page.js("window.__handed") is None
@@ -585,9 +644,25 @@ def test_a_tester_who_never_speaks_is_still_handed_over_on_the_words_later(site,
     in silence for the intro's 4-minute clock."""
     started(page)
     page.js("() => { Interview.I.S.handover_min_ms = 300; }")
-    time.sleep(1.0)  # past three times the minimum, the tester still silent
+    time.sleep(1.0)  # past twice the minimum, the tester still silent
     page.say("I'll hand you over now.")
     page.wait("window.__handed", timeout=8000)
+
+
+def test_a_silent_testers_handover_words_said_early_are_acted_on_once_they_may_be(site, page):
+    """Review of Ian's third run (2026-11-19): the 40-word intro says "I'll hand you over now." about 20-28 s in,
+    before a silent tester could be handed over on the words (then 3x handover_min_ms, 30 s), and nothing looked
+    again: they sat in silence until the 2-minute clock. Words said past handover_min_ms are held and acted on at
+    twice it."""
+    started(page)
+    page.js("() => { Interview.I.S.handover_min_ms = 1000; }")
+    page.wait("Date.now() - window.Interview.I.startedAt > 1100")
+    page.say("Ready? I'll hand you over now.")  # past the minimum, under twice it, the tester silent
+    time.sleep(0.4)
+    assert page.js("window.__handed") is None and page.js("window.Interview.I.handHeld") is True
+    page.wait("window.__handed", timeout=6000)
+    assert page.js("Date.now() - window.Interview.I.startedAt") >= 2000
+    assert page.posted("api/interview/tool")[-1]["by"] == "page"
 
 
 def test_the_name_handed_over_is_the_latest_known(site, page):

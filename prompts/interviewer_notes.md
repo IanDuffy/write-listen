@@ -34,17 +34,31 @@ cut-off one closes nothing). Keep "waiting for you" in both (tests and transcrip
 the `asking_*` lines no longer owe a question ("One of your questions is how that went", "Ask what happened"):
 the debrief ends when it has enough, so they say what to ask if it does go on; their own moment stays the first
 choice.
+Ian's third run (2026-11-19): "The post interview did not go very well, something was happening and the model
+was just not behaving right and I couldn't interpret what it was saying, plus it was just asking questions." It
+answered his long answer with "Yeah, I follow you, and that's useful to hear." and then said nothing for 9.5 s,
+until he asked "But what else?"; then only "Just a second.", "I'm still here." (the debrief's delegation, which
+is gone now). `hanging_debrief` is the page's note when its last line answered them with no question and no
+farewell (not an invitation to go on, "Sorry, go on.") and both sides have been quiet
+demo.interviewer.page.hanging_ms: its next question or its farewell, once per line (its wording never says "waiting for you", which marks the `waiting` notes). A stall line never counts as
+a reply for `waiting` (demo.interviewer.page.stall). Keep "word for word" in it: the farewell is keyed on.
+Also from that run: "We definately need to stop the run of the chapter once the post inverview starts, if the
+user clicks stop demo." End demo while the piece is still being made now stops it as the debrief starts
+(demo/interviewer.stop_on_end), and `did_stopped` closes the account (also read from a status.json that says
+stopped). Not after the piece had finished, and never at the piece's own end.
 ---
 opened_intro: Begin now: say hello warmly and ask their name. Nothing else yet.
 opened_intro_named: Begin now: say hello warmly and check who it is: "Hi, is this {name}?" Nothing else yet.
 opened_debrief: Begin now: welcome {name} back in a few words and thank them for staying on, then ask your first question.
 waiting: [They've finished speaking and are waiting for you. Speak now: answer what they asked or respond to what they said, in a sentence, then carry on.]
 waiting_debrief: [They've finished speaking and are waiting for you. Speak now: answer what they asked or respond to what they said, in a sentence. Then your farewell, word for word, if they asked to stop, sound finished, have given you enough, or you had begun it; only otherwise your next question.]
+hanging_debrief: [You answered them but didn't go on, and the turn is still yours. Now ask your next question or, if you have enough, say your farewell, word for word.]
 handover_now: [It's time to hand them over: say "I'll hand you over now." and hand them over.]
 time_up: [You're at time. No more questions: once they've finished their thought, respond in a few words, then say your farewell, word for word, and end.]
 wrap_now: [Time is up. Say your farewell now, word for word, and end.]
 farewell: Thank you, {name}. That really helps Ian. That's everything from me.
 farewell_unnamed: Thank you. That really helps Ian. That's everything from me.
+farewell_ian: Thank you, {name}. That really helps. That's everything from me.
 meeting_first: You haven't met them before and you don't know their name.
 meeting_named: You haven't spoken with them yet. Ian told you their name: {name}.
 step_first: Say hello and ask their name. Say it back to confirm it ("Sam. Did I get that right?"). If they correct you, use the corrected name and confirm again. Never ask them to spell it. Once it's confirmed, save it (see the Delegation policy), and go straight on to step 2.
@@ -78,6 +92,7 @@ did_end_aside: They pressed End demo while asking it a question.
 did_end_paused: They pressed End demo while the piece was paused.
 did_end_ended: They pressed End demo after the piece had finished.
 did_end: They pressed End demo.
+did_stopped: The piece was still being made when they ended, so it was stopped there, unfinished.
 did_unknown: The app has no record of what they did: ask, don't assume.
 times_1: once
 times_2: twice

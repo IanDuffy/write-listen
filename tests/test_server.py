@@ -1,6 +1,7 @@
 """Phase 1, milestone 2: status.json, the local server and the page."""
 
 import json
+import os
 import sys
 from types import SimpleNamespace as NS
 
@@ -236,6 +237,15 @@ def test_stop_cancels_queued_batches(client, monkeypatch):
     assert c.get("/api/status").json()["state"] == "stopped"  # a dead run that still said making
 
 
+def test_stop_never_signals_the_server_itself(client):
+    """A status.json naming this process (the live page tests' worlds write os.getpid()) must never have stop()
+    signal the server: End demo now stops a chapter being made (review, 2026-11-19)."""
+    c, pipe, _, runs = client
+    write_status(runs, "mine", state="making", label="Researching", pid=os.getpid())
+    out = c.post("/api/chapters/mine/stop").json()
+    assert out["stopped"] is False and c.get("/api/status").json()["state"] == "stopped"
+
+
 def test_a_stopped_chapter_reads_plainly_to_the_guide():
     from stages import guide
     assert guide.plain_status({"state": "stopped", "title": "T"}) == {"state": "stopped by the listener", "title": "T"}
@@ -342,3 +352,74 @@ def test_start_fresh_detaches_the_previous_listeners_run(tmp_path, monkeypatch, 
     assert c.get("/api/status").json() == {"state": "idle"} and not pipe.busy()
     demo_run = c.post("/api/chapters", json={"seed": "Roman concrete"}).json()["run"]
     assert (common.LISTENERS_DIR / lid / "chapters" / demo_run).is_dir() and started == [ian_run, demo_run]
+
+
+# --- End demo stops the chapter (Ian's third run, 2026-11-19) -----------------------------------------
+
+@pytest.fixture
+def debrief_app(tmp_path, monkeypatch, own_listeners):
+    """A server whose listener is t-sam, its chapters in t-sam's folder; no GPT-Live, no after-end work."""
+    from demo import interviewer as IV
+    from stages import common
+    from voice.gpt_live import session as live_session
+    monkeypatch.setenv(common.LISTENER_ENV, "t-sam")
+    lis = own_listeners / "t-sam"
+    chapters = lis / "chapters"
+    chapters.mkdir(parents=True)
+    monkeypatch.setattr(live_session, "create_webrtc", lambda cfg, session, sdp, client=None: {"id": "live_1", "sdp": "A"})
+    monkeypatch.setattr(IV, "_after_end", lambda *a: None)
+    pipe = server.Pipeline(runs_dir=chapters)
+    return NS(client=TestClient(server.create_app(pipe, remember_on_start=False)), pipe=pipe, lis=lis, chapters=chapters)
+
+
+def _debrief(app):
+    sid = app.client.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()["sid"]
+    for t in list(server.STOPS):
+        t.join(20)
+    return json.loads((app.lis / "study" / f"debrief-{sid}.jsonl").read_text().splitlines()[0])
+
+
+def test_end_demo_stops_the_chapter_being_made_as_the_debrief_starts(debrief_app, tmp_path):
+    """Ian's third run: "We definately need to stop the run of the chapter once the post inverview starts, if the
+    user clicks stop demo." The stop runs on the side; the debrief is told the piece was stopped."""
+    from demo import debrief, interviewer as IV
+    app = debrief_app
+    proc, flag = _real_run(tmp_path, app.chapters, "lesson", POLITE)
+    app.pipe.proc, app.pipe.run = proc, "lesson"
+    debrief.add_event(app.lis, "end_demo", "reading")
+    first = _debrief(app)
+    assert proc.poll() is not None and flag.read_text() == "interrupted"
+    s = json.loads((app.chapters / "lesson" / "status.json").read_text())
+    assert s["state"] == "stopped" and s["message"] == "Stopped when the demo ended." and s["pid"] is None
+    assert "End demo" in (app.chapters / "lesson" / "decisions.md").read_text()
+    assert first["did"].splitlines()[-1] == "- " + IV.notes()["did_stopped"]
+
+
+def test_the_chapters_own_end_stops_nothing(debrief_app, tmp_path):
+    """The chapter's end hands back with no End demo press: nothing is stopped, and neither after a press made
+    once the piece had finished."""
+    from demo import debrief, interviewer as IV
+    app = debrief_app
+    proc, flag = _real_run(tmp_path, app.chapters, "lesson", POLITE)
+    app.pipe.proc, app.pipe.run = proc, "lesson"
+    try:
+        first = _debrief(app)
+        debrief.add_event(app.lis, "end_demo", "ended")
+        second = _debrief(app)
+        assert proc.poll() is None and not (flag.exists() and flag.read_text().strip())
+        assert json.loads((app.chapters / "lesson" / "status.json").read_text())["state"] == "making"
+        assert IV.notes()["did_stopped"] not in first["did"] + second["did"]
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_the_real_server_fetches_missing_interviewer_recordings_at_start(tmp_path, monkeypatch):
+    """Ian's third run: the debrief's recording was lost when the server stopped inside the two minutes it waits.
+    The real server (remember_on_start) catches up at start; an imported module or a test app does not."""
+    calls = []
+    monkeypatch.setattr(server.demo_interviewer, "fetch_pending", lambda cfg: calls.append(cfg))
+    server.create_app(server.Pipeline(runs_dir=tmp_path), remember_on_start=False)
+    assert calls == []
+    server.create_app(server.Pipeline(runs_dir=tmp_path))
+    assert len(calls) == 1

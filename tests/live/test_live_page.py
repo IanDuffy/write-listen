@@ -172,7 +172,9 @@ def site(cfg, tmp_path, monkeypatch):
                                aside_quiet_secs=1000, end_hold_secs=1000, talk_rest_secs=1000, wake_grace_secs=0,
                                # every listener counts as engaged (the guide keeps them company after the start)
                                # unless a test says otherwise
-                               engaged_lines=0, engaged_words=0)
+                               engaged_turns=0, engaged_words=0)
+    # The director (live.director) is off here, as the clocks are: the tests that are about it turn it on (Live.S).
+    cfg["live"]["director"] = {**(cfg["live"].get("director") or {}), "enabled": False}
     monkeypatch.setattr(llm, "_client", FakeAnthropic(Responder()))
     monkeypatch.setattr(memory, "after_session", lambda *a, **k: False)
     offers = []
@@ -1351,6 +1353,148 @@ def test_the_answer_wait_counts_from_the_question(world):
     p.wait("L.offer", timeout=5000)
 
 
+# --- review of the third run's build (2026-11-19) -----------------------------------------------------------
+
+def sent_note(w, key):
+    return f"window.__sent.some((e) => e.content === {json.dumps(w.notes[key])})"
+
+
+def test_a_director_gone_down_brings_the_clocks_back_in_a_lull_only(world):
+    """Two failures put the director down; by then the offer cue is long overdue. It must not go into the listener's
+    sentence on the next tick (Ian's run-3 complaint), only at the next lull."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, ["error", "error"])
+    cue(p, "offer_nudge", {"after_secs": 0.2, "max_secs": 0.5, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait(logged(p, "direct-fail"), timeout=5000)
+    p.hear("Hi.")
+    p.wait(logged(p, "director-down"), timeout=5000)
+    for _ in range(8):  # mid-story, well past max_secs: the old clock would cut in now
+        p.hear("and then the salmon, and the omega threes")
+        p.page.wait_for_timeout(400)
+    assert w.notes["offer_nudge"] not in instructions(p)
+    p.wait(sent_note(w, "offer_nudge"), timeout=8000)  # the lull
+    assert p.L("Date.now() - L.heardAt") >= 4000
+
+
+def test_any_page_note_counts_for_the_directors_min_gap(world):
+    """A started note (or a clock's) and a director note seconds apart competed (review, 2026-11-19): every page note
+    is stamped, and a director move within min_gap_secs of one is dropped."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, [], min_gap_secs=10)
+    p.say("Hi there!")
+    p.wait("Date.now() - L.spokeAt > 900 && !L.out")
+    start_chapter(p)
+    p.wait(logged(p, "after-start", "company"))
+    assert p.L("L.noteAt > 0")
+    inject = ("() => { window.Live.L.dir.next = {move: 'draw_out', note: 'Tease them.', askedAt: Date.now() - 50, "
+              "at: Date.now() - 300, lastWho: 'listener'}; }")
+    p.js(inject)
+    p.wait(logged(p, "direct-drop", "draw_out"), timeout=4000)
+    p.js("() => { window.Live.L.noteAt = 0; }")
+    p.js(inject)
+    p.wait(logged(p, "direct-sent", "draw_out"), timeout=4000)
+
+
+@pytest.mark.parametrize("line", ["Okay, sure, let's chat!", "Great, tell me about you.", "Thanks, tell me about falcons.",
+                                  "Yes.", "Sure!", "Yeah, let's chat.", "No, I'd love to chat actually"])
+def test_taking_up_the_offer_to_chat_is_never_read_as_a_no(world, line):
+    w = world
+    p = w.open()
+    assert p.js("(s) => window.Live.declinesChat(s)", line) is False, line
+
+
+@pytest.mark.parametrize("line", ["No, go ahead.", "Okay, thanks!", "Nope.", "No thanks, I'm good.", "Perfect, thank you",
+                                  "Um, no, I'm good.", "Sure, go ahead.", "Yeah, go ahead.", "Oh, I'm good.",
+                                  "Not right now.", "Yep, all good.", "I think I'm good.", "Nothing else, go for it"])
+def test_the_ways_of_declining_the_offer_to_chat_are_a_no(world, line):
+    w = world
+    p = w.open()
+    assert p.js("(s) => window.Live.declinesChat(s)", line) is True, line
+
+
+def test_okay_lets_chat_keeps_the_company_going(world):
+    """Review (2026-11-19): "Okay, sure, let's chat!" matched the start-anchored no and rested the page."""
+    w = world
+    p = step_back_offered(w, reply_secs=1.5)
+    p.hear("Okay, sure, let's chat!")
+    p.wait(logged(p, "step-back-cancelled", "chat"), timeout=4000)
+    p.say("What's on your mind?")
+    p.page.wait_for_timeout(3000)
+    assert p.phase() == "talk"
+
+
+def test_sure_go_ahead_to_the_offer_to_chat_rests(world):
+    w = world
+    p = step_back_offered(w, reply_secs=20)
+    p.hear("Sure, go ahead.")
+    p.wait(logged(p, "step-back-answer", "no"), timeout=4000)
+    p.say("Great, talk soon.")
+    p.wait("L.phase === 'resting' && !L.pc", timeout=6000)
+
+
+def test_a_paraphrased_step_back_line_that_asks_still_waits_for_the_answer(world):
+    """Run 3's guide said it with none of the step-back words; ending on a question, it opened no reply wait, and the
+    12 s fallback rested before the listener could answer. Any line after the note is the step-back line."""
+    w = world
+    p = connect(w, start=False)
+    not_engaged(p)
+    cue(p, "step_back_wait_secs", 2)
+    cue(p, "step_back_reply_secs", 6)
+    p.wait("Date.now() - L.spokeAt > 900 && !L.out")
+    start_chapter(p)
+    p.wait("L.stepBackAt")
+    p.say("Perfect, I'll go dig into that now, about four minutes. Anything else on your mind first?")
+    p.wait(logged(p, "step-back-offer"), timeout=5000)
+    assert p.L("!!L.replyWait")
+    p.page.wait_for_timeout(3000)
+    assert p.phase() == "talk"
+    p.wait("L.phase === 'resting' && !L.pc", timeout=8000)
+
+
+def test_with_the_director_up_the_first_fallback_is_the_offer_if_nothing_was_explained(world):
+    """The director has no offer clock: a guide that never said what it does got the pitch nudge first (review,
+    2026-11-19). Then the first fallback is the offer cue, and the pitch nudge comes at the next one."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, fallback={"pitch_nudge_secs": [0.5, 1000]})
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait(sent_note(w, "offer_nudge"), timeout=9000)
+    assert p.marks("offer-nudge") and w.notes["pitch_nudge"] not in instructions(p)
+
+
+def test_with_the_director_up_and_it_explained_the_first_fallback_is_the_pitch(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, fallback={"pitch_nudge_secs": [0.5, 1000]})
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("I make short audio chapters, just for you.")
+    p.wait(sent_note(w, "pitch_nudge"), timeout=9000)
+    assert w.notes["offer_nudge"] not in instructions(p)
+
+
+def test_with_the_director_up_the_pitch_fallback_goes_late_only_in_a_lull_and_not_near_its_note(world):
+    """Decision 6: with the director up, the pitch nudges are late fallbacks (director.fallback.pitch_nudge_secs) that
+    never go while the listener talks, and not within min_gap_secs of the last page note."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, [{"move": "draw_out", "note": "Tease them about the shed."}],
+                min_gap_secs=7, fallback={"pitch_nudge_secs": [0.5, 1000]})
+    p.say("I make short audio chapters, just for you. What have you been up to?")
+    p.wait(logged(p, "direct-sent", "draw_out"), timeout=6000)
+    for _ in range(6):  # they talk past the due time: nothing (the old branch would go at once)
+        p.hear("and another thing about the shed")
+        p.page.wait_for_timeout(400)
+    assert w.notes["pitch_nudge"] not in instructions(p)
+    p.wait(sent_note(w, "pitch_nudge"), timeout=12000)
+    assert p.L("Date.now() - L.heardAt") >= 4000
+    assert p.js("() => { const L = window.Live.L; const s = L.log.find((m) => m[1] === 'direct-sent'); "
+                "const n = L.log.find((m) => m[1] === 'pitch-nudge'); return n[0] - s[0]; }") >= 7000
+
+
 # --- after Ian's second test (2026-11-15) ------------------------------------------------------------------
 
 def instructions(p):
@@ -2461,7 +2605,7 @@ def test_a_rest_waits_its_grace_period_before_listening_for_a_voice(world):
 # --- Ian's fifth note (2026-11-15): step back while it researches, unless they're chatting ---------------------
 
 def not_engaged(p):
-    cue(p, "engaged_lines", 1000)
+    cue(p, "engaged_turns", 1000)
 
 
 def test_after_the_start_the_guide_steps_back_and_gpt_live_closes(world):
@@ -2473,6 +2617,7 @@ def test_after_the_start_the_guide_steps_back_and_gpt_live_closes(world):
     p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'step back')")
     note = [x for x in instructions(p) if x.startswith("[Their chapter is under way")]
     assert note and "step back" in note[-1]
+    cue(p, "step_back_reply_secs", 1)  # it waits this long for an answer to its offer to chat (8 s in config)
     p.say("It's under way. I'll step back while I research it; speak up or tap my circle any time.")
     p.wait("L.phase === 'resting' && !L.pc && !L.closing", timeout=6000)
     assert any(e["type"] == "session.close" for e in p.sent()) and p.post_bodies("api/live/usage")
@@ -2575,8 +2720,8 @@ def test_okay_thanks_after_the_step_back_line_still_steps_back(world):
     p.wait("L.stepBackAt")
     p.page.wait_for_timeout(100)
     p.say("I'll step back while I research, unless there's anything else you'd like to chat about?")
-    p.wait("L.pending", timeout=4000)  # a question, but the step-back line
-    p.hear("Okay, thanks.")
+    p.wait("L.replyWait", timeout=4000)  # a question, but the step-back line: the page waits for the answer
+    p.hear("Okay, thanks.")  # a plain no to chatting
     p.wait("L.phase === 'resting' && !L.pc", timeout=8000)
 
 
@@ -2631,13 +2776,15 @@ def test_a_rest_waits_for_a_tool_call_in_flight(world):
 def test_typed_lines_count_toward_engagement(world):
     w = world
     p = connect(w, start=False)
-    cue(p, "engaged_lines", 2)
+    cue(p, "engaged_turns", 2)
     cue(p, "engaged_words", 4)
     p.page.click("#type")
     for line in ("I've been building cabinets all week long", "the birch plywood is lovely to work with honestly"):
         p.page.fill("#say", line)
         p.page.press("#say", "Enter")
         p.page.wait_for_timeout(200)
+    # each typed line is its own turn, however close together (review, 2026-11-19: they merged into one)
+    assert p.js("() => window.Live.L.turnWords.filter((n) => n > 0)") == [7, 9]
     start_chapter(p)
     p.wait("window.Live.L.log.some((m) => m[1] === 'after-start' && m[2] === 'company')")
 
@@ -2918,3 +3065,237 @@ def test_a_sound_after_a_long_rest_wakes_the_guide_for_the_listening_time(world)
     tone(p, False)
     p.page.wait_for_timeout(1200)
     assert p.phase() == "talk" and not p.marks("silence-rest")
+
+
+# --- Ian's third tester run (2026-11-19): the director, merged turns, a real offer to chat, the topic ---------------
+
+DIRECTOR = {"enabled": True, "min_quiet_ms": 300, "silence_secs": [], "timeout_ms": 1500, "max_age_ms": 8000,
+            "deliver_quiet_ms": 200, "min_gap_secs": 0, "fallback": {"pitch_nudge_secs": [1000, 1000]}}
+
+
+def director_on(p, answers=(), **knobs):
+    """The director on for this page (Live.S.director), POST /api/live/direct answered by the next of `answers`
+    (a decision dict, or "error" for a 500); once they run out, "wait". Returns the requests' bodies."""
+    asked, it = [], iter(answers)
+
+    def handle(route):
+        body = json.loads(route.request.post_data or "{}")
+        asked.append(body)
+        a = next(it, {"move": "wait", "note": "", "why": ""})
+        if a == "error":
+            route.fulfill(status=500, content_type="application/json", body="{}")
+        else:
+            route.fulfill(status=200, content_type="application/json", body=json.dumps({"id": body["id"], "why": "", **a}))
+    p.page.route("**/api/live/direct", handle)
+    cue(p, "director", {**DIRECTOR, **knobs})
+    return asked
+
+
+def logged(p, kind, detail=None):
+    return f"window.Live.L.log.some((m) => m[1] === {json.dumps(kind)}" + (f" && m[2] === {json.dumps(detail)})" if detail else ")")
+
+
+def test_the_directors_move_is_asked_after_a_line_and_delivered_in_the_lull(world):
+    """A line ends, nobody speaks for min_quiet_ms: the page asks (its last lines with the request, so a line post
+    still in flight doesn't matter), and the move goes as the `direct` note once it is still quiet."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    asked = director_on(p, [{"move": "draw_out", "note": "Tease them about the salmon."}])
+    p.say("Hi there!")
+    p.wait(logged(p, "direct-sent", "draw_out"), timeout=6000)
+    assert instructions(p)[-1] == w.notes["direct"].replace("{note}", "Tease them about the salmon.")
+    body = asked[0]
+    assert body["trigger"] == "line" and body["last_who"] == "guide" and body["session"] == p.L("L.session")
+    assert body["recent"][-1] == {"who": "guide", "text": "Hi there!"}
+    assert body["page"]["explained"] is False and body["page"]["started"] is False
+
+
+def test_a_move_is_dropped_when_anyone_speaks_after_it_was_asked_for(world):
+    """The decision lands a beat late (GPT-Live answers in about 0.9 s): if the listener has spoken since it was
+    asked for, the moment has moved and the move is dropped, never said into their sentence (Ian's third run: the
+    offer cue went mid-sentence)."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, [{"move": "offer_what_i_do", "note": "Offer to say what you do."}], deliver_quiet_ms=4000)
+    p.say("Hi there!")
+    p.wait("L.dir.next")  # landed, held for the lull
+    p.hear("Oh, I just put the boys to bed and I'm making a")
+    p.wait(logged(p, "direct-drop", "offer_what_i_do"), timeout=6000)
+    assert not any("Offer to say what you do" in x for x in instructions(p))
+
+
+def test_with_the_director_up_the_offer_and_hello_clocks_are_off_and_two_failures_bring_them_back(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, ["error", "error"])
+    cue(p, "offer_nudge", {"after_secs": 0.2, "max_secs": 1000, "offered": OFFERED})
+    cue(p, "hello_silence_secs", 1)
+    p.say("Hi there!")
+    p.wait(logged(p, "direct-fail"), timeout=5000)
+    p.page.wait_for_timeout(1800)
+    assert w.notes["hello_silence"] not in instructions(p)  # the director's silence check replaces it
+    p.hear("Hi.")
+    p.wait(logged(p, "director-down"), timeout=5000)
+    # Down: the clocks as they were, for the rest of the conversation (the offer cue at the first lull).
+    p.wait(f"window.__sent.some((e) => e.content === {json.dumps(w.notes['offer_nudge'])})", timeout=8000)
+
+
+def test_a_healthy_director_that_waits_never_lets_the_offer_cue_go(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    asked = director_on(p)
+    cue(p, "offer_nudge", {"after_secs": 0.2, "max_secs": 0.5, "offered": OFFERED})
+    p.say("Hi there!")
+    p.page.wait_for_timeout(500)
+    p.hear("Hi, I'm making salmon and I was just thinking about omega threes")
+    p.page.wait_for_timeout(5500)
+    assert w.notes["offer_nudge"] not in instructions(p) and not p.marks("offer-nudge")
+    assert len(asked) >= 2 and not p.marks("director-down")
+
+
+def test_a_silence_asks_the_director_and_its_check_in_goes(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    asked = director_on(p, [{"move": "wait", "note": ""}, {"move": "check_in", "note": "A light word: can they hear you?"}],
+                        silence_secs=[1.5])
+    p.say("Hi there!")
+    p.wait(logged(p, "direct-sent", "check_in"), timeout=7000)
+    assert [a["trigger"] for a in asked[:2]] == ["line", "silence"] and asked[1]["silence_ms"] >= 1500
+
+
+def test_the_director_is_never_asked_while_the_chapter_is_read(world):
+    w = world
+    p = start_reading(w, 1)
+    asked = director_on(p, [{"move": "draw_out", "note": "Should never go."}])
+    read_through(p, w, "s1-p01")
+    p.page.wait_for_timeout(1500)
+    assert not asked and not p.marks("direct-ask")
+
+
+def test_the_directors_step_back_rests_after_the_guides_parting_words(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    director_on(p, [{"move": "wait", "note": ""}, {"move": "step_back", "note": "They want quiet: a few words, then quiet."}])
+    p.say("Hi there!")
+    p.page.wait_for_timeout(700)
+    p.hear("I have to deal with the kids for a bit")  # not the quiet rule's words: the director catches it
+    p.wait(logged(p, "direct-sent", "step_back"), timeout=6000)
+    p.say("Of course, I'll be right here.")
+    p.wait("L.phase === 'resting' && !L.pc", timeout=6000)
+
+
+def test_the_directors_verdict(world):
+    """directorVerdict, pure: the rules for delivery with any state."""
+    w = world
+    p = w.open()
+    C = {"max_age_ms": 5000, "deliver_quiet_ms": 500, "min_gap_secs": 10}
+    base = {"here": True, "heardAt": 100, "spokeAt": 200, "speaking": False, "noteAt": 0, "explained": False,
+            "started": False, "offered": False}
+
+    def verdict(move, t=2000, **st):
+        return p.js("([n, t, st, C]) => window.Live.directorVerdict(n, t, st, C)",
+                    [{"move": move, "note": "x", "askedAt": 1000, "at": 1500}, t, {**base, **st}, C])
+    assert verdict("draw_out") == "send"
+    assert verdict("draw_out", here=False) == "drop"  # left the conversation (reading, resting, the handback)
+    assert verdict("draw_out", t=7000) == "drop"  # too old
+    assert verdict("pitch", heardAt=1200) == "drop" and verdict("pitch", spokeAt=1100) == "drop"  # someone spoke since
+    assert verdict("offer_what_i_do", explained=True) == "drop" and verdict("offer_what_i_do", offered=True) == "drop"
+    assert verdict("start_chapter", started=True) == "drop" and verdict("ask_interest", started=True) == "drop"
+    assert verdict("draw_out", started=True) == "send"  # company while it is made
+    assert verdict("draw_out", t=1100, spokeAt=900) == "hold"  # not yet a lull
+    assert verdict("draw_out", noteAt=1800) == "drop" and verdict("step_back", noteAt=1800) == "send"
+    # Review (2026-11-19). The quiet counts from the decision's arrival too (the transcript lags the voice): the
+    # last delta long before isn't enough.
+    assert verdict("draw_out", t=1700, heardAt=100, spokeAt=200) == "hold"
+    # One check-in, and only before the listener's first word (the old hello check).
+    assert verdict("check_in") == "send"
+    assert verdict("check_in", listenerSpoke=True) == "drop" and verdict("check_in", checkedIn=True) == "drop"
+
+    def after_guide(t, who="guide"):
+        return p.js("([n, t, st, C]) => window.Live.directorVerdict(n, t, st, C)",
+                    [{"move": "draw_out", "note": "x", "askedAt": 1000, "at": 3000, "lastWho": who}, t,
+                     {**base, "heardAt": 0, "spokeAt": 0}, {**C, "deliver_after_guide_ms": 6000, "max_age_ms": 12000}])
+    # After the guide's own line, only once the listener has let a real pause go by (they pause 4-8 s).
+    assert after_guide(3600) == "hold" and after_guide(5900) == "hold" and after_guide(6100) == "send"
+    assert after_guide(3600, "listener") == "send"
+
+
+def test_the_listeners_fragments_are_one_turn_for_engaged(world):
+    """Ian's speech came as "[inhale", "]Yeah ...", so he counted as four short lines and the guide stepped away.
+    Lines heard within engaged_merge_ms of each other, with no guide line between, are one turn; sound tags are not
+    words; a guide line starts the next turn."""
+    w = world
+    p = connect(w, start=False)
+    p.wait("Date.now() - L.spokeAt > 400 && !L.out")
+    p.hear("[inhale")
+    p.wait("L.turnEnd")
+    p.hear("]Yeah, I'd love that, it sounds great")
+    p.wait("window.Live.turns().length && window.Live.turns()[0] === 7")
+    p.say("Lovely.")
+    p.wait("L.lastGuideAt > L.turnEnd")
+    p.hear("Okay.")
+    p.wait("window.Live.turns().length === 2")
+    assert p.js("window.Live.turns()") == [7, 1]
+    cue(p, "engaged_turns", 2)
+    cue(p, "engaged_words", 4)
+    assert p.js("window.Live.engaged()") is True
+
+
+def step_back_offered(w, reply_secs=3):
+    p = connect(w, start=False)
+    not_engaged(p)
+    cue(p, "step_back_reply_secs", reply_secs)
+    p.wait("Date.now() - L.spokeAt > 900 && !L.out")
+    start_chapter(p)
+    p.wait("L.stepBackAt")
+    p.say("It's under way, on the list. I'll step back while I research; is there anything else you'd like to chat about first?")
+    p.wait(logged(p, "step-back-offer"), timeout=5000)
+    return p
+
+
+def test_the_offer_to_chat_before_stepping_back_waits_for_an_answer(world):
+    """Ian's third run: the guide offered to chat and the page rested 6 s later. It waits step_back_reply_secs
+    of silence for the answer, then rests."""
+    w = world
+    p = step_back_offered(w, reply_secs=3)
+    p.page.wait_for_timeout(1800)
+    assert p.phase() == "talk"
+    p.wait("L.phase === 'resting' && !L.pc", timeout=6000)
+
+
+def test_any_real_answer_to_the_offer_keeps_the_company_going(world):
+    w = world
+    p = step_back_offered(w, reply_secs=1.5)
+    p.hear("[inhale")  # a sound is not an answer yet
+    p.page.wait_for_timeout(600)
+    p.hear("Um")
+    p.page.wait_for_timeout(600)
+    assert p.L("!!L.replyWait")
+    p.hear("Sure, what got you into falcons?")
+    p.wait(logged(p, "step-back-cancelled", "chat"), timeout=4000)
+    p.say("Oh, their speed, honestly.")
+    p.page.wait_for_timeout(3000)
+    assert p.phase() == "talk"
+
+
+def test_a_plain_no_to_the_offer_rests_after_the_guides_few_words(world):
+    w = world
+    p = step_back_offered(w, reply_secs=20)
+    p.hear("No, go ahead.")
+    p.wait(logged(p, "step-back-answer", "no"), timeout=4000)
+    p.say("Okay, talk soon.")
+    p.wait("L.phase === 'resting' && !L.pc", timeout=6000)
+
+
+def test_the_started_note_names_the_topic(world):
+    """Ian asked "What would it be about?" with his yes and never heard: the note after the start carries the
+    topic start_chapter was called with, so the guide can say it in a sentence."""
+    w = world
+    p = connect(w, start=False)
+    p.tool("start_chapter", {"topic": "Peregrine falcons and speed", "why": "they lit up", "notes": ""})
+    p.wait(f"L.own === {json.dumps(RUN)}")
+    p.wait(logged(p, "after-start"))
+    note = [x for x in instructions(p) if x.startswith("[Their chapter is under way")][-1]
+    assert "{topic}" not in note and "{when}" not in note
+    if "{topic}" in w.notes["started_company"]:
+        assert "Peregrine falcons and speed" in note

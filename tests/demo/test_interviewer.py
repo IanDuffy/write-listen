@@ -94,10 +94,10 @@ def test_the_intro_checks_who_it_is_says_ian_built_it_and_how_this_will_go(cfg, 
     (tmp_path / "tester.json").write_text(json.dumps({"name": "Rolando"}))
     v = IV.intro_values(tmp_path)
     text = IV.instructions("intro", v)
-    order = ['"Hi, is this Rolando?"', "Ian built what they're about to try", "I'll pass you to someone else",
-             "The two of you will talk a little", "about ten minutes", "interrupt with questions any time",
-             "End demo button at the top of the screen", "come back to me for a couple of minutes",
-             '"Any questions, or are you ready to try it?"', '"I\'ll hand you over now."']
+    order = ['"Hi, is this Rolando?"', "Ian built this and asked me to get your feedback",
+             "You'll talk with someone else, then listen", "about ten minutes",
+             "Press End demo at the top when you're done", "back to me for a couple of minutes",
+             '"Ready?"', '"I\'ll hand you over now."']
     at = [text.index(x) for x in order]
     assert at == sorted(at)
     assert "You'll see in a moment." in text
@@ -124,23 +124,31 @@ def test_the_intro_is_one_question_and_one_turn(cfg, tmp_path):
     for gone in ("two or three short turns", "a small pause after each", "a minute to a minute and a half",
                  "I'm done", "no right answers", "One step a turn"):
         assert gone not in text, gone
-    for want in ("thirty to forty seconds in all", "say all of this in ONE turn", "don't stop between them for an answer",
-                 "that isn't an interruption", "silence is a yes", "unless the steps below ask for one longer turn"):
+    for want in ("twenty to thirty seconds in all", "say this in ONE short turn, about forty words",
+                 "without stopping for an answer", "that isn't an interruption", "silence is a yes",
+                 "unless the steps below ask for one longer turn"):
         assert want in text, want
     # The explanation is step 2 alone, and the only questions the prompt gives it to ask are the who-check
     # and the one that ends that turn (the name's confirmation is for a correction).
     step2 = text[text.index("\n2. "):text.index("\n3. ")]
-    for part in ("Ian built", "someone else", "ten minutes", "interrupt", "End demo", "Afterwards", "Any questions, or are you ready"):
+    for part in ("Ian built", "someone else", "ten minutes", "End demo", "back to me", "Ready?"):
         assert part in step2, part
     assert [q for q in re.findall(r'"([^"]*)"', text) if q.endswith("?")] == [
-        "Hi, is this Rolando?", "Roland. Did I get that right?", "Any questions, or are you ready to try it?"]
+        "Hi, is this Rolando?", "Roland. Did I get that right?", "Ready?"]
+    # Ian's third run (2026-11-19): "it could be more brief". About 40 words in three beats (it was about 85),
+    # without "interrupt with questions any time" (the next voice tells them) or "Any questions, or".
+    said = " ".join(q for line in step2.splitlines() if line.lstrip().startswith('- "') for q in re.findall(r'"([^"]*)"', line))
+    assert 38 <= len(said.split()) <= 48, len(said.split())
+    for gone in ("interrupt with questions", "Any questions, or", "Afterwards you'll come back"):
+        assert gone not in text, gone
     # What it says is given in the second person: told about the tester as "they", it said "They'll talk a
     # little, and then listen" (live check, 2026-11-18, and Ian's own intro).
-    assert "They'll talk a little" not in text and "you'll listen to something" in step2
-    # The clocks fit an intro of 30-40 seconds: the words count from 10 s (a tester never heard: from 30 s,
-    # page/interview.js mayHandOver's three times), and the page steps in well after a slow one.
+    assert "They'll talk a little" not in text and "You'll talk with someone else" in step2
+    # The clocks fit an intro of 20-30 seconds: the words count from 10 s (a tester never heard: from 20 s,
+    # page/interview.js mayHandOver's twice, with words said earlier held until then), and the page steps in well
+    # after a slow one.
     S = IV.page_settings(cfg, "intro")
-    assert S["handover_min_ms"] == 10000 and 3 * S["handover_min_ms"] <= 30000
+    assert S["handover_min_ms"] == 10000 and 2 * S["handover_min_ms"] <= 20000
     assert 2 <= S["intro_max_minutes"] <= 3
     assert cfg["demo"]["interviewer"]["checks"]["intro_minutes"] <= S["intro_max_minutes"]
 
@@ -167,7 +175,7 @@ def test_only_the_final_line_is_the_handover(cfg):
         assert len(rest) < len(text.splitlines())
         assert not [x for x in rest if hand.search(x)]
         rule = next(x for x in rest if 'Never use the words "hand you over" before that final line' in x)
-        assert "pass you to someone else" in rule
+        assert "talk with someone else" in rule
         assert [x for x in rest if "hand you over" in x.lower()] == [rule]  # and nowhere else, in any form
     notes = IV.page_notes("intro", IV.intro_values_for("Rolando"))
     assert [k for k, v in notes.items() if hand.search(v)] == ["handover_now"]
@@ -186,7 +194,7 @@ def test_debrief_session_is_a_conversation_around_ians_topics_with_their_real_mo
     v = IV.debrief_values(cfg, tmp_path)
     sc = IV.session_config(cfg, "debrief", v)
     text = sc["instructions"]
-    assert [t["name"] for t in sc["delegation"]["responses"]["tools"]] == ["end_debrief"]
+    assert "delegation" not in sc  # Ian's third run (2026-11-19): it stalled waiting on a backend with nothing to bring
     for gone in ("Take me through what that was like", "to a friend", "tomorrow morning", "in this order"):
         assert gone not in text, gone
     for want in ("What's one thing that stood out to you?", "respond before you ask", "Always answer a direct question",
@@ -198,7 +206,7 @@ def test_debrief_session_is_a_conversation_around_ians_topics_with_their_real_mo
         assert want in text, want
     assert "The List" in text and "Why nine levers matter." in text and "about 6 of its 10 minutes" in text
     assert "Was she right?" in text
-    assert "Generate <|SpawnThinking|> when:" in text.split("Delegation policy:")[1]
+    assert "SpawnThinking" not in text and "Delegation policy" not in text and "backend" not in text
     assert re.search(IV.PAGE_DEFAULTS["closing_question"], text)  # the page's close keys on the closing question
 
 
@@ -316,10 +324,8 @@ def test_the_debrief_ends_itself_with_one_farewell(cfg, tmp_path):
              "Never after they've said they're done, and never as a step you owe.",
              "YOUR FAREWELL", f'Exactly these words, once: "{bye}"',
              "If they start speaking before you've finished it, stop and listen, respond in a few words, then say it in full.",
-             "Say nothing after it, whatever they say.",
-             "If the app tells you you're at time, no more questions: your farewell.",
-             "- end_debrief: end the conversation, right after your farewell.",
-             "- You have just said your farewell (end_debrief), in the same breath."]
+             "Then stop: the app ends the conversation. Say nothing after it, whatever they say.",
+             "If the app tells you you're at time, no more questions: your farewell."]
     at = [text.index(x) for x in order]
     assert at == sorted(at), [x for x, a, b in zip(order, at, sorted(at)) if a != b]
     assert text.count(bye) == 1  # one wording, in one place
@@ -339,9 +345,9 @@ def test_the_debrief_ends_itself_with_one_farewell(cfg, tmp_path):
     assert "closing question" not in notes["time_up"] + notes["wrap_now"]
     old = {k: x for k, x in v.items() if k != "farewell"}
     assert bye in IV.instructions("debrief", old)
-    # The backend and the tool are told the same end.
+    # The tool (posted by the page) is told the same end; the backend is the intro's alone (2026-11-19).
     from stages.common import load_prompt
-    assert "That's everything from me." in load_prompt("interviewer_backend")
+    assert "end_debrief" not in load_prompt("interviewer_backend")
     assert "That's everything from me." in next(t for t in IV.tools("debrief") if t["name"] == "end_debrief")["description"]
     # No line of {{asking}} owes a question (review, 2026-11-18: "One of your questions is how that went" stood
     # in a list of choices, against "the ceiling, never a target").
@@ -936,3 +942,191 @@ def test_end_demo_with_the_opening_ready_and_unstarted_is_while_talking_not_whil
     assert got[-2:] == [n["did_none_ready"], n["did_end_talk"]] and n["did_end_making"] not in got
     for ready in (False, None):
         assert IV.account(ctx, [], {**act, "ready": ready})[-1] == n["did_end_making"]
+
+
+# --- Ian's third run (2026-11-19) -------------------------------------------------------------------
+
+def test_the_debrief_has_no_delegation_and_its_header_still_names_its_tool(world, cfg):
+    """Ian's third run: the debrief stalled on a delegation that could only come back empty ("Just a second.",
+    "I'm still here."). Its session has none; the intro keeps its own (it never stalled)."""
+    c = world.client
+    sid = c.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()["sid"]
+    assert "delegation" not in world.offers[-1]
+    first = lines(world.dir / "study" / f"debrief-{sid}.jsonl")[0]
+    assert first["backend"] is None and first["tools"] == ["end_debrief"]
+    # The page still closes it on the farewell and posts end_debrief itself.
+    assert c.post("/api/interview/tool", json={"sid": sid, "name": "end_debrief", "by": "page"}).json()["act"] == "close"
+    sid = c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"}).json()["sid"]
+    back = world.offers[-1]["delegation"]["responses"]
+    assert [t["name"] for t in back["tools"]] == ["set_listener_name", "handoff_to_guide"]
+    first = lines(world.dir / "study" / f"intro-{sid}.jsonl")[0]
+    assert first["backend"] == cfg["live"]["backend_model"] and first["tools"] == ["set_listener_name", "handoff_to_guide"]
+    # What a delegation brought back can be put in the transcript (the page's `backend` lines).
+    c.post("/api/interview/line", json={"sid": sid, "who": "backend", "text": "completed: empty"})
+    assert lines(world.dir / "study" / f"intro-{sid}.jsonl")[-1] == {**lines(world.dir / "study" / f"intro-{sid}.jsonl")[-1],
+                                                                       "who": "backend", "text": "completed: empty"}
+
+
+def test_stall_lines_are_never_replies_and_an_invitation_never_leaves_a_turn_hanging():
+    """page/interview.js and demo/sim_interviewer.py match these on the line (straight apostrophes)."""
+    stall, go_on = (re.compile(IV.PAGE_DEFAULTS[k], re.I) for k in ("stall", "go_on"))
+    for said in ("Just a second.", "I'm still here.", "Right here, still with you.", "Hang on.", "One moment, please.",
+                 "Sorry, just a second. I'm still here.", "Okay, let me think.", "Hmm, hold on.", "Still with you."):
+        assert stall.search(said), said
+    for said in ("Yeah, I follow you, and that's useful to hear.", "What would you change first?",
+                 "Just a second thing: how was the voice?", "I'm here to hear what you thought. What stood out?",
+                 "Sorry, go on.", IV.farewell("Sam")):
+        assert not stall.search(said), said
+    for said in ("Sorry, go on.", "Mm.", "Go on.", "Mm-hmm.", "Take your time.", "No, go ahead.",
+                 # review (2026-11-19): a line that ends with an invitation is one too
+                 "Got it, take your time.", "No rush, take your time.", "I see, go on.", "Sorry, I cut you off. Go on.",
+                 "Of course, go ahead.", "Sorry about that, please continue."):
+        assert go_on.search(said), said
+    for said in ("Yeah, I follow you, and that's useful to hear.", "Okay, that makes sense.", "That helps.",
+                 "That makes sense, the opening was long.", "So the next part, we'll continue."):
+        assert not go_on.search(said), said
+    S = IV.PAGE_DEFAULTS
+    assert S["hanging_ms"] > S["reply_wait_ms"] and 8000 <= S["hanging_ms"] < 9500  # past his pauses, before his 9.5 s
+    assert S["note_gap_ms"] > 0
+
+
+def test_the_debrief_prompt_answers_what_else_and_never_ends_a_turn_on_an_acknowledgement(cfg, tmp_path):
+    text = IV.instructions("debrief", IV.values_from("Sam", {"run": None}, [], None))
+    for want in ("Never end a turn on an acknowledgement alone", 'say their idea back in a few of their own words',
+                 'If they ask "what else?", ask your next question, or, if you have enough, say your farewell.',
+                 "Don't thank them for answers or call them useful", "When they offer an idea of their own",
+                 '"Just a second", "I\'m still here"'):
+        assert want in text, want
+    assert "Thank you, that's useful" not in text and "once at most" not in text
+    notes = IV.page_notes("debrief", IV.values_from("Sam", {"run": None}, [], None))
+    assert notes["hanging"].startswith("[") and "your farewell, word for word" in notes["hanging"]
+    assert "waiting for you" not in notes["hanging"]  # that phrase marks the `waiting` notes
+    assert "hanging" not in IV.page_notes("intro", IV.intro_values_for("Sam"))
+
+
+def _press(lis, phase, ago=5):
+    from datetime import datetime, timedelta
+    from demo import debrief
+    (lis / "study").mkdir(parents=True, exist_ok=True)
+    t = (datetime.now() - timedelta(seconds=ago)).strftime("%Y-%m-%dT%H:%M:%S")
+    with open(lis / "study" / debrief.EVENTS_FILE, "a") as f:
+        f.write(json.dumps({"t": t, "event": "end_demo", "phase": phase, "chapter_t": None, "detail": None}) + "\n")
+
+
+def test_end_demo_stops_a_chapter_still_being_made_and_nothing_else(tmp_path):
+    """Ian's third run: "We definately need to stop the run of the chapter once the post inverview starts, if
+    the user clicks stop demo." Not at the chapter's own end (no press), not after it finished playing, not while
+    it is only finishing (stage archive), not on an old press (a debrief taken again later)."""
+    making = {"run": "r", "state": "making", "stage": "writing"}
+    lis = tmp_path / "t-sam"
+    assert not IV.stop_on_end(lis, making)  # no press: the chapter's end handed back
+    _press(lis, "reading")
+    assert IV.stop_on_end(lis, making)
+    assert IV.stop_on_end(lis, {**making, "queued": True})  # waiting its turn: still being made
+    for st in ({**making, "state": "ready"}, {**making, "state": "stopped"}, {**making, "stage": "archive"},
+               {"state": "idle"}, None):
+        assert not IV.stop_on_end(lis, st), st
+    _press(lis, "ended")
+    assert not IV.stop_on_end(lis, making)  # pressed after the piece had finished
+    old = tmp_path / "t-old"
+    _press(old, "making", ago=IV.END_PRESS_SECONDS + 60)
+    assert not IV.stop_on_end(old, making)
+
+
+def test_a_debrief_that_stops_the_chapter_is_told_so(cfg, monkeypatch, own_listeners, testers):
+    monkeypatch.setenv(common.LISTENER_ENV, "t-sam")
+    lis = own_listeners / "t-sam"
+    lis.mkdir(parents=True)
+    monkeypatch.setattr(live_session, "create_webrtc", lambda cfg, session, sdp, client=None: {"id": "live_1", "sdp": "A"})
+    monkeypatch.setattr(IV, "_after_end", lambda *a: None)
+    asked = []
+    app = FastAPI()
+    IV.mount(app, cfg, on_debrief=lambda ld: asked.append(ld) or True)
+    c = TestClient(app)
+    sid = c.post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()["sid"]
+    first = lines(lis / "study" / f"debrief-{sid}.jsonl")[0]
+    stopped = IV.notes()["did_stopped"]
+    assert asked == [lis] and first["did"].splitlines()[-1] == f"- {stopped}" and first["activity"]["stopped"] is True
+    assert "No piece was started" not in first["did"]  # a stopped piece was a piece
+    # The intro never asks; a hook that fails leaves the debrief as it was, unstopped.
+    c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"})
+    assert len(asked) == 1
+    app = FastAPI()
+    IV.mount(app, cfg, on_debrief=lambda ld: 1 / 0)
+    sid = TestClient(app).post("/api/interview/start", json={"mode": "debrief", "sdp": "OFFER"}).json()["sid"]
+    assert stopped not in lines(lis / "study" / f"debrief-{sid}.jsonl")[0]["did"]
+
+
+def test_the_account_reads_a_stopped_chapter_from_its_status(cfg, own_listeners):
+    from demo import debrief
+    lis = own_listeners / "t-sam"
+    root = lis / "chapters" / "r1"
+    root.mkdir(parents=True)
+    (root / "fast.json").write_text(json.dumps({"voice": "live"}))
+    (root / "status.json").write_text(json.dumps({"run": "r1", "state": "stopped", "message": "Stopped when the demo ended."}))
+    act = debrief.activity(lis, cfg)
+    assert act["stopped"] is True and act["started"] is True
+    assert IV.account({"run": "r1"}, [], act)[-1] == IV.notes()["did_stopped"]
+    (root / "status.json").write_text(json.dumps({"run": "r1", "state": "ready"}))
+    assert debrief.activity(lis, cfg)["stopped"] is False
+
+
+def _session_file(study, mode, sid, live_id, ended="ended", age=0):
+    import os
+    import time as _t
+    study.mkdir(parents=True, exist_ok=True)
+    p = study / f"{mode}-{sid}.jsonl"
+    recs = [{"t": "x", "s": 0, "who": "session", "mode": mode, "live_id": live_id}]
+    if ended:
+        recs.append({"t": "x", "s": 9, "who": "session", "ended": ended})
+    p.write_text("".join(json.dumps(r) + "\n" for r in recs))
+    if age:
+        os.utime(p, (_t.time() - age, _t.time() - age))
+    return p
+
+
+def test_recordings_a_stopped_server_never_fetched_are_fetched_at_the_next_start(cfg, own_listeners, monkeypatch):
+    """Ian's third run: the debrief's recording was lost (the server stopped within the two minutes _after_end
+    waits). At start every interviewer session without its recording is fetched, as memory.run_pending does."""
+    monkeypatch.setattr(live_session, "api_key", lambda: "sk-test")
+    study = own_listeners / "t-sam" / "study"
+    _session_file(study, "debrief", "a", "live_old", age=3600)      # an hour ago: fetched with no wait
+    _session_file(study, "intro", "b", "live_done", age=3600)
+    (study / "live_done.mp3").write_bytes(b"x")                      # already there
+    _session_file(study, "intro", "c", "live_failed", ended="failed")  # never talked
+    _session_file(study, "debrief", "d", "live_gone", age=40 * 86400)  # past OpenAI's 30 days
+    _session_file(study, "debrief", "e", "live_new", age=30)          # 30 s ago: the rest of the wait
+    (study / "events.jsonl").write_text("")
+    found = sorted(x["live_id"] for x in IV.pending_recordings(cfg))
+    assert found == ["live_new", "live_old"]
+    calls, slept = [], []
+    t = IV.fetch_pending(cfg, sleep=slept.append, client=recording_client(calls))
+    t.join(30)
+    assert (study / "live_old.mp3").exists() and (study / "live_new.mp3").exists()
+    assert sorted(u.rsplit("/", 2)[1] for u in calls) == ["live_new", "live_old"]
+    wait = float(cfg["live"]["archive_wait_seconds"])
+    assert len(slept) == 1 and wait - 32 <= slept[0] <= wait - 28  # only the new one waits, and only what's left
+    assert IV.pending_recordings(cfg) == [] and IV.fetch_pending(cfg) is None  # nothing left: no thread
+    # Review: a session the server restarted under (no `ended` row) waits until it must be over before its first
+    # try, and goes after the ended ones.
+    _session_file(study, "debrief", "g", "live_open", ended=None, age=20)
+    _session_file(study, "intro", "h", "live_late", age=10)
+    order, slept = [], []
+    t = IV.fetch_pending(cfg, sleep=slept.append, client=recording_client(order))
+    t.join(30)
+    assert [u.rsplit("/", 2)[1] for u in order] == ["live_late", "live_open"]
+    live_max = (float(IV.icfg(cfg)["debrief_max_minutes"]) + 1) * 60
+    assert wait - 12 <= slept[0] <= wait - 8 and wait + live_max - 22 <= slept[1] <= wait + live_max - 18
+    cfg["demo"]["interviewer"]["store"] = False
+    _session_file(study, "debrief", "f", "live_more")
+    assert IV.fetch_pending(cfg) is None  # recordings off
+
+
+def test_the_farewell_to_ian_himself_does_not_name_him_twice():
+    """Live check, 2026-11-19: Ian's own debrief ended "Thank you, Ian. That really helps Ian." Testers keep
+    the line that names him; the page keys on its end, which every form keeps."""
+    assert IV.farewell("Ian") == "Thank you, Ian. That really helps. That's everything from me."
+    assert IV.farewell(" ian ") == "Thank you, ian. That really helps. That's everything from me."
+    assert IV.farewell("Sam") == "Thank you, Sam. That really helps Ian. That's everything from me."
+    for name in ("Ian", "Sam", None):
+        assert re.search(IV.PAGE_DEFAULTS["farewell"], IV.farewell(name), re.I)

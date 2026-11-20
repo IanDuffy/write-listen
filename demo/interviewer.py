@@ -3,10 +3,9 @@
 A separate GPT-Live session from the guide's, in its own voice (demo.interviewer.voice), twice per tester:
 
     intro     checks who it is by the name given with the link ("Hi, is this Rolando?", its one question;
-              asks the name when there is none; set_listener_name for a correction), then in one turn says
-              Ian built what they're about to try, how this will go, and asks "Any questions, or are you
-              ready to try it?"; then "I'll hand you over now." (handoff_to_guide), and the page brings in
-              the guide. About 30-40 seconds.
+              asks the name when there is none; set_listener_name for a correction), then in one short turn
+              (about 40 words) says Ian built this, how it will go, and "Ready?"; then "I'll hand you over
+              now." (handoff_to_guide), and the page brings in the guide. About 20-30 seconds.
     debrief   a short conversation gathering product feedback for Ian: the opening question, at most two
               more picked from what the tester did (demo/debrief.py: their moments and the account of what
               they did) and from TOPICS, and it ends itself with one fixed farewell (end_debrief) as soon
@@ -32,10 +31,18 @@ tester said something (a debrief nobody answered stays not done, so it can be ta
 own `waiting` note (`waiting_debrief`): the intro's ends "then carry on", which after "let's end here" is the
 wrong push.
 
+His third run (2026-11-19): the debrief stalled on its delegation ("Just a second.", "I'm still here."), so it has
+none (DELEGATES); the page closes it on the farewell and posts end_debrief itself. A stall line is never a reply
+on the page (PAGE_DEFAULTS["stall"]), and a turn left hanging gets a note (`hanging`). The intro is about 40
+words. End demo while the chapter is still being made stops it as the debrief starts (mount's `on_debrief`,
+server.py), and the account says so (`did_stopped`). Recordings a stopped server never fetched are fetched at the
+next start (fetch_pending).
+
 The session is opened like the guide's (voice/gpt_live/session.py): the page's WebRTC offer goes to OpenAI with
-the configuration and the key stays here. The tools run through GPT-Live's delegation to a Responses backend
-(prompts/interviewer_backend.md), which the voice only uses when its instructions carry a Delegation policy
-naming them (prompts/interviewer_intro.md, _debrief.md); the page runs them at /api/interview/tool.
+the configuration and the key stays here. The intro's tools run through GPT-Live's delegation to a Responses
+backend (prompts/interviewer_backend.md), which the voice only uses when its instructions carry a Delegation
+policy naming them (prompts/interviewer_intro.md); the page runs them at /api/interview/tool, and calls the
+handover and end_debrief itself on their words.
 
 Everything is kept in listeners/<lid>/study/, never sessions/: memory.meeting() counts any sessions/*.jsonl
 the tester spoke in as a past conversation with the guide, which would then skip introducing itself.
@@ -91,7 +98,13 @@ INTERVIEW_JS = ROOT / "page" / "interview.js"
 TOOLS_FILE = PROMPTS_DIR / "interviewer_tools.json"
 MODES = ("intro", "debrief")
 MODE_TOOLS = {"intro": ("set_listener_name", "handoff_to_guide"), "debrief": ("end_debrief",)}
-WHO = {"in": "listener", "out": "interviewer", "page": "page"}
+# The modes whose GPT-Live session delegates its tools to a backend. Not the debrief (Ian's third run,
+# 2026-11-19): its backend could only return empty, and the voice, waiting on it, said "Just a second", "I'm
+# still here" and "Right here, still with you" and nothing else until he closed the page (2 of 3 debriefs had
+# stalled on a no-tool spawn). Its one tool, end_debrief, is the page's: it acts on the farewell (`farewell`,
+# act_grace_ms) and posts end_debrief itself (by: "page"), and the server marks it done from the transcript.
+DELEGATES = ("intro",)
+WHO = {"in": "listener", "out": "interviewer", "page": "page", "backend": "backend"}  # backend: what a delegation brought back
 # A tool result's fields for the page alone, stripped before the backend sees it: what the page does next
 # (`act`), and what it loads at the handover. The page acts on `act`, never on a tool's name, and learns the
 # names it may call itself from its settings (`acts`): the gate's source carries no product wording.
@@ -121,12 +134,39 @@ PAGE_DEFAULTS = {
     "act_grace_ms": 3500,             # a handover or the farewell said with no tool call: the page acts after this
     "handover_quiet_ms": 900,         # the handover's last words: the next voice comes in once both sides are this quiet
     # The page acts on the handover's words only once the tester has spoken and the intro is this old (a
-    # tester never heard: three times this): the words can never end the intro in its opening (the tool, and
+    # tester never heard: twice this): the words can never end the intro in its opening (the tool, and
     # the clock at intro_max_minutes, still can). 10 s since the intro became 30-40 s (2026-11-18): a tester
-    # whose mic isn't heard is then handed over on the words from 30 s, not left until the clock.
+    # whose mic isn't heard is then handed over on the words from 20 s (was 3x, 30 s, until the 40-word intro of
+    # 2026-11-19 put the words before it), and words said between 10 and 20 s are held until then (interview.js).
     "handover_min_ms": 10000,
     "reply_wait_ms": 6000,            # they finished this long ago and it has said nothing but a backchannel: `waiting`
     "reply_words": 3,                 # a line of the voice's with fewer words than this is a backchannel, not a reply
+    # A line that only stalls is never a reply, however many words (Ian's third run, 2026-11-19: "Just a second.",
+    # "I'm still here.", "Right here, still with you." each counted as one, so the page never said he was waiting).
+    # Anchored: the whole line is stall phrases and fillers. Matched on the line with straight apostrophes.
+    "stall": r"^\W*((yeah|yes|okay|ok|so|oh|um+|uh+|mm+|hmm+|sorry|sure)\W+)*"
+             r"(just a (sec|second|moment|minute)|one (sec|second|moment|minute)|give me a (sec|second|moment|minute)"
+             r"|hang on|hold on|bear with me|let me (just )?(think|check|see)|(i'?m )?(still )?(right )?here,? still with you"
+             r"|i'?m (still |right )?(here|with you)|still (here|with you)|right here)"
+             r"(\W+(just a (sec|second|moment|minute)|one (sec|second|moment|minute)|hang on|hold on|i'?m (still |right )?(here|with you)"
+             r"|still (here|with you)|right here|sorry|please|yes|yeah|okay|ok))*\W*$",
+    # A backchannel or an invitation to go on ("Sorry, go on.", "Mm."): a reply for `waiting`, but never a turn
+    # left hanging (it cut into Ian's answer in a 1.2 s pause, and it is his turn after it). Also any line that
+    # ends with an invitation ("Sorry, I cut you off. Go on.", "Got it, take your time."; review of Ian's third
+    # run, 2026-11-19); not a bare "continue" at the end, which a real reply may end on.
+    "go_on": r"^\W*((yeah|yes|okay|ok|so|oh|mm+|hmm+|mm-?hm+|uh-?huh|sorry|right|sure|no|please)\W+)*"
+             r"(go on|go ahead|carry on|keep going|take your time|please continue|continue|i'?m listening|tell me more"
+             r"|mm+|hmm+|mm-?hm+|uh-?huh|right|yeah|yes|sure|okay|ok|sorry)\W*$"
+             r"|\b(go on|go ahead|carry on|keep going|take your time|no rush|please continue|i'?m listening|tell me more"
+             r"|whenever you'?re ready)\W*$",
+    # Left hanging (debrief): its last line answered them with no question and no farewell, and both sides have
+    # been quiet this long: one note asking for its next question or its farewell. Longer than reply_wait_ms and
+    # than Ian's 4-8 s pauses mid-answer (those come after a line of his, which this never follows); shorter than
+    # the 9.5 s he waited after "Yeah, I follow you, and that's useful to hear" before he had to ask "what else?".
+    "hanging_ms": 8000,
+    # Two different page notes (waiting, hanging, the clock's) are never sent closer together than this: they
+    # stacked in a few seconds otherwise. A note's own repeat (waiting's second) keeps its own timing.
+    "note_gap_ms": 5000,
     # Only the final "I'll hand you over now.": the intro also explains that a handover is coming ("before I
     # hand you over, any questions?"), and the page acts on these words the moment it hears them.
     "handover": r"\bhand(ing)? you over now\b",
@@ -187,7 +227,11 @@ def farewell(name: str | None, n: dict | None = None) -> str:
     wording the prompt gives it ({{farewell}}), and what PAGE_DEFAULTS["farewell"] and FAREWELL key on."""
     n = n or notes()
     name = (name or "").strip()
-    return _fill(n["farewell"], name=name) if name and name != n["name_unknown"] else n["farewell_unnamed"]
+    if not name or name == n["name_unknown"]:
+        return n["farewell_unnamed"]
+    if name.casefold() == "ian":  # Ian trying it himself: not "Thank you, Ian. That really helps Ian."
+        return _fill(n["farewell_ian"], name=name)
+    return _fill(n["farewell"], name=name)
 
 
 # The interviewer confirms a name as "Sam. Did I get that right?" (prompts/interviewer_notes.md step_first,
@@ -324,15 +368,41 @@ def intro_values_for(name: str | None) -> dict:
     return {"meeting": n["meeting_first"], "first_step": n["step_first"], "_name": None}
 
 
-def debrief_values(cfg: dict, listener_dir: Path) -> dict:
+def debrief_values(cfg: dict, listener_dir: Path, stopped: bool = False) -> dict:
     """The debrief's placeholders: name, the chapter (title, summary, how much they heard), their moments and
     what they did (demo/debrief.py). The topic about asking questions names their first moment, asks what
     happened when they tapped to ask (no words of theirs recorded), asks whether they tried it, or (when they
-    heard none of the piece, or none was made) is not to be asked at all."""
+    heard none of the piece, or none was made) is not to be asked at all. `stopped`: their chapter is being
+    stopped as this debrief starts (End demo while it was made; the stop runs on the side, so its status may
+    not say so yet)."""
     from demo import debrief
     name = (tester_record(listener_dir).get("name") or "").strip()
-    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg),
-                       debrief.activity(listener_dir, cfg, now=time.time()))
+    act = debrief.activity(listener_dir, cfg, now=time.time())
+    if stopped:
+        act = {**act, "stopped": True}
+    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg), act)
+
+
+# End demo while the chapter is still being made stops it (Ian's third run, 2026-11-19: "We definately need to
+# stop the run of the chapter once the post inverview starts, if the user clicks stop demo."). Only on a press
+# this recent: a debrief taken again later is not a new press.
+END_PRESS_SECONDS = 600
+
+
+def stop_on_end(listener_dir: Path, status: dict | None, now: float | None = None) -> bool:
+    """Whether the debrief starting now should stop the tester's chapter: it is still being made (state making,
+    or waiting its turn; not already finishing, stage "archive"), and End demo was pressed in the last
+    END_PRESS_SECONDS, not after the piece had finished (phase "ended"). The chapter's own end hands back with
+    no press, and nothing is stopped then."""
+    from demo import debrief
+    st = status or {}
+    if st.get("state") != "making" or not st.get("run") or st.get("stage") == "archive":
+        return False
+    ends = [e for e in debrief.events(listener_dir) if e.get("event") == "end_demo"]
+    if not ends or ends[-1].get("phase") == "ended":
+        return False
+    at = debrief._ts(ends[-1].get("t"))
+    return at is not None and (now or time.time()) - at <= END_PRESS_SECONDS
 
 
 def _times(k, n: dict) -> str:
@@ -365,12 +435,13 @@ def account(ctx: dict, got: list[dict], act: dict | None, n: dict | None = None)
     None: the app kept no record), the piece, how much they heard and their moments, as before."""
     n = n or notes()
     a = act or {}
-    piece = bool(ctx.get("run")) or bool(a.get("started"))
+    piece = bool(ctx.get("run")) or bool(a.get("started")) or bool(a.get("stopped"))
     phase = (a.get("end") or {}).get("phase")
     if phase == "making" and a.get("ready"):
         phase = "talk"  # the opening was ready and offered: they were talking, not waiting on it (the page says "making" until it is read)
     ended = [n.get(f"did_end_{phase}") or n["did_end"]] if a.get("end") else []
     out = []
+    stopped = [n["did_stopped"]] if a.get("stopped") else []  # last: what became of the piece when they ended
     if a.get("talk_s") is not None:
         out.append(_fill(n["did_talk_started" if piece else "did_talk_only"], talk=_span(a["talk_s"], n)))
     if not piece:
@@ -401,7 +472,7 @@ def account(ctx: dict, got: list[dict], act: dict | None, n: dict | None = None)
             out.append(_fill(n["did_pauses"], times=_times(a["pauses"], n)))
         if a.get("seeks"):
             out.append(_fill(n["did_seeks"], times=_times(a["seeks"], n)))
-    return out + ended
+    return out + ended + stopped
 
 
 def recorded_account(study: Path) -> str | None:
@@ -459,11 +530,12 @@ def session_config(cfg: dict, mode: str, values: dict, *, transport: str = "webr
         "instructions": instructions(mode, values),
         "audio": {"output": {"voice": I["voice"]}},
         "input": [],
-        "delegation": {"type": "responses", "responses": {
-            "model": L["backend_model"], "instructions": load_prompt("interviewer_backend"),
-            "tools": tools(mode), "tool_choice": "auto", "reasoning": {"effort": L.get("backend_effort", "low")}}},
         "store": bool(I.get("store", True)),
     }
+    if mode in DELEGATES:
+        session["delegation"] = {"type": "responses", "responses": {
+            "model": L["backend_model"], "instructions": load_prompt("interviewer_backend"),
+            "tools": tools(mode), "tool_choice": "auto", "reasoning": {"effort": L.get("backend_effort", "low")}}}
     if transport == "websocket":
         session["audio"]["format"] = {"type": "audio/pcm", "rate": 24000}
     return session
@@ -480,7 +552,7 @@ def page_notes(mode: str, values: dict) -> dict:
     else:
         name = values.get("person") or ""
         got = {"opened": n["opened_debrief"], "time_up": n["time_up"], "wrap_now": n["wrap_now"],
-               "waiting": n["waiting_debrief"]}
+               "waiting": n["waiting_debrief"], "hanging": n["hanging_debrief"]}
     return {k: _fill(v, name=name) for k, v in got.items()}
 
 
@@ -702,6 +774,83 @@ def _after_end(cfg: dict, study: Path, s: dict) -> None:
             print(f"  interviewer: audio for {s['id']} failed: {type(e).__name__}: {e}")
 
 
+RECORDING_DAYS = 30  # OpenAI keeps a stored session's recording this long
+
+
+def pending_recordings(cfg: dict, now: float | None = None) -> list[dict]:
+    """Interviewer sessions whose recording never reached study/ ({study, live_id, path, age}): every listener's
+    folder (and cfg's listener_dir), sessions with a live_id, under RECORDING_DAYS old, not ended "failed" or
+    "abandoned" (they never talked), with no <live_id>.mp3 or .wav beside them."""
+    now = now or time.time()
+    studies = sorted(common.LISTENERS_DIR.glob("*/study")) if common.LISTENERS_DIR.is_dir() else []
+    if cfg.get("listener_dir"):
+        studies.append(Path(cfg["listener_dir"]) / "study")
+    out, seen = [], set()
+    for study in studies:
+        if not study.is_dir() or study.resolve() in seen:
+            continue
+        seen.add(study.resolve())
+        for p in sorted(study.glob("*-*.jsonl")):
+            if not p.name.startswith(MODES):
+                continue
+            age = now - p.stat().st_mtime
+            if age > RECORDING_DAYS * 86400:
+                continue
+            recs = read_lines(p)
+            live_id = next((r.get("live_id") for r in recs[:1] if r.get("who") == "session"), None)
+            ended = [r.get("ended") for r in recs if r.get("who") == "session" and r.get("ended")]
+            if not live_id or (ended and ended[-1] in ("failed", "abandoned")):
+                continue
+            if (study / f"{live_id}.mp3").exists() or (study / f"{live_id}.wav").exists():
+                continue
+            out.append({"study": study, "live_id": str(live_id), "path": p, "age": age, "ended": bool(ended)})
+    return out
+
+
+def fetch_pending(cfg: dict, *, sleep=time.sleep, client=None) -> threading.Thread | None:
+    """At server start, in one background thread: the recordings of interviewer sessions that never got theirs
+    (Ian's third run, 2026-11-19: the debrief's was lost when the server stopped within the two minutes
+    _after_end waits before fetching it), as memory.run_pending catches up on memory passes. A session that
+    ended less than live.archive_wait_seconds ago still gets the rest of that wait; an older one none. One with no
+    `ended` row (the server restarted while it was live: the WebRTC session goes on with OpenAI, its line posts
+    get 409) first waits until it must be over (debrief_max_minutes and the page's minute after), or it was tried
+    too early and given up until the next start. Ended ones first, newest first. None when there is nothing to
+    fetch, or recordings are off."""
+    if not icfg(cfg).get("store", True):
+        return None
+    todo = pending_recordings(cfg)
+    if not todo:
+        return None
+    wait = float(cfg["live"].get("archive_wait_seconds", 120))
+    todo.sort(key=lambda j: (not j["ended"], j["age"]))
+    live_max = (float(icfg(cfg)["debrief_max_minutes"]) + 1) * 60
+
+    def work():
+        for job in todo:
+            ld = job["study"].parent
+            who = identity(ld)
+            first = [True]
+
+            def nap(secs, age=job["age"], extra=0.0 if job["ended"] else live_max):
+                if first[0]:  # the initial wait: only what is left of it
+                    first[0] = False
+                    secs = max(0.0, wait + extra - age)
+                if secs > 0:
+                    sleep(secs)
+            try:
+                got = fetch_audio(cfg, job["study"], job["live_id"], sleep=nap, client=client,
+                                  check=lambda ld=ld, who=who: still_theirs(ld, who))
+                if got:
+                    print(f"  interviewer: fetched the recording of {job['path'].name}")
+            except Exception as e:  # noqa: BLE001 (a missing recording leaves the transcript, which is the record)
+                print(f"  interviewer: recording for {job['path'].name} failed: {type(e).__name__}: {e}")
+
+    t = threading.Thread(target=work, name="interviewer-recordings", daemon=True)
+    BACKGROUND.append(t)
+    t.start()
+    return t
+
+
 # --- routes -----------------------------------------------------------------------------------------
 
 class Start(BaseModel):
@@ -734,7 +883,9 @@ class End(BaseModel):
     how: str = "ended"
 
 
-def mount(app, cfg: dict) -> None:
+def mount(app, cfg: dict, on_debrief=None) -> None:
+    """`on_debrief(listener_dir) -> bool`: called as a debrief starts, before what it is told is read; True when
+    it began stopping the tester's chapter (server.py: End demo while it was made, stop_on_end)."""
     from fastapi import HTTPException
     from fastapi.responses import Response
 
@@ -842,8 +993,14 @@ def mount(app, cfg: dict) -> None:
         from voice.gpt_live import session as live_session
         ld = here()
         study = study_of(ld)
+        stopping = False
+        if req.mode == "debrief" and on_debrief is not None:
+            try:
+                stopping = bool(on_debrief(ld))
+            except Exception as e:  # noqa: BLE001 (the debrief goes on: the tester is waiting)
+                print(f"  interviewer: stopping the chapter for the debrief failed: {type(e).__name__}: {e}")
         try:
-            values = intro_values(ld) if req.mode == "intro" else debrief_values(cfg, ld)
+            values = intro_values(ld) if req.mode == "intro" else debrief_values(cfg, ld, stopped=stopping)
             sc = session_config(cfg, req.mode, values)
             got = live_session.create_webrtc(cfg, sc, req.sdp)
         except StageError as e:
@@ -856,10 +1013,11 @@ def mount(app, cfg: dict) -> None:
                  "listener": ld.resolve(), "study": study, "path": study / f"{req.mode}-{sid}.jsonl",
                  "values": values, "name": None, "tools": [], "who": identity(ld)}
             open_[sid] = s
+        back = (sc.get("delegation") or {}).get("responses") or {}
         write(s, {"who": "session", "mode": req.mode, "live_id": got["id"], "voice": sc["audio"]["output"]["voice"],
-                  "model": sc["model"], "backend": sc["delegation"]["responses"]["model"],
+                  "model": sc["model"], "backend": back.get("model"),
                   "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
-                  "tools": [t["name"] for t in sc["delegation"]["responses"]["tools"]],
+                  "tools": list(MODE_TOOLS[req.mode]),
                   **({"moments": values["_moments"], "chapter": values["_context"],
                       "activity": values.get("_activity"), "did": values.get("did")} if req.mode == "debrief"
                      else {"name_given": values.get("_name")})})

@@ -44,13 +44,26 @@ End demo (Ian, 2026-11-18: "a more prominent button ... that says end demo and v
 chapter is being read, not only after. The transition should happen by default"): the button replaced I'm done and
 shows through the conversation too, so the handback has a note for each place it can be tapped with the guide
 there to say goodbye: `handback_done` while the chapter is read or asked about, `handback_talk` in conversation,
-`handback_making` in conversation while their chapter is being made (End demo doesn't stop it). Those two and
+`handback_making` in conversation while their chapter is being made (End demo now stops it: below). Those two and
 `handback_end` go as speakable context, so they have no brackets (the page adds them when it asks once more as an
 instruction): sent as instructions, live, the guide said nothing (in conversation it had just asked a question
 and went on waiting for the answer; at the chapter's end it had finished reading), and the debrief followed 8 to
 12 s of silence. `handback_done` stays an instruction: it has a reading to stop, as `tapped` does. With no session
 open (resting, paused) nothing is said: the debrief starts at once.
-Placeholders in single braces ({title}, {text}) are filled by the page.
+Ian's third tester run (2026-11-19): `offer_nudge` (only with config live.director off now: the director reads the
+conversation instead) cut into his story 50 s in and said "No more questions about their day", dropped; the pitch
+nudges are 720f7d5's short lines again (with the real-interest fallback of 2026-11-16, and without "if you haven't
+told them what you do", which made it explain twice); `started_step_back` and `started_company` carry the topic
+({topic}: start_chapter's topic as pitched), because he asked "What would it be about?" and never heard; and
+`started_step_back` ends on a real question whose answer the page waits for (it had stepped back 6 s after "unless
+there's anything else you'd like to chat about"). End demo now stops a chapter still being made ("We definately
+need to stop the run of the chapter once the post inverview starts"), so `handback_making` no longer promises it.
+`direct` and `direct_start` wrap the director's note (voice/gpt_live/director.py, config live.director) as an
+instruction, sent only in a real lull and dropped if anyone spoke since it was asked for; `direct_start` when its
+move is to start the chapter, so a clear yes starts it through start_chapter without a word about it. On a no to
+`started_step_back`'s offer to chat, the guide is told to use step_back: the page reads the no too (its main path),
+and the tool is a second one if the page's patterns miss the words.
+Placeholders in single braces ({title}, {text}, {when}, {topic}) are filled by the page.
 ---
 opened: Say hello now: only a bright, glad hello of two to four words, in your own words, different every time. Nothing else yet: no name, no question. Then wait for them.
 read: Read this passage aloud now, word for word, exactly as written, with nothing before or after:
@@ -77,15 +90,15 @@ chapter_failed: [Their chapter couldn't be made: it stopped before the opening w
 chapter_halted_early: [The listener stopped their chapter before it began. Acknowledge it in a few words and keep them company.]
 ready_unheard: This session picks up a conversation already under way: the listener is back, and their chapter "{title}" is written but they haven't heard it yet. Say you're back in a few words, tell them it's ready and ask if they'd like to hear it now. Start it only when they say yes (start_reading).
 hello_silence: [They haven't said anything since your hello. A light word or two, like asking if they can hear you, then wait.]
-offer_nudge: [A quiet moment, or you've chatted a little while: your cue to take the initiative. If they don't know yet what you do, offer to tell them now, in one short, eager question like "Want to hear what I do?" (if they're mid-thought, react to that in a few words first). If they already know, ask what they've been listening to, reading or watching lately instead (one of them, not a list). No more questions about their day.]
-pitch_nudge: [You've been talking a couple of minutes. At the next natural pause, not mid-thought, go for their chapter. Don't explain again what you do. If something has clearly interested them (they lit up, said a lot about it, or came back to it), pitch that very thing, plainly and with enthusiasm: an angle on it past what they already know, never a neighbouring subject, no hedging. Never pitch from a passing mention, the first thing they happened to say, or something they waved off. If nothing has stood out yet, don't pitch: ask one easy question, which of the things they've mentioned they'd want to hear more about, and pitch from their answer.]
-pitch_nudge_again: [It's time to bring up their chapter, unless you just have. If they turned an idea down, don't guess again: ask which of the other things they mentioned they'd rather hear about, or, if you've asked that already, offer two possibilities or to surprise them. Otherwise, at the next pause, pitch the thing that has interested them most, plainly and with enthusiasm; if you can't tell what that is, ask.]
+offer_nudge: [A quiet moment, or you've chatted a little while: your cue to take the initiative. If they don't know yet what you do, offer to tell them now, in one short, eager question like "Want to hear what I do?" (if they're mid-thought, let them finish and react to it first). If they already know, ask what they've been listening to, reading or watching lately instead (one of them, not a list).]
+pitch_nudge: [You've been talking a few minutes. At the next natural pause, not mid-thought, move toward their chapter: pitch the thing that has interested them most, or, if nothing has stood out, ask which of the things they've mentioned they'd want to hear more about.]
+pitch_nudge_again: [It's time to bring up their chapter, unless you just have: at the next pause, pitch one idea from what has interested them most.]
 moved: [The listener moved the chapter to another place. Stop now, even mid-sentence, and say nothing: the next passage comes straight away.]
 offer_line: Your chapter's ready: "{title}". Want to hear it now?
 ready_line_resting: Your chapter's ready whenever you are. Tap play when you'd like it.
 asking: This session carries on the same conversation. The chapter is paused and the listener is about to ask you something: listen, and answer as your rules for questions say.
-started_step_back: [Their chapter is under way; the opening should be ready in {when}. In a sentence or two, in your own words: say so, that you'll step back for a bit while you research it unless there's anything else they'd like to chat about, and that while you're away they can speak up or tap your circle any time to talk. Then say nothing more.]
-started_company: [Their chapter is under way; the opening should be ready in {when}. They've been enjoying the chat: say so in a sentence, that you'll research in the background and you're happy to keep talking, or to step back if they'd rather have quiet. Then carry on the conversation.]
+started_step_back: [Their chapter is under way: "{topic}". The opening should be ready in {when}. In a sentence or two, in your own words: say so and what it will be about, in a few words; that you'll step back for a bit while you research it, and they can speak up or tap your circle any time; and ask, lightly, whether there's anything else they'd like to chat about first. Then wait for their answer: if they'd like to chat, keep them company; if not, a few words, then use the backend tool step_back and say nothing more.]
+started_company: [Their chapter is under way: "{topic}". The opening should be ready in {when}. They've been enjoying the chat: say in a sentence what it will be about, that you'll research it in the background and you're happy to keep talking, or to step back if they'd rather have quiet. Then carry on the conversation.]
 back_from_rest: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener has tapped to talk. Let them know you're here in a word or two, and listen.
 listening_again: This session carries on the same conversation: you had stepped back while their chapter was made, and the listener may be about to speak to you. Say nothing first: listen, and answer only if they talk to you.
 ready_back: This session carries on the same conversation: you had stepped back while their chapter was made, and it's ready now. Say nothing until the app gives you the words to say.
@@ -93,4 +106,6 @@ handoff: This session picks up from the person who welcomed them; they just told
 handback_end: The chapter has ended and nothing more is to be read. Speak now, in your own words: close it in a sentence or two, then say you're handing them back to the person who welcomed them, and stop.
 handback_done: [The listener tapped End demo, so the chapter stops here. Stop reading now, even mid-sentence: never go on with the passage. Close in a sentence or two, then say you're handing them back to the person who welcomed them, and stop.]
 handback_talk: The listener tapped End demo, so the conversation ends here. Speak now, without waiting for them: close warmly in one sentence, then say you're handing them back to the person who welcomed them, and stop. Ask nothing more.
-handback_making: The listener tapped End demo, so the conversation ends here. Speak now, without waiting for them: their chapter is still being made and isn't stopped, so tell them in one sentence it will be here for them when it's done; then say you're handing them back to the person who welcomed them, and stop. Ask nothing more.
+handback_making: The listener tapped End demo, so the conversation ends here, and their chapter, still being made, stops with it. Speak now, without waiting for them: close warmly in one sentence, without promising them the chapter; then say you're handing them back to the person who welcomed them, and stop. Ask nothing more.
+direct: [{note}]
+direct_start: [{note} If they have clearly said yes, start it now: Generate <|SpawnThinking|> to call start_chapter, saying nothing about it.]

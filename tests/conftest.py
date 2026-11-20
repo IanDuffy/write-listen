@@ -30,6 +30,9 @@ def cfg():
     # The ElevenLabs page and agents are what these tests pin; tests of the live voice
     # (tests/live/) set live.provider to gpt_live themselves.
     c["live"]["provider"] = "elevenlabs"
+    # The live guide's director calls Claude per line (live.director, on in config.yaml); tests about it turn it on
+    # themselves, so no page test without a fake client can reach the real API through it.
+    c["live"]["director"] = {**(c["live"].get("director") or {}), "enabled": False}
     return c
 
 

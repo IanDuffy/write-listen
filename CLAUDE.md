@@ -559,8 +559,8 @@ Deploy: `DEPLOY.md`, `deploy/`.
     guide's session open the guide closes in a sentence and hands back (`handback_done` while the chapter is
     read or asked about, an instruction, since it has a reading to stop; `handback_talk`, `handback_making` and
     `handback_end` go as speakable context: as instructions GPT-Live let them pass, live); with no session
-    (resting, paused, a page they came back to) the debrief starts at once. A chapter being made is not
-    stopped. For a tester back on a page of their own, `GET /api/live/demo` says whether it shows: tester.json
+    (resting, paused, a page they came back to) the debrief starts at once. A chapter still being made is
+    stopped when the debrief starts (third run, below). For a tester back on a page of their own, `GET /api/live/demo` says whether it shows: tester.json
     `debrief_card` (the stored field, unchanged; "End demo: auto / show / hide" on the admin page), auto
     meaning once they have a chapter or have started a conversation there.
   - **What the tester did:** the page posts each press to `POST /api/demo/event` (`end_demo` with the phase,
@@ -580,7 +580,8 @@ Deploy: `DEPLOY.md`, `deploy/`.
     ten simulated runs (`debrief_target_minutes` 4, `debrief_max_minutes` 6). `demo.sim_interviewer` checks
     `questions`, `more_topics`, `exit` (no question after they say they're done) and `too_soon`. Its `--runs`
     is the total and defaults to 10: pass `--runs 2` with two personas for one each.
-  - **The guide** (note 3: fewer questions, more eager, picks up on silence): a question is the exception and
+  - **The guide** (replaced on 2026-11-19 by the third run's warmth and director, below; kept for the record)
+    (note 3: fewer questions, more eager, picks up on silence): a question is the exception and
     never two turns running (the offer and the pitch excepted); a lull before a chapter is its cue; "Want to
     hear what I do?" after one exchange, never in its first two turns, and the page cues it once in the first
     lull (`live.page.offer_nudge`, 30 to 50 s); the explanation ends by asking about one particular thing
@@ -592,6 +593,41 @@ Deploy: `DEPLOY.md`, `deploy/`.
     never eaten, cooked, built or been anywhere, so it never talks as if it had; what it brings is curiosity,
     what strikes it, a guess about them, an opinion about an idea. The example lines that modelled it ("a lunch
     like that has me jealous", "a small piece of yourself") are gone.
+- **After Ian's third tester run (2026-11-19)** (records: `listeners/t-ian-run-3/`; built, reviewed, and checked
+  with small live runs: four persona conversations, two debriefs, one intro; results in `voice/gpt_live/REPORT.md`
+  and PROGRESS.md; not yet tried by Ian):
+  - **The director** (`voice/gpt_live/director.py`, `POST /api/live/direct`, `prompts/live_director.md` and
+    `live_director_moment.md`; config `live.director`, on, and `stages.director`: Sonnet 5.5, effort low, cost
+    logged per conversation as stage "director" and counted in `guide.max_session_usd`; its transcript rows use
+    `note`, never read by `earlier_text`, memory or `explained()`). The page (`live.js` `directorTick`/`Ask`/
+    `Verdict`/`Deliver`) asks after each line and on silences, in talk before the chapter and in company; delivers
+    only in a real lull (`deliver_quiet_ms` from the decision's arrival too; `deliver_after_guide_ms` after the
+    guide's own line), drops a move if anyone spoke since it was asked for, within `min_gap_secs` of any page note,
+    or already done; one check-in, only before the listener's first word. While it is up `offer_nudge` and
+    `hello_silence` are off and the pitch nudges are late fallbacks (`live.director.fallback`; the first is the offer
+    cue if nothing was explained), lull only. Two failures in a row: today's clocks, lull only. A returning
+    listener counts as told. `python -m voice.gpt_live persona --director/--no-director` mirrors it. Notes
+    `direct`/`direct_start`. Page tests turn it off (`tests/conftest.py`, `test_live_page`'s `site`).
+  - **The guide's warmth** is 720f7d5's again (Pooja's and Purnima's conversations): conversation not interview,
+    "Mix your moves", about a third of turns a question, the pause left to them, a few exchanges about them before
+    the offer, stay on what lights them up, then pitch. The pace (what it does by about a minute, the pitch within
+    two or three) is a pace, not a clock. A chapter starts only on a clear yes; a question in reply to the pitch is
+    answered first; the started notes carry `{topic}`.
+  - **After the start:** `started_step_back` ends on a real offer to chat; the page waits `step_back_reply_secs`
+    for the answer, any line after the note opens the wait, and only a plain no rests (`declinesChat`). `engaged()`
+    counts merged turns (`live.page.engaged_turns`, was `engaged_lines`; `engaged_merge_ms`); typed lines never merge.
+  - **The interviewer:** the intro is about 40 words, still ending "I'll hand you over now." (a silent tester is
+    handed over on the words at 2x `handover_min_ms`, words said earlier held until then); the debrief runs with no
+    delegation (`interviewer.DELEGATES`: the intro only); stall lines never count as a reply (`PAGE_DEFAULTS`
+    `stall`), and one "left hanging" note (`hanging_ms`, `go_on`, `note_gap_ms`).
+  - **End demo stops a chapter still being made** (`server.stop_for_debrief`, `interviewer.stop_on_end`; the
+    debrief's account says so, `did_stopped`). Missing interviewer recordings are fetched at server start
+    (`interviewer.fetch_pending`). The farewell to Ian himself is `farewell_ian` ("That really helps."), not
+    "Thank you, Ian. That really helps Ian."
+  - **What the live checks can't show yet:** `persona --director` asks the director only after guide lines (the page
+    also asks after listener lines) and delivers without the page's lull, so in four conversations all 12
+    decisions were `wait` and the on/off difference came from the clocks being off. The director's moves are
+    first heard on the real page.
 
 ## Local setup
 
