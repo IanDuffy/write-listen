@@ -3782,6 +3782,60 @@ def test_the_panel_folds_and_never_covers_the_circle_end_demo_or_the_play_bar(wo
     assert p.js("getComputedStyle(document.getElementById('earpiece-list')).display") != "none"
 
 
+def test_the_panel_refits_when_a_bar_appears_with_no_event(world):
+    """Review (2026-11-20): the panel fitted only on its own events, a resize or a scroll, so a play bar shown by
+    live.js's render tick (or the library's bar) could sit under it for minutes. It refits on a timer too."""
+    w = world
+    p = ep_open(w)
+    p.page.set_viewport_size({"width": 375, "height": 812})
+    p.js("""() => { for (let i = 1; i <= 30; i++) {
+        const base = {session: window.Live.L.session, at: Date.now(), secs: i};
+        Earpiece.event({...base, type: 'ask', id: 200 + i, trigger: 'cadence', speaking: 'none'});
+        Earpiece.event({...base, type: 'look', id: 200 + i, got: {read: 'A fairly long read of the moment, number ' + i,
+          plan: [{item: 'Find the spark', state: 'open'}], next: 'Find the spark', changed: false}});
+      }
+      document.getElementById('orb').style.display = 'none';      // out of the way: the panel reaches the bottom
+      window.dispatchEvent(new Event('resize')); }""")
+    p.page.wait_for_timeout(100)
+    p.js("() => { const pl = document.getElementById('player'); pl.hidden = false; pl.style.display = 'block'; }")  # no event
+    p.page.wait_for_timeout(1200)
+    assert p.js("!!document.getElementById('player').getBoundingClientRect().height")
+    assert not overlaps(p, "earpiece", "player")
+
+
+def test_a_look_answered_after_the_conversation_ended_lands_on_its_own_card(world):
+    """Review (2026-11-20): a look in flight when the conversation ended came back with L.session null, so the panel
+    made a phantom "? · ? speaking" card and left the real one at "Looking…". Its events carry the session it was
+    asked in; nothing is posted for it (the conversation is over), and the page decides as before."""
+    w = world
+    p = ep_open(w)
+    director_on(p)
+    p.js("""() => { window.__held = []; const f = window.fetch;
+        window.fetch = (u, o) => {
+          if (!/\\/api\\/live\\/direct$/.test(String(u))) return f(u, o);
+          const id = JSON.parse(o.body).id;
+          return new Promise((res) => window.__held.push(() => res(new Response(JSON.stringify({id, read: 'Late.',
+            plan: [], next: null, changed: true, kind: 'when_it_fits', about: 'interest', note: 'Ask what they read.'}),
+            {status: 200, headers: {'Content-Type': 'application/json'}}))));
+        }; }""")
+    sid = p.L("L.session")
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Hi, I'm making salmon tonight.")
+    p.page.wait_for_function("window.__held.length === 1", timeout=6000)
+    p.js("() => window.Live.endConversation()")
+    p.wait("L.phase === 'idle' && !L.session")
+    n = len(fates(p))
+    p.js("() => window.__held[0]()")
+    p.page.wait_for_function("[...document.querySelectorAll('#earpiece-list > li.look .fate')].some((e) => e.dataset.fate === 'dropped')",
+                             timeout=4000)
+    cards = p.js("[...document.querySelectorAll('#earpiece-list > li.look')].map((e) => [e.dataset.session, e.innerText])")
+    assert len(cards) == 1 and cards[0][0] == sid, cards
+    assert "Looking" not in cards[0][1] and "? speaking" not in cards[0][1] and "Ask what they read." in cards[0][1]
+    p.page.wait_for_timeout(400)
+    assert len(fates(p)) == n  # the conversation is over: nothing posted
+
+
 def _scenario(p, w, on, throwing=False):
     """One conversation on this page (one browser per test: a second sync Playwright can't start), the view on or
     off; what it sent and marked, from its start."""

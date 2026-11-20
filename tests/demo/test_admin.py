@@ -425,3 +425,22 @@ def test_the_admin_page_earpiece_controls_and_history(dcfg, site):
         assert want in text, want
     assert phone.get_attribute("li.look[data-id='2'] li[data-change='new']", "data-state") == "open"
     assert phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_a_held_row_written_after_its_sent_row_is_still_sent(dcfg, tmp_path, no_admin_env):
+    """Review (2026-11-20): the page's held and sent posts are fire-and-forget and can be written in either order;
+    the history took the last row as the fate and called a delivered whisper held."""
+    import json as _json
+    lid = seed(dcfg, "Pilot 1", "chapter")
+    folder = testers.folder(lid)
+    _conversation(folder)
+    p = folder / "sessions" / "20261120-100000.jsonl"
+    rows = [_json.loads(x) for x in p.read_text().splitlines()]
+    held = next(i for i, r in enumerate(rows) if r.get("who") == "director_fate" and r["fate"] == "held")
+    sent = next(i for i, r in enumerate(rows) if r.get("who") == "director_fate" and r["fate"] == "sent")
+    rows[held], rows[sent] = rows[sent], rows[held]
+    p.write_text("".join(_json.dumps(r) + "\n" for r in rows))
+    t = client(dcfg, tmp_path).get(f"/api/admin/earpiece/{lid}/20261120-100000").json()
+    look1 = next(x for x in t["items"] if x["kind"] == "look")
+    assert look1["fate"]["fate"] == "sent" and look1["fate"]["held_secs"] == 3.2
+    assert t["director"]["sent"] == 1 and t["director"]["held"] == 1

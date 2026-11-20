@@ -262,7 +262,7 @@ B3. B's tests (tests/live/test_live_page.py; the fake director via the existing 
   6. `test_the_panel_folds_and_never_covers_the_circle_end_demo_or_the_play_bar`: at 375x812 and 1280x800, with about 30 looks and #player and #end-demo forced visible, the panel's rect doesn't intersect them. The header toggles `aria-expanded` and hides the list.
   7. `test_the_panel_changes_nothing`: the same answers with the flag on and off give the same `instructions(p)` and the same director marks, and the same `L.log` direct-* sequence. A throwing `Earpiece.event` still lets the whisper go.
   8. `test_directorWhy_names_each_drop_and_nothing_else`: a pure table through `Live.directorWhy` against `Live.directorVerdict`, plus `dirHereWhy()` being "" exactly when `dirHere` is true in two states.
-- Run `tests/live/test_live_page.py -k "director or earpiece" -x -q`: the new tests plus the existing director tests, since live.js's director code changes. Never the whole file. Also run `node --check page/live.js page/earpiece.js` if node is installed.
+- Run `tests/live/test_live_page.py -k "director or earpiece or panel or fate" -x -q`: the new tests plus the existing director tests, since live.js's director code changes. Never the whole file. Also run `node --check page/live.js page/earpiece.js` if node is installed.
 
 ====================================================================
 NEITHER TOUCHES

@@ -173,7 +173,7 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
 #earpiece .reply { margin-top: 2px; color: var(--ep-muted); font-style: italic; }
 `;
 
-  let root = null, head = null, list = null, style = null;
+  let root = null, head = null, list = null, style = null, fitTimer = null;
   function readOpen() { try { return localStorage.getItem(KEY) !== "0"; } catch (e) { return true; } }
   function saveOpen(on) { try { localStorage.setItem(KEY, on ? "1" : "0"); } catch (e) { /* fine */ } }
 
@@ -196,6 +196,9 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
     open(readOpen(), false);
     window.addEventListener("resize", fit);
     window.addEventListener("scroll", fit, { passive: true });
+    // A player bar can appear, or the circle move, with no event, resize or scroll (live.js renders on its own
+    // ticks; the library adds its bar later): fit again at live.js's render cadence while the panel is up.
+    fitTimer = setInterval(fit, 500);
   }
 
   function open(on, save = true) {
@@ -206,7 +209,9 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
     fit();
   }
 
-  const visible = (el) => { if (!el || el.hidden) return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
+  // What is painted, not the attribute: a hidden element has no box, and one shown by style despite its attribute
+  // is still in the way.
+  const visible = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return r.width && r.height ? r : null; };
 
   // Never over the circle, the text box, End demo or the player bars: the panel's height stops above whatever is
   // below it in its column, the bars at the bottom included (floor 96 px).
@@ -327,6 +332,8 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
   function remove() {
     window.removeEventListener("resize", fit);
     window.removeEventListener("scroll", fit);
+    clearInterval(fitTimer);
+    fitTimer = null;
     if (root) root.remove();
     if (style) style.remove();
     root = head = list = style = null;

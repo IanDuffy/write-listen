@@ -39,7 +39,7 @@ e4772d3.
 2. Build server side and page side per the contract, with tests.
 3. Tests: only the files that cover it (Ian, 2026-11-20): `tests/live/test_director.py`,
    `tests/live/test_live_server.py`, `tests/demo/test_admin.py`, `tests/demo/test_testers.py`,
-   `tests/demo/test_state.py`, and in `tests/live/test_live_page.py` only the new tests and `-k "director or earpiece"`
+   `tests/demo/test_state.py`, and in `tests/live/test_live_page.py` `-k "director or earpiece or panel or fate"` (all the new tests and the existing director ones)
    (the whole file takes about 24 minutes). Not the full suite.
 4. Check offline: run the server with `WL_DEMO=1` on a spare port, one tester with the view on and one off, the page in
    headless Chromium with the tests' fake GPT-Live and a fake director. No paid calls are needed.

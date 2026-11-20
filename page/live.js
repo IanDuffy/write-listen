@@ -390,7 +390,8 @@
   function newConversation() {
     if (L.dir && L.dir.next) {  // a whisper never sent: for the panel only (the conversation is over, nothing posted)
       const n = L.dir.next;
-      dirEmit("fate", { id: n.id, fate: "dropped", reason: "ended", note: n.note, kind: n.kind, about: n.about });
+      dirEmit("fate", { id: n.id, fate: "dropped", reason: "ended", note: n.note, kind: n.kind, about: n.about,
+                        session: n.session || L.session });
     }
     L.own = null; L.cont = null; L.startCalled = false; L.promiseAt = 0; L.nudges = 0; L.outFirst = 0;
     L.run = null; L.chapter = null; L.chapterAt = ""; L.feed = { items: [], next: 0, cur: null, ahead: null };
@@ -859,7 +860,9 @@
                      secs: L.convAt ? Math.round((t - L.convAt) / 100) / 10 : null,
                      held_ms: n.heldAt && fate !== "held" ? t - n.heldAt : null };
       if (reason !== "ended" && L.session && n.id != null) quietPost("/api/live/direct/fate", body);
-      dirEmit("fate", { ...body, note: n.note, kind: n.kind, about: n.about, ...extra });
+      // Filed under the conversation the look was asked in: the panel matches looks by session and id, and a late
+      // answer can come after the conversation ended (L.session null). The post keeps to the live session.
+      dirEmit("fate", { ...body, session: n.session || body.session, note: n.note, kind: n.kind, about: n.about, ...extra });
     } catch (e) { /* never */ }
   }
   function loadEarpiece() {
@@ -913,7 +916,7 @@
 
   function directorAsk(t, trigger) {
     const D = L.dir, C = S.director || {};
-    const ctl = new AbortController(), id = ++D.id;
+    const ctl = new AbortController(), id = ++D.id, sess = L.session;  // sess: for the panel's events only
     D.ctl = ctl; D.lines = 0; D.askedAt = t;
     const body = {
       // silence_ms: since the last line ended, at its last word (whoever is speaking now), as last_who is read
@@ -930,29 +933,30 @@
     fetch("/api/live/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
                                 signal: ctl.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t); } })
-      .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e), id); } })
+      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t, sess); } })
+      .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e), id, sess); } })
       .finally(() => clearTimeout(timer));
   }
 
-  function directorGot(got, askedAt) {
-    dirEmit("look", { id: got && got.id, got });
+  function directorGot(got, askedAt, sess = L.session) {
+    dirEmit("look", { id: got && got.id, got, session: sess });
     const D = L.dir;
-    if (!got || got.error) return directorFailed((got && got.error) || "no answer", got && got.id);
+    if (!got || got.error) return directorFailed((got && got.error) || "no answer", got && got.id, sess);
     D.fails = 0;
     mark("direct", got.changed && got.note ? `${got.kind || "when_it_fits"} ${got.about || ""}`.trim() : "no change");
     // A whisper only when its advice changed; the newest replaces one not yet delivered.
     if (got.changed && got.note) {
       if (D.next) dirFate(D.next, "dropped", "replaced");
-      D.next = { id: got.id, kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now() };
+      D.next = { id: got.id, kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now(),
+                 session: sess };
     }
   }
 
-  function directorFailed(why, id = null) {
+  function directorFailed(why, id = null, sess = L.session) {
     const D = L.dir;
     D.fails++;
     mark("direct-fail", why);
-    dirEmit("fail", { id, why, fails: D.fails });
+    dirEmit("fail", { id, why, fails: D.fails, session: sess });
     if (D.fails >= 2 && !D.down) {  // the clocks take over
       if (D.next) dirFate(D.next, "dropped", "down");
       D.down = true; D.next = null; D.queued = null; mark("director-down");

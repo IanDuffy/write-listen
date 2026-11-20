@@ -168,7 +168,9 @@ def timeline(folder: Path, session: str) -> dict:
     for look in looks.values():
         got = fate_rows.get(look["id"])
         if got:
-            final = got[-1]
+            # The page's posts are fire-and-forget, so a "held" row can land after its final one: the last fate that
+            # isn't "held" is the final one, wherever it falls in the file.
+            final = next((r for r in reversed(got) if r.get("fate") != "held"), got[-1])
             held = next((r for r in got if r.get("fate") == "held"), None)
             held_secs = None
             if final.get("fate") != "held":
