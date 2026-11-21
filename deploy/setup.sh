@@ -60,6 +60,9 @@ if ! command -v caddy >/dev/null; then
   apt-get update -q
   apt-get install -y -q caddy
 fi
+# Caddy keeps its certificates in its home. The package doesn't always create it (seen 2026-11-21 on a
+# droplet whose caddy user already existed); without it Caddy serves no certificate at all.
+install -d -o caddy -g caddy -m 750 /var/lib/caddy
 caddy version
 
 say "uv"

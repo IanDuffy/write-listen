@@ -252,3 +252,11 @@ def test_check_stops_an_app_open_to_anyone(tmp_path, status_code, ok):
     else:
         assert out.returncode == 1 and "Tester mode is OFF" in out.stderr
         assert log.read_text().strip() == "systemctl stop write-listen"
+
+
+def test_setup_makes_caddys_data_folder_before_caddy_needs_it():
+    # 2026-11-21: on the droplet /var/lib/caddy was missing, so Caddy could store no certificate
+    # ("failed storage check: mkdir /var/lib/caddy: permission denied") and the site had no HTTPS.
+    text = (DEPLOY / "setup.sh").read_text(encoding="utf-8")
+    made = text.index("install -d -o caddy -g caddy -m 750 /var/lib/caddy")
+    assert made < text.index('say "caddy config"')
