@@ -89,6 +89,7 @@ class Lock:
     title: str | None = None      # a better marker title, if the section's content now calls for one
     corrections: list[str] = field(default_factory=list)  # research contradicted something played: what now says so
     problems: list[str] = field(default_factory=list)     # what the code checks found after the fix round, and did
+    listener: list[str] = field(default_factory=list)  # claims about the listener before and after the edit (checks.claim_record); fast runs only
 
 
 _TEXT = {"type": "string"}
@@ -201,7 +202,8 @@ def _system(ctx: Ctx) -> str:
     words = sum(int(s.get("target_words") or 0) for s in ctx.outline["sections"])
     return load_prompt(_p(ctx, "fast_context"), seed=seed or "(not recorded)", outline=outline_text(ctx.outline),
                        style_guide=load_prompt("style_guide"), source_tiers=load_prompt("source_tiers_seed"),
-                       total=len(ctx.outline["sections"]), minutes=round(base.minutes(words, ctx.cfg)))
+                       total=len(ctx.outline["sections"]), minutes=round(base.minutes(words, ctx.cfg)),
+                       conversation=base.conversation(r))  # overnight_context has no {{conversation}}
 
 
 def system_prompt(ctx: Ctx) -> str:
@@ -253,8 +255,14 @@ def _said(ctx: Ctx, notes: list[dict]) -> str:
     has to back (checks.section_problems)."""
     r = ctx.r
     seed = r.path("seed").read_text(encoding="utf-8") if r.path("seed").exists() else ""
+    conv = base.conversation(r)  # their lines only: a guide line in quotation marks is still unbacked
+    heard = [ln.split(":", 1)[1].strip() for ln in conv.splitlines() if ln.startswith("listener:")]
     return "\n".join([seed, *(str(w) for w in ctx.outline.get("listener_words") or []),
-                      *(str(n.get("text") or "") for n in notes or [])])
+                      *(str(n.get("text") or "") for n in notes or []), *heard])
+
+
+def _claims_text(xs: list[str]) -> str:
+    return "\n".join(f"- {x}" for x in xs) or "(none)"
 
 
 def _note_entries(ctx: Ctx) -> str:
@@ -382,7 +390,9 @@ def edit_opening(ctx: Ctx, draft: str, notes: list[dict]) -> str:
     def problems(text: str) -> list[str]:
         return checks.section_problems(text, ctx.dossier.text(), allowed, said) + lost(text)
 
+    before = checks.listener_claims(draft)  # for the editor to check against their own words; code can't judge them
     content = [{"type": "text", "text": load_prompt("fast_opening_edit", draft=draft.strip(),
+                                                    listener_claims=_claims_text(before),
                                                     **_opening_values(ctx, notes))}]
     text = _clean(_call(ctx, "fast_opening_edit", content, "fast opening edit", 1).text)
     if found := problems(text):
@@ -396,7 +406,10 @@ def edit_opening(ctx: Ctx, draft: str, notes: list[dict]) -> str:
     if left:
         r.decide("fast opening", "Code checks on the edited opening, after one fix call:\n"
                  + "\n".join(f"- {p}" for p in left))
-    base.write_json(lock_path(r, 1), asdict(Lock(n=1, mode="opening", text=text, problems=left)))
+    if rec := checks.claim_record(before, checks.listener_claims(text)):
+        r.decide("fast opening listener", "Sentences about what the listener said, asked, saw or wants, checked "
+                 "by the opening's editor against their own words:\n" + "\n".join(f"- {x}" for x in rec))
+    base.write_json(lock_path(r, 1), asdict(Lock(n=1, mode="opening", text=text, problems=left, listener=rec)))
     base.write_atomic(r.segment_path(1), text)
     return text
 
@@ -539,10 +552,16 @@ def lock(ctx: Ctx, n: int, text: str, next_text: str | None, locked: list[tuple[
                             next_plan=plan_text(nxt), next_target=nxt["target_words"])
     else:
         about = load_prompt(_p(ctx, f"fast_lock_{mode}"), n=n)
+    # The sentences of draft n about what the listener said (draft n+1 is checked at its own lock), for the
+    # editor to check against their own words. Recorded, never a problem: code can't judge whether one is
+    # true, and a fix call costs a waiting listener minutes. Overnight's lock prompt ignores them.
+    fast = _p(ctx, "fast_lock") == "fast_lock"
+    before = checks.listener_claims(text)
     prompt = load_prompt(_p(ctx, "fast_lock"), n=n, total=total, title=_one(sec.get("title")), draft=text,
                          mode=about.strip(), plan=plan_text(sec), rows=rows_text(ctx, own, carried),
                          entries=_entries_text(entries), notes=listener_notes.as_prompt(notes),
-                         note_entries=_note_entries(ctx), target_words=sec["target_words"])
+                         note_entries=_note_entries(ctx), target_words=sec["target_words"],
+                         listener_claims=_claims_text(before))
     content = (_earlier_blocks([(k, t, True) for k, t in locked], _p(ctx, "fast_earlier"))
                + [{"type": "text", "text": prompt}])
     label = f"fast lock seg{n:02d}"
@@ -586,7 +605,8 @@ def lock(ctx: Ctx, n: int, text: str, next_text: str | None, locked: list[tuple[
     cut = [f"{_one(c['text'])} ({_one(c.get('reason')) or 'no reason given'})" for c in got["cut"]]
     return Lock(n=n, mode=mode, text=final, next_text=got["next_text"],
                 rows=_verdicts(ctx, own + carried, got["rows"], final), moved=got["moved"], cut=cut, title=title,
-                corrections=got["corrections"], problems=left)
+                corrections=got["corrections"], problems=left,
+                listener=checks.claim_record(before, checks.listener_claims(final)) if fast else [])
 
 
 def _verdicts(ctx: Ctx, rows: list[dict], given: list[dict], final: str) -> list[dict]:
@@ -674,6 +694,7 @@ def decision_text(lock: Lock) -> str:
     lines += [f"- Cut: {c}" for c in lock.cut]  # in full: once narrated, this is the only record of what was removed
     lines += [f"- {v['id']} {v['coverage']}: {v['note']}".rstrip(": ") for v in lock.rows if v["coverage"] != "covered"]
     lines += [f"- Correction: {c}" for c in lock.corrections]
+    lines += [f"- Listener claim {x}" for x in lock.listener]
     if lock.title:
         lines.append(f"- Marker title changed to: {lock.title}")
     lines += [f"- Code check: {p}" for p in lock.problems]

@@ -35,11 +35,13 @@ the whisper itself (prompts/live_director.md).
   listener/sessions/log.jsonl as stage "director" with the session id (so Session.spent() counts it).
 
 The page (page/live.js) asks on a cadence (every_secs with something new, a listener turn of every_words words
-or every_lines new lines, once after the started note, once per silence of silence_secs; company_every_secs
+or every_lines new lines, once after the started note, once when the guide first offers to say what it does or
+says it after the listener has spoken, once per silence of silence_secs; company_every_secs
 once a chapter has started), one look in flight, never while reading, in an aside, a check-in, resting, muted,
 around the handover or handback, or in the step-back reply wait. It delivers a whisper at once by
 session.instructions.append (notes.md `direct`, `direct_now`, `direct_start`), dropping only stale kinds after
-the start, an offer once explained, a "now" note the listener has spoken since, and a whisper within
+the start, an offer once explained, an "interest" question once the guide has asked something since the look, a
+"now" note the listener has spoken since, and a whisper within
 min_gap_secs of the last whisper.
 
 The earpiece view (Ian, 2026-11-20): `view_on` says whether this listener's page loads the panel
@@ -63,7 +65,7 @@ from stages.common import load_prompt
 STATES = ["open", "done", "dropped"]
 KINDS = ["when_it_fits", "now"]
 ABOUT = ["offer", "pitch", "interest", "habit", "unanswered", "start", "quiet", "wrap"]
-TRIGGERS = ["cadence", "turn_end", "silence", "started"]
+TRIGGERS = ["cadence", "turn_end", "silence", "started", "offered"]
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -128,6 +130,7 @@ FATE_REASONS = {
     "forgotten": "a rest, a wake or a new session cleared it",
     "down": "the earpiece went down",
     "ended": "the conversation ended",
+    "moved_on": "the guide had asked something since the look was asked",
 }
 
 
@@ -264,6 +267,10 @@ def trigger_text(trigger: str, D: dict, started: bool, silence_secs: float) -> s
         # Asked once, right after the started note, or (on a step back) once the listener answered its offer to
         # chat; the page forgets it over a rest, so it is never minutes old (review, 2026-11-20).
         return "the guide just called start_chapter (the app's started note has gone)"
+    if trigger == "offered":
+        # Asked once, at the end of the guide's first line that offers to say what it does or says it, once the
+        # listener has spoken: the pitch is coming, and a one-word "sure" is under every_words (Pooja, 2026-11-20).
+        return "the guide just offered to say what it does, or said it (its first time this conversation)"
     if trigger == "turn_end":
         return "a listener turn just ended"
     if trigger == "silence":
@@ -302,7 +309,9 @@ def look(D: dict, *, lines: list[dict], trigger: str, speaking: str, last_who: s
                        explained="yes" if explained else "no", started="yes" if started else "no",
                        profile=profile.strip() or "(nothing known yet)", plan=plan_text(plan),
                        last_read=last_read or "(first look)", notes=notes_text(lines),
-                       transcript=transcript_text(lines))
+                       transcript=transcript_text(lines),
+                       longest=str(max((len((x.get("text") or "").split()) for x in lines if x.get("who") == "listener"),
+                                       default=0)))
 
 
 def cap_words(note: str, n: int = MAX_WORDS) -> str | None:

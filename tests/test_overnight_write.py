@@ -426,3 +426,20 @@ def test_notes_added_while_research_ran_reach_every_draft_and_lock(tmp_path, cfg
         sections.listener_notes.as_prompt(seen[0][2])
     assert "Mention the harbour at Caesarea" in write.said(r, {})
     assert write.listener_notes(r.__class__(name="x", root=tmp_path / "none")) == []
+
+
+def test_overnight_lock_is_unchanged_by_listener_claims(tmp_path, cfg, monkeypatch):
+    """The claim check is a fast run's: overnight seeds often say the planner chose the topic, and its lock
+    prompt has no listener rule (alignment check before writing, 2026-11-20)."""
+    r, cfg = chapter(tmp_path, cfg)
+    chain = install(monkeypatch, sections=4)
+    claim = "You asked about tides."
+    chain.on("draft", 1, lambda kw: chain.reply(("draft", 1), kw) + f"\n\n{claim[:-1]} [D01].")
+    build(r, cfg)
+    lock1 = chain.of("lock", 1)[0]
+    assert "You asked about tides [D01]." in lock1["messages"][-1]["content"][-1]["text"]
+    assert "<listener_claims>" not in lock1["messages"][-1]["content"][-1]["text"]
+    assert "<conversation>" not in lock1["system"][0]["text"]
+    got = sections.saved_lock(r, 1)
+    assert got.listener == [] and "Listener claim" not in sections.decision_text(got)
+    assert "Listener claim" not in r.path("decisions").read_text()

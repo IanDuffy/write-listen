@@ -366,3 +366,56 @@ def test_a_returning_listener_without_a_profile_is_not_called_new_by_its_placeho
     session().say(None)
     system = all_text(guide_calls(resp)[-1])
     assert guide.NO_PROFILE_YET in system and "(no profile yet: this is a first meeting)" not in system
+
+
+# --- the conversation saved into the run (alignment check before writing, 2026-11-20) -------------
+
+def test_start_chapter_saves_the_conversation_once(world):
+    session, _, _, _, runs, listener = world
+    s = session()
+    s.record("guide", text="Hello there.")
+    s.record("listener", text="Hi. We were just discussing politics.")
+    s.record("page", text="[The listener has opened the page.]")
+    s.record("director", note={"read": "lukewarm"}, trigger="cadence")
+    s.record("tool", name="get_status", input={}, result={"state": "idle"})
+    s.record("guide", text="Want to hear what I do?")
+    s.record("listener", text="Mostly listening")
+    assert s.start_chapter("A family's private debate", "", "", "Mostly listening")["started"] is True
+    saved = (runs / "lesson" / "00_source" / "conversation.md").read_text()
+    head, talk = saved.split("## This conversation\n")
+    assert head.startswith("## Earlier conversations (the guide's summary, not their words)\n")
+    assert "Pours concrete for a living." in head
+    assert talk.strip().splitlines() == ["guide: Hello there.", "listener: Hi. We were just discussing politics.",
+                                         "guide: Want to hear what I do?", "listener: Mostly listening"]
+    assert "opened the page" not in saved and "lukewarm" not in saved and "get_status" not in saved
+    # A later start_chapter that lands on the same run (find_run) never rewrites it: it is in a cached prompt.
+    s.record("listener", text="Actually, make it about my uncle.")
+    (listener / "profile.md").write_text("- Changed.\n")
+    s.start_chapter("Another", "", "", "")
+    assert (runs / "lesson" / "00_source" / "conversation.md").read_text() == saved
+
+
+def test_conversation_cut_keeps_listener_lines(tmp_path):
+    t = tmp_path / "t.jsonl"
+    recs = [{"who": "listener", "text": "first thing I said"}]
+    recs += [{"who": "guide", "text": f"guide line {i} " + "x" * 190} for i in range(40)]  # about 8,000 characters
+    recs += [{"who": "listener", "text": "second thing I said"}, {"who": "guide", "text": "last guide line"},
+             {"who": "listener", "text": "third thing I said"}]
+    t.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    (tmp_path / "run" / "00_source").mkdir(parents=True)
+    out = guide.save_conversation(t, tmp_path / "run", "")
+    talk = out.read_text().split("## This conversation\n")[1].strip().splitlines()
+    assert talk[0] == guide.CUT_MARK
+    assert [x for x in talk if x.startswith("listener:")] == [
+        "listener: first thing I said", "listener: second thing I said", "listener: third thing I said"]
+    assert "guide: guide line 0 " not in out.read_text() and "guide: last guide line" in talk
+    assert len("\n".join(talk[1:])) <= guide.EARLIER_CHARS
+    assert "(none: a first meeting)" in out.read_text()
+
+
+def test_start_chapter_without_a_run_folder_writes_nothing(world, cfg):
+    _, _, _, status, runs, _ = world
+    s = guide.Session(cfg, lambda *a: "ghost", lambda: status["value"], runs, rng=random.Random(1))
+    s.record("listener", text="Hello")
+    assert s.start_chapter("Herons", "", "", "")["started"] is True
+    assert not (runs / "ghost").exists()

@@ -740,6 +740,60 @@ def test_the_persona_drops_an_offer_whisper_when_the_guide_just_offered(cfg):
     assert rec["delivered"] is False and not sim.notes
 
 
+def test_the_persona_earpiece_looks_once_when_the_guide_offers(cfg):
+    """live.js (Pooja, 2026-11-20): one "offered" look at the guide's first finished line that offers to say what it
+    does or says it, after a listener line; never before the listener has spoken, never after the start; a pending
+    event ("started") goes first."""
+    cfg["live"]["page"]["offer_nudge"] = {"after_secs": 0, "max_secs": 0, "offered": "\\bwhat i do\\b"}
+    cfg["live"]["director"] = {**cfg["live"]["director"], "every_secs": 1000, "every_words": 1000,
+                               "every_lines": 1000, "silence_secs": []}
+    hi = {"t": 0.0, "end": 1.0, "text": "Hi!"}
+    sim = EarSim([{"t": 0.0, "who": "guide", "text": "Hi!"},
+                  {"t": 2.0, "end": 3.0, "who": "listener", "text": "Mostly listening."}], turns=[hi], t=4.0)
+    e = ear(cfg, sim)
+    e.seen = len(e.talk())
+    assert e.trigger(4.0) is None
+    sim.turns.append({"t": 5.0, "end": 6.5, "text": "Want to hear what I do?"})
+    e.event = "started"
+    assert e.trigger(7.0) == "started" and e.trigger(7.0) == "offered" and e.trigger(7.5) is None
+    sim.turns.append({"t": 8.0, "end": 10.0, "text": "I make short audio chapters, just for you."})
+    assert e.trigger(11.0) is None
+    early = EarSim([{"t": 0.0, "who": "guide", "text": "Hi! I make short audio chapters."}],
+                   turns=[{"t": 0.0, "end": 2.0, "text": "Hi! I make short audio chapters."}], t=3.0)
+    e2 = ear(cfg, early)
+    assert e2.trigger(3.0) is None and not e2.offer_looked
+    early.timeline.append({"t": 4.0, "end": 5.0, "who": "listener", "text": "Oh."})
+    assert e2.trigger(6.0) is None  # the offer line came before they spoke: wait for a later one
+    early.turns.append({"t": 6.0, "end": 7.0, "text": "Want to hear what I do?"})
+    assert e2.trigger(8.0) == "offered"
+    late = EarSim([{"t": 2.0, "end": 3.0, "who": "listener", "text": "Sure."}],
+                  turns=[{"t": 4.0, "end": 5.0, "text": "Want to hear what I do?"}], t=6.0)
+    e3 = ear(cfg, late)
+    late.calls.append({"name": "start_chapter"})
+    assert e3.trigger(6.0) != "offered"
+
+
+def test_persona_verdict_drops_interest_after_a_guide_question(cfg):
+    """live.js guideAskedAt: an "interest" question is dropped once the guide's last line, ended after the look was
+    asked, asked something; other kinds are not."""
+    base = dict(here=True, started=False, explained=True, offered=False, spoke_since_ask=False,
+                listener_speaking=False, now=100.0, sent_at=None, min_gap=20.0)
+    q = look("Ask which bit of the table talk stuck with her.", about="interest")
+    assert P.verdict(q, **base, guide_asked_since=True) == "drop"
+    assert P.verdict(q, **base, guide_asked_since=False) == "send" and P.verdict(q, **base) == "send"
+    assert P.verdict(look("Pitch the table talk.", about="pitch"), **base, guide_asked_since=True) == "send"
+    # The offered look's question goes inside the gap after the earpiece's own offer whisper; others don't.
+    gap = {**base, "sent_at": 95.0}
+    assert P.verdict(q, **gap, trigger="offered") == "send"
+    assert P.verdict(q, **gap, trigger="turn_end") == "drop" and P.verdict(q, **gap) == "drop"
+    assert P.verdict(look("Pitch the table talk.", about="pitch"), **gap, trigger="offered") == "drop"
+    sim = EarSim([], turns=[{"t": 10.0, "end": 12.0, "text": "Which part stuck with you?"}], t=13.0)
+    e = ear(cfg, sim)
+    assert e.guide_asked_since(11.0) and not e.guide_asked_since(12.5)
+    sim.turns.append({"t": 13.0, "end": 14.0, "text": "I love that."})
+    assert not e.guide_asked_since(11.0)
+
+
 def test_a_plain_no_to_the_offer_to_chat_ends_the_persona_earpiece_and_its_started_look(cfg):
     """The page rests on a plain no after started_step_back and forgets the started look (dirForget); the persona
     used to ask it as soon as the listener answered, no or yes."""

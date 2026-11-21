@@ -33,7 +33,7 @@ import math
 from stages import ledger, llm
 from stages.common import Run, StageError, entry_id, load_prompt, parse_json, prompt_name, row_id, seed_inputs
 
-from . import base, notes, scout
+from . import base, checks, notes, scout
 
 TITLE_WORDS = 6
 
@@ -421,6 +421,27 @@ def _ask(r: Run, cfg: dict, stage: str, label: str, prompt: str, schema: dict, s
     return data
 
 
+def _keep_own_words(r: Run, outline: dict) -> tuple[dict, str]:
+    """A code backstop on the outline editor's check: listener_words the listener never said (the guide's
+    framing in the Topic, Pooja's "a family's private debate") are dropped, since the opening echoes them as
+    theirs. Not in validate(): that would bring a paid repair call for what code can settle. Returns the outline
+    and the decisions.md entry, recorded always."""
+    conv = r.path("conversation").read_text(encoding="utf-8") if r.path("conversation").exists() else ""
+    added = r.read("notes") if r.path("notes").exists() else ""
+    own = [ln[2:].strip() for ln in added.splitlines() if ln.startswith("- ")] + [n["text"] for n in notes.load(r.root)]
+    source = checks.listener_source(r.read("seed"), conv, own)
+    words = [w for w in outline.get("listener_words") or [] if isinstance(w, str)]
+    dropped = [w for w in words if _said(w) and not checks.own_words(w, source)]
+    if dropped:
+        outline = {**outline, "listener_words": [w for w in words if w not in dropped]}
+    heard = sum(1 for ln in conv.splitlines() if ln.startswith("listener:"))
+    return outline, ("Checked the outline's listener_words against the listener's own words (the seed's said and why "
+                     f"sections, {len(own)} note(s), "
+                     + (f"conversation.md, {heard} listener lines" if conv else "no conversation saved") + "). "
+                     + ("Dropped, not found word for word:\n" + "\n".join(f"- {w}" for w in dropped) if dropped
+                        else "All found."))
+
+
 def run(r: Run, cfg: dict, dossier) -> dict:
     """Write, edit and check the outline, and the files made from it. Returns the outline. If
     05_outline.json is there, it is returned without a paid call (and any of its files that are
@@ -435,6 +456,7 @@ def run(r: Run, cfg: dict, dossier) -> dict:
         raise StageError("fast outline: the dossier has no scout entries; run the scout first.")
     lim = limits(cfg)
     shared = {**seed_inputs(r, cfg), **lim, "notes": notes.as_prompt(notes.load(r.root)), "scout": scout_text.strip(),
+              "conversation": base.conversation(r),
               "scout_numbers": _ids(scout_numbers),
               "source_tiers": load_prompt(prompt_name(r, "source_tiers")).strip()}
     as_json = lambda o: json.dumps(o, ensure_ascii=False, indent=1)
@@ -486,6 +508,7 @@ def run(r: Run, cfg: dict, dossier) -> dict:
         raise StageError("fast outline: still invalid after the repair call:\n  - " + "\n  - ".join(errors)
                          + f"\nThe outline is saved as {partial.name}.")
 
+    outline, words_checked = _keep_own_words(r, outline)
     led = _write_files(r, outline, scout_text)
     r.decide("angle", f"Chose \"{outline['title']}\".\n\n{outline['angle']}\n\nWhy: {_t(outline, 'why') or '(not said)'}"
                       f"\n\nThrough-line: {outline['through_line']}")
@@ -504,6 +527,7 @@ def run(r: Run, cfg: dict, dossier) -> dict:
     if scaled:
         r.decide("outline repair", "Word targets scaled into range by code: "
                  f"{', '.join(map(str, scaled[0]))} became {', '.join(map(str, scaled[1]))}.")
+    r.decide("listener words", words_checked)
     r.decide("ledger", "Research questions from the outline, one agent each:\n\n" + "\n".join(
         f"- {row['id']} (section {row['section']}, {row['type']}, tier {row['tier_needed']}): {row['idea']}"
         for row in ledger.active(led)))

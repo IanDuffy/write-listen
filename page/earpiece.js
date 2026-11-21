@@ -21,6 +21,7 @@
     forgotten: "a rest, a wake or a new session cleared it",
     down: "the earpiece went down",
     ended: "the conversation ended",
+    moved_on: "the guide had asked something since the look was asked",
   };
 
   // --- state ---------------------------------------------------------------------------------------------

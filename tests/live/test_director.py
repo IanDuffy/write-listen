@@ -319,6 +319,31 @@ def test_an_unknown_trigger_or_speaking_is_read_as_the_plain_case(app, cfg, monk
     assert "the regular look" in user and D.SPEAKING["none"] in user
 
 
+def test_offered_is_a_trigger_with_its_own_words(app, cfg, monkeypatch):
+    """Pooja, 2026-11-20: the page looks once when the guide first offers to say what it does (or says it) after the
+    listener has spoken. The look says so, gives the listener's longest line in words, and the route records it."""
+    assert "offered" in D.TRIGGERS
+    said = [{"secs": 5, "who": "guide", "text": "Hi!"},
+            {"secs": 9, "who": "listener", "text": "politics and culture and history"},
+            {"secs": 20, "who": "listener", "text": "Mostly listening"},
+            {"secs": 25, "who": "guide", "text": "Want to hear what I do?"}]
+    text = D.look(D.settings({"live": {}}), lines=said, trigger="offered", speaking="none", last_who=None,
+                  silence_secs=0.5, seconds=26, explained=False, started=False, profile="", plan=None, last_read="")
+    assert "offered to say what it does" in text and "longest line so far: 5 words" in text
+    assert "longest line so far: 0 words" in D.look(D.settings({"live": {}}), lines=said[:1], trigger="cadence",
+                                                     speaking="none", last_who=None, silence_secs=1, seconds=6,
+                                                     explained=False, started=False, profile="", plan=None,
+                                                     last_read="")
+    c = app
+    sid = started(c)
+    lines(c, sid, ("guide", "Hi!"), ("listener", "Sure."), ("guide", "Want to hear what I do?"))
+    calls = answering(monkeypatch, look_json(None))
+    c.post("/api/live/direct", json={"session": sid, "id": 1, "trigger": "offered"})
+    assert "offered to say what it does" in calls[0]["messages"][0]["content"]
+    _, rows = transcript(cfg, sid)
+    assert [r["trigger"] for r in rows if r["who"] == "director"] == ["offered"]
+
+
 # --- its notes, the guide's clause, config ---------------------------------------------------------------
 
 def test_the_whisper_wrappers_and_the_clear():
@@ -376,10 +401,12 @@ def test_the_prompt_keeps_the_judges_rules_its_arc_and_names_only_known_abouts()
     from stages.common import ROOT
     raw = (ROOT / "prompts" / "live_director.md").read_text()
     head, body = raw.split("\n---\n", 1)
-    assert "2026-11-19" in head and "2026-11-20" in head
+    assert "2026-11-19" in head and "2026-11-20" in head and "Pooja, 2026-11-20" in head
     flat = re.sub(r"\s+", " ", body).lower()
     for rule in ("words of assent", "Finish saying what you do", "Re-send, once", "after their answer",
-                 "Never whisper when the last line is a filler", "A start look", 'Never the words "now" or "say"'):
+                 "Never whisper when the last line is a filler", "A start look", 'Never the words "now" or "say"',
+                 "One question before a thin pitch", "is not one", "Offer to pick something for them",
+                 "the one question before a thin pitch worded"):
         assert rule.lower() in flat, rule
     plan = re.findall(r"^\d\. (.+)$", body, re.M)
     assert plan[:4] == ["Meet them a little", "Say what you do, bridged from them", "Find what lights them up",

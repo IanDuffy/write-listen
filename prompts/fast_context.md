@@ -6,13 +6,14 @@ Inputs:
 - {{style_guide}}: prompts/style_guide.md
 - {{source_tiers}}: prompts/source_tiers_seed.md
 - {{total}}, {{minutes}}: the section count and the chapter's length
+- {{conversation}}: 00_source/conversation.md (a profile snapshot and the conversation up to start_chapter, written by code once), or "(none)"
 
 The fast counterpart of draft_context_seed.md, with the editor's rules from edit_seed.md,
 factcheck.md and revise_context.md alongside: the writer and the editor of a fast run share
 this one system prompt, so the rules are written once and the cached prefix of each kind of
 call (drafts, locks) starts with the same text. Only what stays the same for the whole run
 belongs here. The dossier grows while sections are written, so entries travel in each
-request, never here.
+request, never here. conversation.md is written once, when the chapter starts, and never changed.
 Keep rules 1 to 7 in step with draft_context_seed.md. Rules 8 to 11 are Fast Start's own
 (docs/fast-start.md: step 5, Listener notes).
 ---
@@ -25,6 +26,14 @@ What the listener asked for. The chapter is made for this one person:
 <seed>
 {{seed}}
 </seed>
+
+A sentence that says what the listener said, asked, saw, did or wants stands on their own words: their lines in the conversation, the seed's said and why sections, or a note; or on the summary of earlier conversations, which may carry a claim but never a quotation. The Topic is the guide's framing, not theirs, unless the seed says it is in their words and no conversation is recorded. One that does not match is reworded to what they did say, keeping the tie to them and every [Dn] marker it had; cut it only when nothing they said supports it. A detail about them they did not give is a claim too: when or where something happened ("today", "this morning"), who was there. Generic "you" ("if you stand by a river") and callbacks to what this chapter or an earlier one told them ("as you heard a moment ago", "in the last chapter") are not claims about them: leave them.
+
+What earlier conversations told the guide (a summary, not their words), then the conversation that led to this chapter as the page transcribed it. The guide's lines are the guide's, not theirs:
+
+<conversation>
+{{conversation}}
+</conversation>
 
 The outline. The angle, the through-line, the section list and its order are settled; nothing later can reorder the chapter. Each section has its own job and leaves the next one its job. The closing idea is the last section's alone: no earlier section uses its wording or makes its point, though a scene it calls back to is told where the plan puts it:
 

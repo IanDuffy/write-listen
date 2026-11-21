@@ -9,6 +9,7 @@ decided here. A second editor (fast_outline_edit.md) challenges it once.
 Inputs:
 - {{seed}}: 00_source/seed.md (and notes.md), what the listener said
 - {{profile}}: listener/profile.md (if any)
+- {{conversation}}: 00_source/conversation.md, or "(none)"
 - {{notes}}: listener_notes.md so far, what they have said since the topic was set
 - {{scout}}: 01_scout.md: the territory sketch, the entries numbered D01..., the scenes
 - {{scout_numbers}}: the scout's entry numbers, the only ones that exist yet
@@ -36,6 +37,12 @@ What the listener said:
 <seed>
 {{seed}}
 </seed>
+
+A summary of earlier conversations, then the conversation that led here as the page transcribed it (the guide's lines are not the listener's):
+
+<conversation>
+{{conversation}}
+</conversation>
 
 What they have told us about themselves before, if anything:
 
@@ -68,7 +75,7 @@ Write the outline. Keep every field as short as it is asked for below: the write
 - **why**: two or three sentences: why this angle for this listener, and what it leaves out.
 - **through_line**: the one question or tension that carries the listener from the first section to the last, in one or two sentences. The opening asks it, each section after moves it on with something new, and the last answers it; no later section is planned to ask it over again. The chapter is an argument with a shape, not a tour.
 - **closing_idea**: what the last lines leave the listener with, in one or two sentences: an image or an open question that keeps working after the audio stops. It comes after the chapter's answer and does not put the through-line again in other words. It may call back to the opening scene. The chapter stands alone, so it never previews another.
-- **listener_words**: two or three of the listener's own phrases, copied exactly from what they said, for the opening to echo within its first minute, once the scene has begun. Their words only, never a paraphrase. Leave it empty if they gave only a bare topic.
+- **listener_words**: two or three of the listener's own phrases, copied exactly from what they said (the seed's said and why sections, their lines in the conversation, their notes; never the Topic, which is the guide's framing unless the seed says it is in their words and no conversation is recorded, and never the summary of earlier conversations), for the opening to echo within its first minute, once the scene has begun. Their words only, never a paraphrase. Leave it empty if they gave only a bare topic.
 
 ## The sections
 

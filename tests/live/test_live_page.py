@@ -1496,6 +1496,8 @@ def test_with_the_director_up_the_pitch_fallback_goes_late_only_in_a_lull_and_no
     director_on(p, min_gap_secs=7, fallback={"pitch_nudge_secs": [0.5, 1000]})
     p.say("I make short audio chapters, just for you. What have you been up to?")
     p.wait("L.lastGuideAt")
+    # A look is asked after the line it follows: an interest note asked before the guide's question is dropped.
+    p.page.wait_for_timeout(150)
     inject(p, "interest", note="When the shed story winds down, ask what they read.")
     p.wait(logged(p, "direct-sent", "interest"), timeout=6000)
     for _ in range(6):  # they talk past the due time: nothing (the old branch would go at once)
@@ -3440,6 +3442,158 @@ def test_the_directors_verdict(world):
     assert verdict("start", kind="now", heardAt=1200) == "drop"
     assert verdict("quiet", kind="now", listenerSpeaking=True) == "hold"
     assert verdict("quiet", kind="now") == "send"
+    # An interest question is stale once the guide's last line asked something after the look was asked (Pooja).
+    assert verdict("interest", guideAskedAt=1200) == "drop" and verdict("interest", guideAskedAt=900) == "send"
+    # The offer line that fires the offered look ends in a question at the look's own time: equal is not "since".
+    assert verdict("interest", guideAskedAt=1000) == "send"
+    assert verdict("pitch", guideAskedAt=1200) == "send"
+
+
+# --- Pooja's run (2026-11-20): one question before a thin pitch -------------------------------------------------
+
+def asks(asked, trigger):
+    return [a for a in asked if a["trigger"] == trigger]
+
+
+def test_the_earpiece_looks_once_when_the_guide_first_offers(world):
+    """Her "Sure" to "Want to hear what I do?" was under every_words and every_lines: no look ran between the offer and
+    the guide's own pitch. The guide's first line that offers to say what it does (or says it), after a listener line,
+    asks a look of its own, once a conversation; its "interest" question is sent, though the offer line itself ended
+    in a question at the very moment the look was asked (review, 2026-11-20: equal times are not "asked since")."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    note = "Once you've explained what you make, ask which bit of the table talk stuck with her."
+    asked = director_on(p, [whisper(note, about="interest")], every_lines=1000)
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt && !L.out")
+    p.hear("Hi. Mostly listening tonight.")
+    p.wait("L.lastListenerAt")
+    p.say("Want to hear what I do?")
+    p.wait(logged(p, "direct-ask", "offered"), timeout=5000)
+    for _ in range(20):  # the route's handler runs a moment after the page logs the ask
+        if asked:
+            break
+        p.page.wait_for_timeout(100)
+    assert [a["trigger"] for a in asked] == ["offered"] and asked[0]["page"]["started"] is False
+    p.wait(logged(p, "direct-sent", "interest"), timeout=4000)
+    assert any(note in x for x in instructions(p))
+    assert p.js("window.Live.L.dir.askedAt") == p.js("window.Live.L.lastGuideAt")  # the case the strict > protects
+    p.say("I make short audio chapters, just for you.")
+    p.page.wait_for_timeout(1500)
+    assert len(asks(asked, "offered")) == 1
+
+
+def test_the_offered_question_goes_despite_the_gap_after_an_offer_whisper(world):
+    """The earpiece's own offer whisper sets the gap's clock; the guide acts on it within min_gap_secs, and the offered
+    look's one question would be dropped as "gap", with the guide pitching before a later look (review, 2026-11-20).
+    It is exempt; another whisper inside the gap is still dropped."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    note = "Once you've explained what you make, ask what she'd have said if she had joined in."
+    asked = director_on(p, [whisper(note, about="interest")], every_lines=1000, min_gap_secs=20)
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt && !L.out")
+    p.hear("Politics and culture and history.")
+    p.wait("L.lastListenerAt")
+    inject(p, "offer", note="Offer to say what you make.")
+    p.wait(logged(p, "direct-sent", "offer"), timeout=4000)
+    p.say("Want to hear what I do?")
+    p.wait(logged(p, "direct-ask", "offered"), timeout=5000)
+    p.wait(logged(p, "direct-sent", "interest"), timeout=4000)
+    assert any(note in x for x in instructions(p))
+    assert p.js("Date.now() - window.Live.L.dir.sentAt") < 20000
+    inject(p, "habit", note="Tease them about the shed.")
+    p.wait(logged(p, "direct-drop", "habit"), timeout=4000)
+    fate = p.js("() => window.Live.L.dirEvents.filter((e) => e.type === 'fate' && e.fate === 'dropped').pop()")
+    assert fate["reason"] == "gap"
+
+
+def test_no_offered_look_once_a_chapter_is_started(world):
+    w = world
+    p = connect(w, greet=False, start=False)
+    asked = director_on(p, every_lines=1000)
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt && !L.out")
+    p.hear("Hi.")
+    p.wait("L.lastListenerAt")
+    p.js("() => { window.Live.L.startCalled = true; }")
+    p.say("Want to hear what I do?")
+    p.page.wait_for_timeout(1500)
+    assert not asks(asked, "offered") and p.L("L.dir.offerLook") is False
+
+
+def test_no_offered_look_before_the_listener_speaks(world):
+    """An offer line before any listener line asks nothing; it waits for a later offer line after they speak."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    asked = director_on(p, every_lines=1000)
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi! I make short audio chapters, just for you.")
+    p.page.wait_for_timeout(1500)
+    assert not asks(asked, "offered") and p.L("L.dir.offerLook") is False
+    p.hear("Oh, okay.")
+    p.wait("L.lastListenerAt")
+    p.say("Want to hear what I do?")
+    p.wait(logged(p, "direct-ask", "offered"), timeout=5000)
+
+
+def test_an_offered_look_is_kept_in_the_queue(world):
+    """With a look in flight, the offered look waits: a turn end or the cadence coming due never replaces it, so the
+    next look is the offered one; "started" still replaces it."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    routes = []
+    p.page.route("**/api/live/direct", lambda route: routes.append(route))
+    cue(p, "director", {**DIRECTOR, "timeout_ms": 20000})  # a look at every listener turn's end, held as long as needed
+    cue(p, "offer_nudge", {"after_secs": 1000, "max_secs": 1000, "offered": OFFERED})
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Hi.")
+    p.wait("L.dir.ctl", timeout=5000)  # the turn_end look, held
+    p.say("Want to hear what I do?")
+    p.wait("L.dir.queued === 'offered'", timeout=5000)
+    p.hear("Sure.")
+    p.wait("L.dir.turnOpen === false && L.lastListenerAt > L.lastGuideAt", timeout=5000)  # its turn_end came due
+    cue(p, "director", {**DIRECTOR, "timeout_ms": 20000, "every_secs": 0.3})  # and the cadence
+    p.page.wait_for_timeout(800)
+    assert p.L("L.dir.queued") == "offered" and len(routes) == 1
+    body = json.loads(routes[0].request.post_data)
+    routes[0].fulfill(status=200, content_type="application/json", body=json.dumps({"id": body["id"], **NO_CHANGE}))
+    p.wait("window.Live.L.log.filter((m) => m[1] === 'direct-ask').length >= 2", timeout=5000)
+    assert p.marks("direct-ask")[1][2] == "offered"
+    p.js("() => { window.Live.L.dir.queued = 'offered'; window.Live.L.dir.event = 'started'; }")  # a look in flight
+    p.wait("L.dir.queued === 'started'", timeout=3000)
+
+
+def test_an_interest_whisper_after_a_guide_question_is_dropped(world):
+    """The look is asked, the guide asks something before its answer comes back: an "interest" question would land on
+    top of the guide's own, so it is dropped ("moved_on"). With no guide question since, it is sent."""
+    w = world
+    p = connect(w, greet=False, start=False)
+    routes = []
+    p.page.route("**/api/live/direct", lambda route: routes.append(route))
+    cue(p, "director", {**DIRECTOR, "timeout_ms": 20000})
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Politics and culture and history.")
+    p.wait("L.dir.ctl", timeout=5000)
+    p.say("Which part of it stuck with you?")
+    p.wait("L.lastGuideAt > L.dir.askedAt && !L.out", timeout=5000)
+    body = json.loads(routes[0].request.post_data)
+    routes[0].fulfill(status=200, content_type="application/json", body=json.dumps(
+        {"id": body["id"], **whisper("Ask which bit of the table talk stuck with her.", about="interest")}))
+    p.wait(logged(p, "direct-drop", "interest"), timeout=4000)
+    fate = p.js("() => window.Live.L.dirEvents.filter((e) => e.type === 'fate' && e.fate === 'dropped').pop()")
+    assert fate["reason"] == "moved_on"
+    assert not any("table talk" in x for x in instructions(p))
+    p.say("That's lovely.")
+    p.wait("L.lastGuideLine.startsWith('That') && !L.out", timeout=5000)
+    p.page.wait_for_timeout(150)
+    inject(p, "interest", note="Ask what she would have said if she had joined in.")
+    p.wait(logged(p, "direct-sent", "interest"), timeout=4000)
 
 
 def test_no_page_note_stamp_is_left_for_the_director():
@@ -3902,6 +4056,11 @@ def test_directorWhy_names_each_drop_and_nothing_else(world):
         ({"about": "unanswered", "kind": "now", "askedAt": t}, {"sentAt": t - 1000}, "send", None),
         ({"about": "interest", "kind": "when_it_fits", "askedAt": t}, {"sentAt": t - 1000}, "drop", "gap"),
         ({"about": "interest", "kind": "when_it_fits", "askedAt": t}, {"sentAt": t - 30000}, "send", None),
+        # The offered look's question is exempt from the gap; another trigger's, or another about, is not.
+        ({"about": "interest", "kind": "when_it_fits", "askedAt": t, "trigger": "offered"}, {"sentAt": t - 1000}, "send", None),
+        ({"about": "pitch", "kind": "when_it_fits", "askedAt": t, "trigger": "offered"}, {"sentAt": t - 1000}, "drop", "gap"),
+        ({"about": "interest", "kind": "when_it_fits", "askedAt": t, "trigger": "turn_end"}, {"sentAt": t - 1000}, "drop", "gap"),
+        ({"about": "interest", "kind": "when_it_fits", "askedAt": t, "trigger": "offered"}, {"guideAskedAt": t + 5}, "drop", "moved_on"),
     ]
     for n, st, verdict, why in table:
         got = p.js("([n, t, st, C]) => [window.Live.directorVerdict(n, t, st, C), window.Live.directorWhy(n, t, st, C)]",

@@ -47,6 +47,18 @@ FILES = {
     "section_timings": "11_episode/sections",
 }
 
+NO_CONVERSATION = "(none)"  # no 00_source/conversation.md: an overnight run, a typed CLI run
+
+
+def conversation(r: Run) -> str:
+    """00_source/conversation.md (guide.save_conversation), or NO_CONVERSATION."""
+    p = r.path("conversation")
+    try:
+        return p.read_text(encoding="utf-8").strip() or NO_CONVERSATION if p.exists() else NO_CONVERSATION
+    except OSError:
+        return NO_CONVERSATION
+
+
 SCOUT_ROW = "L00"  # the scout's entries are filed as this row, so they get D numbers and the quote check
 
 LEDGER_LOCK = threading.Lock()  # ledger.json is written by research threads and by locks

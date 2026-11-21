@@ -56,6 +56,7 @@ PATHS = {
     "transcript": "00_source/transcript.txt",
     "seed": "00_source/seed.md",  # a seed run (Phase 1): the listener's topic, in place of a transcript
     "notes": "00_source/notes.md",  # what the listener added in conversation after the run started (add_note)
+    "conversation": "00_source/conversation.md",  # profile snapshot + the conversation up to start_chapter (guide.save_conversation); written once
     "scout_sources": "01_scout.sources.json",
     "decisions": "decisions.md",  # every decision an unattended run made on its own, for Ian afterwards
     "status": "status.json",  # an unattended run's progress, for the page (Phase 1 milestone 2)

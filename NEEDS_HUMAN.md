@@ -10,6 +10,13 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## After run 4 (2026-11-20): a real chapter that matches what you said
+- Use a real chapter (not rehearsal): `wl study create "Ian run 5" --name Ian`. Rehearsal still replays the heron
+  chapter, whatever you ask for.
+- Listen for: anything the chapter says you said, asked or did that you didn't (it should use your words); and, if you
+  answer briefly, whether the guide asks one specific question after explaining before it pitches.
+- The chapter's `decisions.md` lists the "you said" sentences the editors saw (`fast opening listener`, `Listener claim`).
+
 ## Rehearsal chapters (2026-11-20): testing the voices without making a chapter
 - Make your link with `wl study create "Ian run 4" --name Ian --rehearsal` (or set "Chapter: rehearsal" on the admin
   page). Asking for a chapter then replays the heron chapter at no cost: the opening is ready in about 1.5 minutes,

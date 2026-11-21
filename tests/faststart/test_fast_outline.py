@@ -351,7 +351,7 @@ def test_outline_run_writes_edits_and_files_the_outline(scouted, cfg, fake):
     assert re.search(r"^## Through-line\s*\n\s*\nWhat would it mean to build something that mends\?$", brief, re.M)
 
     decisions = r.path("decisions").read_text()
-    assert re.findall(r"^## (.+?) \(", decisions, re.M) == ["angle", "outline", "outline edit", "ledger"]
+    assert re.findall(r"^## (.+?) \(", decisions, re.M) == ["angle", "outline", "outline edit", "listener words", "ledger"]
     assert 'Chose "The harbor that heals itself".' in decisions and "Why: It answers the listener's own question" in decisions
     assert "The outline editor's changes:\n\n- Moved the lime lumps before the loss" in decisions
     assert "- L02 (section 2, missing, tier 1): Pliny saw the same thing and said so." in decisions
@@ -616,7 +616,7 @@ def test_render_brief_mid_chapter_and_with_titles_changed_at_a_lock(cfg):
 
 def test_the_outline_prompts_carry_the_house_rules(cfg):
     values = {**outline.limits(cfg), "seed": "S", "profile": "P", "notes": "N", "scout": "SC", "scout_numbers": "D01",
-              "source_tiers": "T", "outline": "{}", "problems": "None."}
+              "source_tiers": "T", "outline": "{}", "problems": "None.", "conversation": "C"}
     write, edit, repair = (load_prompt(name, **values) for name in ("fast_outline", "fast_outline_edit",
                                                                     "fast_outline_repair"))
     for text in (write, edit, repair):
@@ -638,3 +638,114 @@ def test_the_outline_prompts_carry_the_house_rules(cfg):
         assert "without padding" in text and "guess about" in text and "life, mood or feelings" in text
         assert "never a source" in text and "what the section settles" in text
     assert "Change what needs changing and leave the rest exactly as it is" in edit
+    for text in (write, edit):  # the listener's own words: the conversation, and the Topic is not theirs
+        assert "<conversation>\nC\n</conversation>" in text and "guide's framing" in text
+        # The typed marker makes the Topic theirs only with no conversation (review, 2026-11-20: a guide seed with
+        # an empty listener_said gets the same marker).
+        assert "says it is in their words and no conversation is recorded" in text
+
+
+# --- the listener's own words (alignment check before writing, 2026-11-20) -------------------------
+
+POOJA_SEED = """# Seed
+
+## Topic
+
+A story about a moment when a family's private debate echoed a bigger shift in the world.
+
+## What the listener said, in their own words
+
+Well, no, we were just discussing politics and culture and... history
+Mostly listening
+
+## Why it matters to them
+
+(not said)
+
+## Include or avoid
+
+(nothing)
+"""
+
+POOJA_TALK = ("## Earlier conversations (the guide's summary, not their words)\n(none: a first meeting)\n\n"
+              "## This conversation\nguide: Hi there.\nlistener: Hi.\nguide: What were you up to?\n"
+              "listener: Well, no, we were just discussing politics and culture and... history\n"
+              "guide: Want to hear what I do?\nlistener: Mostly listening\n")
+
+
+def test_outline_drops_listener_words_the_listener_never_said(scouted, cfg, fake):
+    r, d = scouted
+    r.path("seed").write_text(POOJA_SEED)
+    r.path("conversation").write_text(POOJA_TALK)
+    edited = an_outline(4)
+    edited["listener_words"] = ["Mostly listening", "a family's private debate"]
+    fake.script.edited = edited
+    got = outline.run(r, cfg, d)
+    assert got["listener_words"] == ["Mostly listening"]
+    assert json.loads((r.root / "05_outline.json").read_text())["listener_words"] == ["Mostly listening"]
+    decisions = r.path("decisions").read_text()
+    entry = decisions.split("## listener words (")[1].split("\n## ")[0]
+    assert "Dropped, not found word for word:\n- a family's private debate" in entry
+    assert "conversation.md, 3 listener lines" in entry and "Mostly listening" not in entry
+    assert not fake.with_phrase(REPAIR_PHRASE) and len(fake.calls) == 2  # code only: no repair call
+
+
+def test_outline_drops_the_guides_topic_when_its_seed_has_no_said(scouted, cfg, fake):
+    """The guide's start_chapter sent an empty listener_said, so the seed reads "(the topic above is in their words)"
+    as a typed seed does; with conversation.md saved, the Topic (the guide's pitch) is still not theirs."""
+    r, d = scouted
+    seed = POOJA_SEED.replace("Well, no, we were just discussing politics and culture and... history\nMostly listening",
+                              "(the topic above is in their words)")
+    r.path("seed").write_text(seed)
+    r.path("conversation").write_text(POOJA_TALK)
+    edited = an_outline(4)
+    edited["listener_words"] = ["Mostly listening", "a family's private debate"]
+    fake.script.edited = edited
+    assert outline.run(r, cfg, d)["listener_words"] == ["Mostly listening"]
+    assert "- a family's private debate" in r.path("decisions").read_text().split("## listener words (")[1]
+
+
+def test_outline_keeps_words_from_both_note_sources_and_not_the_heading(scouted, cfg, fake):
+    """The backstop's notes: notes.md's bullets (not its heading, which is the app's words) and listener_notes.md."""
+    from faststart import notes as fast_notes
+    from stages.common import load_prompt
+    r, d = scouted
+    r.path("seed").write_text(POOJA_SEED)
+    r.path("conversation").write_text(POOJA_TALK)
+    r.path("notes").write_text(load_prompt("seed_notes").strip() + "\n\n- more on the riots\n")
+    fast_notes.add(r.root, "the uncle's side of it")
+    edited = an_outline(4)
+    edited["listener_words"] = ["more on the riots", "the uncle's side of it", "after the chapter was started"]
+    fake.script.edited = edited
+    assert outline.run(r, cfg, d)["listener_words"] == ["more on the riots", "the uncle's side of it"]
+    entry = r.path("decisions").read_text().split("## listener words (")[1].split("\n## ")[0]
+    assert "2 note(s)" in entry and "- after the chapter was started" in entry
+
+
+def test_outline_keeps_typed_heron_words(scouted, cfg, fake):
+    from stages import seed
+    r, d = scouted
+    r.path("seed").unlink()
+    seed.write(r, topic="How herons hunt: standing still, then striking", said="", why="I watched herons by the river")
+    assert "(the topic above is in their words)" in r.path("seed").read_text()  # a typed seed
+    edited = an_outline(4)
+    edited["listener_words"] = ["How herons hunt", "standing still, then striking", "I watched herons by the river"]
+    fake.script.edited = edited
+    assert outline.run(r, cfg, d)["listener_words"] == edited["listener_words"]
+    entry = r.path("decisions").read_text().split("## listener words (")[1]
+    assert "All found." in entry and "no conversation saved" in entry
+
+
+def test_outline_prompts_get_the_conversation(scouted, cfg, fake):
+    r, d = scouted
+    r.path("conversation").write_text(POOJA_TALK)
+    outline.run(r, cfg, d)
+    for call in fake.calls:
+        assert "<conversation>\n" + POOJA_TALK.strip() + "\n</conversation>" in all_text(call)
+
+
+def test_outline_prompts_say_none_without_a_conversation(scouted, cfg, fake):
+    r, d = scouted
+    outline.run(r, cfg, d)
+    for call in fake.calls:
+        assert "<conversation>\n(none)\n</conversation>" in all_text(call)

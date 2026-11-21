@@ -233,6 +233,16 @@ def test_start_chapter_gives_no_time_until_a_fast_run_has_been_measured(chat):
     assert base.is_fast(Run.open(s.run, runs_dir=chat.runs))
 
 
+def test_fast_start_chapter_still_saves_the_conversation(chat):
+    """The fast hooks return early from start_chapter: the conversation is saved before that."""
+    s = chat.session()
+    s.record("guide", text="What would you like a chapter about?")
+    s.record("listener", text="I pour concrete for a living")
+    assert start(s)["started"] is True
+    saved = (chat.runs / s.run / "00_source" / "conversation.md").read_text()
+    assert saved.endswith("guide: What would you like a chapter about?\nlistener: I pour concrete for a living\n")
+
+
 def test_start_chapter_gives_the_time_to_first_audio_earlier_runs_took(chat):
     base.write_json(T.path(chat.cfg), {"medians": {"first_audio": 185.0}, "runs": []})
     assert T.estimate(chat.cfg) == 185.0

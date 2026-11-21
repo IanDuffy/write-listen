@@ -867,3 +867,67 @@
 {"t": "2026-11-20T08:24:46", "what": "tts listener line", "seconds": 2.25, "backend_tokens": null, "usd": 0.000562}
 {"t": "2026-11-20T08:25:05", "what": "tts listener line", "seconds": 3.45, "backend_tokens": null, "usd": 0.000862}
 {"t": "2026-11-20T08:25:25", "what": "gpt-live peek check", "seconds": 50.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 30745, "output": 126, "cached": 22608}, "usd": 0.051564}
+{"t": "2026-11-20T22:33:59", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.018631}
+{"t": "2026-11-20T22:34:02", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.005778}
+{"t": "2026-11-20T22:34:04", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.005768}
+{"t": "2026-11-20T22:34:07", "what": "earpiece replay pooja 108", "seconds": null, "backend_tokens": null, "usd": 0.005464}
+{"t": "2026-11-20T22:34:09", "what": "earpiece replay pooja 123", "seconds": null, "backend_tokens": null, "usd": 0.005616}
+{"t": "2026-11-20T22:34:12", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.00561}
+{"t": "2026-11-20T22:34:14", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.00573}
+{"t": "2026-11-20T22:34:17", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.0057}
+{"t": "2026-11-20T22:34:19", "what": "earpiece replay ian4 139", "seconds": null, "backend_tokens": null, "usd": 0.005752}
+{"t": "2026-11-20T22:34:22", "what": "earpiece replay ian3 69", "seconds": null, "backend_tokens": null, "usd": 0.00509}
+{"t": "2026-11-20T22:34:24", "what": "earpiece replay ian3 69", "seconds": null, "backend_tokens": null, "usd": 0.00495}
+{"t": "2026-11-20T22:34:29", "what": "earpiece replay ian3 84", "seconds": null, "backend_tokens": null, "usd": 0.00802}
+{"t": "2026-11-20T22:34:32", "what": "earpiece replay purnima 83", "seconds": null, "backend_tokens": null, "usd": 0.005276}
+{"t": "2026-11-20T22:34:34", "what": "earpiece replay purnima 131", "seconds": null, "backend_tokens": null, "usd": 0.005802}
+{"t": "2026-11-20T22:34:37", "what": "earpiece replay ian3@20261119-225121 143.5", "seconds": null, "backend_tokens": null, "usd": 0.004724}
+{"t": "2026-11-20T22:34:40", "what": "earpiece replay reserved@20261119-225121 70.5", "seconds": null, "backend_tokens": null, "usd": 0.00469}
+{"t": "2026-11-20T22:34:42", "what": "earpiece replay evening@20261120-022434 108.9", "seconds": null, "backend_tokens": null, "usd": 0.005088}
+{"t": "2026-11-20T22:34:44", "what": "earpiece replay terse@20261118-192341 34.9", "seconds": null, "backend_tokens": null, "usd": 0.0038}
+{"t": "2026-11-20T22:34:47", "what": "earpiece replay ian@20261118-193443 69.3", "seconds": null, "backend_tokens": null, "usd": 0.004636}
+{"t": "2026-11-20T22:34:50", "what": "earpiece replay builder@20261118-220431 64.7", "seconds": null, "backend_tokens": null, "usd": 0.00409}
+{"t": "2026-11-20T22:34:52", "what": "earpiece replay joker@20261116-000045 166.2", "seconds": null, "backend_tokens": null, "usd": 0.005442}
+{"t": "2026-11-20T22:35:51", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.018739}
+{"t": "2026-11-20T22:35:54", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.005639}
+{"t": "2026-11-20T22:35:57", "what": "earpiece replay pooja 93", "seconds": null, "backend_tokens": null, "usd": 0.005639}
+{"t": "2026-11-20T22:36:00", "what": "earpiece replay pooja 108", "seconds": null, "backend_tokens": null, "usd": 0.005619}
+{"t": "2026-11-20T22:36:02", "what": "earpiece replay pooja 123", "seconds": null, "backend_tokens": null, "usd": 0.005851}
+{"t": "2026-11-20T22:36:04", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.005641}
+{"t": "2026-11-20T22:36:07", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.005681}
+{"t": "2026-11-20T22:36:09", "what": "earpiece replay ian4 131", "seconds": null, "backend_tokens": null, "usd": 0.005651}
+{"t": "2026-11-20T22:36:11", "what": "earpiece replay ian4 139", "seconds": null, "backend_tokens": null, "usd": 0.005773}
+{"t": "2026-11-20T22:36:14", "what": "earpiece replay ian3 69", "seconds": null, "backend_tokens": null, "usd": 0.005051}
+{"t": "2026-11-20T22:36:16", "what": "earpiece replay ian3 69", "seconds": null, "backend_tokens": null, "usd": 0.005001}
+{"t": "2026-11-20T22:36:19", "what": "earpiece replay ian3 84", "seconds": null, "backend_tokens": null, "usd": 0.005091}
+{"t": "2026-11-20T22:36:21", "what": "earpiece replay purnima 83", "seconds": null, "backend_tokens": null, "usd": 0.005187}
+{"t": "2026-11-20T22:36:24", "what": "earpiece replay purnima 131", "seconds": null, "backend_tokens": null, "usd": 0.006223}
+{"t": "2026-11-20T22:36:27", "what": "earpiece replay ian3@20261119-225121 143.5", "seconds": null, "backend_tokens": null, "usd": 0.004725}
+{"t": "2026-11-20T22:36:38", "what": "earpiece replay reserved@20261119-225121 70.5", "seconds": null, "backend_tokens": null, "usd": 0.004181}
+{"t": "2026-11-20T22:36:41", "what": "earpiece replay evening@20261120-022434 108.9", "seconds": null, "backend_tokens": null, "usd": 0.004999}
+{"t": "2026-11-20T22:36:43", "what": "earpiece replay terse@20261118-192341 34.9", "seconds": null, "backend_tokens": null, "usd": 0.003791}
+{"t": "2026-11-20T22:36:45", "what": "earpiece replay ian@20261118-193443 69.3", "seconds": null, "backend_tokens": null, "usd": 0.004747}
+{"t": "2026-11-20T22:36:48", "what": "earpiece replay builder@20261118-220431 64.7", "seconds": null, "backend_tokens": null, "usd": 0.004121}
+{"t": "2026-11-20T22:36:50", "what": "earpiece replay joker@20261116-000045 166.2", "seconds": null, "backend_tokens": null, "usd": 0.005303}
+{"t": "2026-11-20T23:12:26", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001312}
+{"t": "2026-11-20T23:12:35", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.016599}
+{"t": "2026-11-20T23:12:46", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001536}
+{"t": "2026-11-20T23:12:47", "what": "tts listener line", "seconds": 4.8, "backend_tokens": null, "usd": 0.0012}
+{"t": "2026-11-20T23:12:50", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.004089}
+{"t": "2026-11-20T23:13:07", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.0017}
+{"t": "2026-11-20T23:13:07", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.004235}
+{"t": "2026-11-20T23:13:09", "what": "tts listener line", "seconds": 7.05, "backend_tokens": null, "usd": 0.001762}
+{"t": "2026-11-20T23:13:20", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.004399}
+{"t": "2026-11-20T23:13:26", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.001654}
+{"t": "2026-11-20T23:13:27", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.005071}
+{"t": "2026-11-20T23:13:41", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.005073}
+{"t": "2026-11-20T23:13:51", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002006}
+{"t": "2026-11-20T23:13:53", "what": "tts listener line", "seconds": 6.4, "backend_tokens": null, "usd": 0.0016}
+{"t": "2026-11-20T23:13:56", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.005093}
+{"t": "2026-11-20T23:14:03", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.004901}
+{"t": "2026-11-20T23:14:27", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002208}
+{"t": "2026-11-20T23:14:28", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.005183}
+{"t": "2026-11-20T23:14:40", "what": "claude director", "seconds": null, "backend_tokens": null, "usd": 0.005787}
+{"t": "2026-11-20T23:14:56", "what": "claude live_listener reserved", "seconds": null, "backend_tokens": null, "usd": 0.002436}
+{"t": "2026-11-20T23:14:58", "what": "tts listener line", "seconds": 4.15, "backend_tokens": null, "usd": 0.001038}
+{"t": "2026-11-20T23:15:09", "what": "gpt-live persona reserved", "seconds": 168.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 15922, "output": 85, "cached": 7769}, "usd": 0.148966}

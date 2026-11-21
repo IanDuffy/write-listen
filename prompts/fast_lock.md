@@ -14,6 +14,7 @@ Inputs:
 - {{note_entries}}: the dossier entries that answer a listener's note, each under its note
   (faststart/research.py note_answers), or "(none)"
 - {{target_words}}: section n's length
+- {{listener_claims}}: the draft's sentences about what the listener said, asked, saw or wants (faststart/checks.py listener_claims), or "(none)"
 
 Output: JSON per faststart/sections.py SCHEMA, one shape for every mode: text, next_text,
 moved, rows, cut, title, corrections. The mode's fragment says what next_text and moved hold.
@@ -65,6 +66,13 @@ Dossier entries that answer something the listener said, each under the note it 
 {{note_entries}}
 </note_entries>
 
+
+The sentences in the draft that say what the listener said, asked, saw, did or want, as code found them (it may miss some, or list a callback that is fine):
+
+<listener_claims>
+{{listener_claims}}
+</listener_claims>
+
 Read section {{n}} as the listener would, straight after the sections above, then as a fact-checker, sentence by sentence.
 
 As a listener:
@@ -86,6 +94,7 @@ As a fact-checker, for every sentence that says something about the world or abo
 - Every direct quote is the exact words of an entry marked verbatim: yes, attributed aloud before it begins. A quote from any other entry becomes a paraphrase without quotation marks.
 - Where you know a source says otherwise than the draft, cut or soften the sentence. Never add a fact the entries do not contain.
 - Corrections (rule 11). Compare the entries with what the sections above told the listener. Where an entry contradicts something already narrated and this section touches it, the section says so once, plainly, in the first person, and carries on with the corrected fact. List each in "corrections".
+- What the listener said, for those listed above and any other: A sentence that says what the listener said, asked, saw, did or wants stands on their own words: their lines in the conversation, the seed's said and why sections, or a note; or on the summary of earlier conversations, which may carry a claim but never a quotation. The Topic is the guide's framing, not theirs, unless the seed says it is in their words and no conversation is recorded. One that does not match is reworded to what they did say, keeping the tie to them and every [Dn] marker it had; cut it only when nothing they said supports it. A detail about them they did not give is a claim too: when or where something happened ("today", "this morning"), who was there. Generic "you" ("if you stand by a river") and callbacks to what this chapter or an earlier one told them ("as you heard a moment ago", "in the last chapter") are not claims about them: leave them. A cut goes in "cut" with the reason "not what the listener said".
 
 Change what needs changing and nothing else: where the draft is right, keep its words. Keep section {{n}} within about 15% of {{target_words}} words. A section whose rows came back thin may stay short; never lengthen it with anything that is not new to the listener.
 

@@ -691,6 +691,39 @@ to tease what's being written". Code: `faststart/rehearsal.py`, `faststart/peek.
   typed guide (prompts/guide.md) tease one thing from it in their own words, never the step or the ending. Live check: asked
   "how's it coming along?" the guide said it was "digging into ... how water makes a fish seem somewhere it's not".
 
+## After Ian's fourth tester run (2026-11-20, feature/tester-demo)
+
+Ian, after run 4 and Pooja's run: the chapter "told a different story" and, asked why, gave a reason "about something I
+didn't say"; with Pooja, who was less taken, the pitch came too soon. He chose two fixes (3 and 4 below). Two others
+were declined for now: a note or rule against the guide saying "you said" ("I like the direct connection ... I'll see
+if that really bothers people") and an earpiece-written brief ("the other chapters were produced just fine before").
+Run 4's invented "You said you watched herons by the river" came from the rehearsal replay, which item 3 can't touch.
+- **3. The chapter is checked against what the listener said** (fast runs; no new call or step). `start_chapter` saves
+  `00_source/conversation.md` once (`guide.save_conversation`: a profile snapshot, then only guide and listener lines,
+  guide lines cut first; never overwritten, so a continued run keeps the first). It reaches every writing call through
+  `fast_context.md` (cached) and both outline calls, with one rule: a sentence about what they said, asked, saw, did or
+  want, or when, where or with whom, stands on their own words (their lines, the seed's said and why, notes; the
+  profile summary may back a claim, never a quotation); the Topic is the guide's framing unless the seed says it is
+  theirs and no conversation is saved; a miss is reworded, cut only when nothing supports it; generic "you" and
+  callbacks are left. `checks.listener_claims` (a pattern, corpus-checked on every saved section) lists such sentences
+  for the opening edit and the lock (`{{listener_claims}}`), recorded in decisions.md and the lock's `listener` field;
+  they never feed `problems` or the fix call. `outline._keep_own_words` drops a `listener_words` entry not found in the
+  seed, conversation or notes. `sections._said` counts the conversation's listener lines as their own words.
+- **4. One question before a thin pitch** (`prompts/live_director.md`). When nothing has lit them up (short answers,
+  no doubt or opinion of their own), the earpiece whispers one specific question, from what they said, for after the
+  guide explains what it does; then the pitch or an offer to pick. A new trigger `offered` looks once at the guide's
+  first offer or explanation after a listener line (a "Sure" was too short for `turn_end`); `{{longest}}` gives it the
+  listener's longest line. That question skips `min_gap_secs`; an `interest` note goes stale once the guide has asked
+  something since (fate `moved_on`). Mirrored in `persona.Earpiece`.
+- **Live (2026-11-20):** two real builds from the saved conversations ($1.98 Pooja, $2.11 Ian's run 4; seed to first
+  audio 3:02 and 3:06): no invented claims about the listener; the outline edit cut Pooja's "argued" (she said
+  "discussed"); left: "Ian asked" in the outline's why (he described, not asked; never read aloud), and three lines
+  calling the park visit "today" (he drove down today, the park was not said), which led to the when/where clause. No
+  lock had a claim to fix, so the lock's rewording is untested live. Replayed on saved moments ($0.25): Pooja, Purnima
+  and a reserved persona get the question; Ian's runs 3 and 4 get nothing. One persona run (reserved, $0.23): the
+  whisper went at 1:06 on `offered`, the guide asked it after explaining ("what's the part that sticks with you?"),
+  then pitched on her answer. Not heard by Ian.
+
 ## Local setup
 
 ```bash

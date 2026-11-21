@@ -5,6 +5,7 @@ and 8 (what is locked passes the code checks, by a fix call or by repair)."""
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import fast_sections_fakes as F
@@ -14,6 +15,8 @@ from fakes import all_text
 from faststart import base, checks, sections
 from faststart.sections import Ctx, Lock
 from stages.common import StageError, load_prompt
+
+ROOT = Path(__file__).resolve().parents[2]
 
 CACHE = {"type": "ephemeral"}
 NOTES = [{"time": "t1", "section": 0, "kind": "connection", "text": "My grandfather built sea walls in Cork."},
@@ -100,9 +103,11 @@ def test_the_opening_edit_locks_section_one(ctx, fake):
     assert call["system"] == fake.of("opening")[0]["system"]  # one system prompt, cached once
     assert F.FILLER in draft and F.FILLER not in final
     assert sections.locked_text(ctx.r, 1) == final
-    assert sections.saved_lock(ctx.r, 1) == Lock(n=1, mode="opening", text=final)
+    claim = "You pour concrete for a living, and you asked why theirs lasted when ours cracks in thirty years."
+    assert sections.saved_lock(ctx.r, 1) == Lock(n=1, mode="opening", text=final, listener=[f'kept: "{claim}"'])
     assert checks.section_problems(final, ctx.dossier.text(), {1, 2, 3, 4}) == []
-    assert not fake.of("fix") and decisions(ctx.r) == ""
+    # The only entry: the sentence about what the listener asked, as the editor left it (no code problems).
+    assert not fake.of("fix") and re.findall(r"^## (.+?) \(", decisions(ctx.r), re.M) == ["fast opening listener"]
     assert sections.edit_opening(ctx, draft, NOTES) == final and len(fake.calls) == 2  # resumed
 
 
@@ -614,7 +619,8 @@ def test_the_listeners_own_words_in_quotation_marks_cost_no_fix_call(ctx, fake):
     assert echo != F.without_filler(draft)
     fake.on("opening_edit", lambda kw: echo)
     assert sections.edit_opening(ctx, draft, []) == echo
-    assert not fake.of("fix") and decisions(ctx.r) == "" and sections.saved_lock(ctx.r, 1).problems == []
+    assert not fake.of("fix") and "## fast opening (" not in decisions(ctx.r)
+    assert sections.saved_lock(ctx.r, 1).problems == []
     # In a lock too, from the seed and from a note; words nobody said still get the fix round.
     d2, d3 = pair()
     said = d2 + ' You said yours "cracks in thirty years," and that your "grandfather built sea walls in Cork."'
@@ -683,3 +689,116 @@ def test_the_prompts_carry_the_rules_the_review_found_missing(ctx):
     fix = body("fast_fix")
     assert "there is no cut list" in fix and "took the marker off" in fix
     assert fix.index("removed the passage on purpose") < fix.index("Put it back")
+
+
+# --- what the chapter says about the listener (alignment check before writing, 2026-11-20) ----------
+
+TALK = ("## Earlier conversations (the guide's summary, not their words)\n- Pours concrete.\n\n"
+        "## This conversation\nguide: What would you like?\nlistener: Why does ours crack so fast?\n")
+HERON_CLAIM = "You said you watched herons by the river."
+
+
+def test_the_system_prompt_carries_the_conversation(ctx, fake):
+    from overnight import write as overnight_write
+    ctx.r.path("conversation").write_text(TALK)
+    draft = sections.write_opening(ctx, [])
+    sections.edit_opening(ctx, draft, [])
+    d2, d3 = pair()
+    sections.lock(ctx, 2, d2, d3, [(1, "LOCKED ONE.")], [], "paired")
+    systems = [c["system"] for c in fake.of("opening") + fake.of("opening_edit") + fake.of("lock")]
+    assert len(systems) == 3 and systems[0] == systems[1] == systems[2]
+    text = systems[0][0]["text"] if isinstance(systems[0], list) else systems[0]
+    assert "<conversation>\n" + TALK.strip() + "\n</conversation>" in text and "guide's framing" in text
+    assert "says it is in their words and no conversation is recorded" in text
+    for name in ("fast_opening_edit", "fast_lock"):  # the same rule in both editors (review, 2026-11-20)
+        assert "says it is in their words and no conversation is recorded" in (ROOT / "prompts" / f"{name}.md").read_text()
+    night = Ctx(r=ctx.r, cfg=ctx.cfg, outline=ctx.outline, led=ctx.led, dossier=ctx.dossier,
+                prompts=overnight_write.PROMPTS)
+    assert "<conversation>" not in sections.system_prompt(night)
+
+
+def test_the_opening_edit_lists_claims_and_records_them(ctx, fake):
+    draft = F.opening_text([1, 2]).replace("[D01]", f"[D01]\n\n{HERON_CLAIM[:-1]} [D01].")
+    fake.on("opening_edit", lambda kw: F.without_filler(F.tag(F.last_block(kw), "draft")).replace(
+        f"\n\n{HERON_CLAIM[:-1]} [D01].", ""))
+    final = sections.edit_opening(ctx, draft, [])
+    assert HERON_CLAIM not in final
+    claims = F.tag(F.last_block(fake.of("opening_edit")[0]), "listener_claims")
+    assert f"- {HERON_CLAIM}" in claims.splitlines() and "[D01]" not in claims
+    entry = decisions(ctx.r).split("## fast opening listener (")[1]
+    assert f'changed or cut: "{HERON_CLAIM}"' in entry and "kept: " in entry
+    assert f'changed or cut: "{HERON_CLAIM}"' in sections.saved_lock(ctx.r, 1).listener
+
+
+def test_the_opening_edit_adds_no_call(ctx, fake):
+    draft = F.opening_text([1, 2]).replace("[D01]", f"[D01]\n\n{HERON_CLAIM[:-1]} [D01].")
+    sections.edit_opening(ctx, draft, [])
+    assert [F.kind(c)[0] for c in fake.calls] == ["opening_edit"]
+    sections.edit_opening(ctx, draft, [])
+    assert len(fake.calls) == 1
+
+
+def test_the_lock_lists_claims_and_records_them(ctx, fake):
+    d2, d3 = pair()
+    claim = "You asked about the gray heron."
+    mine = d2 + f" {claim[:-1]} [D05]."
+    fake.on("lock", lambda kw: F.lock_reply(kw, text=d2, cut=[{"text": claim, "reason": "not what the listener said"}]),
+            2)
+    got = sections.lock(ctx, 2, mine, d3, [(1, "LOCKED ONE.")], [], "paired")
+    assert F.tag(F.last_block(fake.of("lock", 2)[0]), "listener_claims") == f"- {claim}"
+    assert got.listener == [f'changed or cut: "{claim}"'] and not fake.of("fix")
+    text = sections.decision_text(got)
+    assert f'- Listener claim changed or cut: "{claim}"' in text and f"- Cut: {claim} (not what" in text
+    # Kept as it was: recorded as kept. A draft with no claim reads "(none)" and records nothing.
+    fake.on("lock", lambda kw: F.lock_reply(kw, text=F.tag(F.last_block(kw), "draft", 'n="3"')), 3)
+    d4 = F.without_filler(F.section_text(4, [9, 10]))
+    kept = sections.lock(ctx, 3, d3.replace(MOVED, f"{claim[:-1]} [D07]."), d4, [(1, "ONE."), (2, d2)], [], "paired")
+    assert f'- Listener claim kept: "{claim}"' in sections.decision_text(kept)
+    fake.on("lock", lambda kw: F.lock_reply(kw, text=d4), 4)
+    none = sections.lock(ctx, 4, d4, F.section_text(5, [11]), [(1, "ONE."), (2, d2), (3, d3)], [], "paired")
+    assert F.tag(F.last_block(fake.of("lock", 4)[0]), "listener_claims") == "(none)" and none.listener == []
+
+
+def test_a_new_claim_in_the_lock_is_logged_not_fixed(ctx, fake):
+    d2, d3 = pair()
+    added = "You wanted the short version."
+    fake.on("lock", lambda kw: F.lock_reply(kw, text=d2 + f" {added}"), 2)
+    got = sections.lock(ctx, 2, d2, d3, [(1, "LOCKED ONE.")], [], "paired")
+    assert not fake.of("fix") and added in got.text
+    assert got.listener == [f'new in the edit, not checked again: "{added}"']
+
+
+def test_a_quoted_line_of_theirs_from_the_conversation_is_their_own_words(ctx, fake):
+    """sections._said takes the conversation's listener lines: an opening quoting one is echoing them, not quoting
+    an unbacked source, so no fix call and the marks stay (review, 2026-11-20)."""
+    ctx.r.path("conversation").write_text(TALK)
+    quoted = 'You asked "Why does ours crack so fast?"'
+    fake.on("opening_edit", lambda kw: F.without_filler(F.tag(F.last_block(kw), "draft")) + "\n\n" + quoted)
+    final = sections.edit_opening(ctx, F.opening_text([1, 2]), [])
+    assert quoted in final and not fake.of("fix") and len(fake.calls) == 1
+    assert sections.saved_lock(ctx.r, 1).problems == []
+
+
+@pytest.mark.parametrize("line", ["What would you like to hear about tonight?", "Pours concrete for a living, every day."])
+def test_the_guides_line_or_the_summary_quoted_is_still_unbacked(ctx, fake, line):
+    """Only their lines count: the guide's line, or the summary of earlier conversations, in quotation marks as the
+    listener's is still an unbacked quotation (a fix call, then the marks come off)."""
+    ctx.r.path("conversation").write_text(
+        "## Earlier conversations (the guide's summary, not their words)\n- Pours concrete for a living, every day.\n\n"
+        "## This conversation\nguide: What would you like to hear about tonight?\nlistener: Why does ours crack so fast?\n")
+    quoted = f'You said "{line}"'
+    fake.on("opening_edit", lambda kw: F.without_filler(F.tag(F.last_block(kw), "draft")) + "\n\n" + quoted)
+    final = sections.edit_opening(ctx, F.opening_text([1, 2]), [])
+    assert len(fake.of("fix", 1)) == 1  # the one fix call
+    assert f'"{line}"' not in final and f"You said {line}" in final
+    assert sections.saved_lock(ctx.r, 1).problems
+
+
+def test_a_dropped_phrase_quoted_by_the_opening_loses_its_marks(ctx, fake):
+    """The outline's backstop dropped "a family's private debate"; an opening that still quotes it as the
+    listener's has the marks taken off by the quote repair (it is in no entry, the seed or the conversation)."""
+    ctx.r.path("conversation").write_text(TALK)
+    quoted = 'You wanted "a family\'s private debate" in the story.'
+    fake.on("opening_edit", lambda kw: F.without_filler(F.tag(F.last_block(kw), "draft")) + "\n\n" + quoted)
+    final = sections.edit_opening(ctx, F.opening_text([1, 2]), [])
+    assert "You wanted a family's private debate in the story." in final and '"a family' not in final

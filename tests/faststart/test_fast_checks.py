@@ -346,3 +346,138 @@ def test_which_problems_are_a_loss():
     assert checks.is_loss("the revised draft of the next section came back empty")
     assert not checks.is_loss("cites D99, which is not in the dossier")
     assert not checks.is_loss("a sentence appears in both sections; keep it in one place only: \"x\"")
+
+
+# --- what the chapter says about the listener (alignment check before writing, 2026-11-20) ----------
+
+# The seven sentences of the heron rehearsal chapter that claim what the listener said or watched
+# (shared/rehearsal/2026-11-14-herons-hunt-standing-still/09_script_final.md), in a section's form.
+HERON = """This chapter grows from what you asked about: standing still, then striking. [D01] You said you watched herons by the river. So here is the question we're chasing.
+
+But you said you've only ever seen gray herons here. [D02] And the heron you watched by the river was not, as far as you saw, laying bait or spreading its wings into a roof. [D03]
+
+[pause]
+
+The heron you watched stood still, and this is a movement. [D75] To get at that, start with the heron you watched, and how usual a bird it is. [D30, D31] That is the standing you watched, written down as a tally. [D35]"""
+
+HERON_CLAIMS = [
+    "This chapter grows from what you asked about: standing still, then striking.",
+    "You said you watched herons by the river.",
+    "But you said you've only ever seen gray herons here.",
+    "And the heron you watched by the river was not, as far as you saw, laying bait or spreading its wings into a roof.",
+    "The heron you watched stood still, and this is a movement.",
+    "To get at that, start with the heron you watched, and how usual a bird it is.",
+    "That is the standing you watched, written down as a tally.",
+]
+
+HERON_SEED = """# Seed
+
+## Topic
+
+How herons hunt: standing still, then striking
+
+## What the listener said, in their own words
+
+(the topic above is in their words)
+
+## Why it matters to them
+
+I watched herons by the river
+
+## Include or avoid
+
+(nothing)
+"""
+
+POOJA_SEED = """# Seed
+
+## Topic
+
+A story about a moment when a family's private debate echoed a bigger shift in the world.
+
+## What the listener said, in their own words
+
+Well, no, we were just discussing politics and culture and... history
+Mostly listening
+
+## Why it matters to them
+
+(not said)
+
+## Include or avoid
+
+(nothing)
+"""
+
+
+def test_listener_claims_finds_the_heron_lines():
+    assert checks.listener_claims(HERON) == HERON_CLAIMS
+
+
+@pytest.mark.parametrize("text", [
+    "If you stand by a river at dawn, you can see herons [D03].",
+    "Have you ever wondered?",
+    "If you watched a heron, you would see it wait.",
+    "the Victorian scholar whose summary of Diotima you heard a moment ago",
+    "Once you have seen true beauty, she tells him",
+    "Then she points out something you've seen a hundred times",
+    "You heard in the last chapter how the new Millennium footbridge swayed",
+    "If you are curious, the paper is online.",
+    "Would you have picked the same?",
+    "If you thought about it, the answer was there all along.",
+])
+def test_listener_claims_skips_generic_you_and_callbacks(text):
+    assert checks.listener_claims(text) == []
+
+
+@pytest.mark.parametrize("text", [
+    "You asked for a story about a family debate.",
+    "You were just in one of those big table talks.",
+    "Earlier, when you told me about the trail, the river was high.",
+    # Phrasings the first pattern missed (review, 2026-11-20); none matches the locked sections on disk.
+    "You were telling me about the trail.",
+    "You've been sitting at those big table talks.",
+    "You're curious how a family's private debate echoes a bigger shift.",
+    "You picked the second idea.",
+    "The question you put to me was simple.",
+    # Missed in the live builds (2026-11-20): an adverb after "were", and "thought about".
+    "This chapter grows from an evening around a table, where you were mostly listening.",
+    "It is where you thought about how a place can bring you back like that.",
+])
+def test_listener_claims_finds_real_claims(text):
+    assert checks.listener_claims(text) == [text]
+
+
+def test_listener_source_takes_the_topic_only_when_typed():
+    heron = checks.listener_source(HERON_SEED, "", [])
+    assert checks.own_words("standing still, then striking", heron)
+    assert checks.own_words("I watched herons by the river", heron)
+    pooja = checks.listener_source(POOJA_SEED, "", [])
+    assert not checks.own_words("a family's private debate", pooja)  # the guide's pitch, in the Topic
+    assert checks.own_words("Mostly listening", pooja) and not checks.own_words("not said", pooja)
+    conv = ("## Earlier conversations (the guide's summary, not their words)\n- Loves the bit about my aunt.\n\n"
+            "## This conversation\nguide: Want to hear what I do?\nlistener: The bit about my uncle")
+    both = checks.listener_source(POOJA_SEED, conv, ["more on the riots"])
+    assert checks.own_words("The bit about my uncle", both) and checks.own_words("more on the riots", both)
+    assert not checks.own_words("Want to hear what I do", both) and not checks.own_words("my aunt", both)
+
+
+def test_a_guide_seed_with_no_said_never_makes_the_topic_theirs():
+    """A guide's start_chapter with an empty listener_said gets the typed seed's marker (stages/seed.py), so the Topic,
+    the guide's own pitch, read as the listener's words (review, 2026-11-20). With a conversation saved the marker is
+    not trusted: only their lines count. With none (a typed CLI seed) the Topic is still theirs."""
+    seed = POOJA_SEED.replace("Well, no, we were just discussing politics and culture and... history\nMostly listening",
+                              checks.TYPED)
+    conv = "## This conversation\nguide: Want to hear what I do?\nlistener: Mostly listening"
+    src = checks.listener_source(seed, conv, [])
+    assert not checks.own_words("a family's private debate", src) and checks.own_words("Mostly listening", src)
+    assert checks.own_words("a family's private debate", checks.listener_source(seed, "", []))
+    assert checks.own_words("a family's private debate", checks.listener_source(seed, "(none)", []))
+
+
+def test_claim_record():
+    a, b, c = "You asked about herons.", "You said you watched them.", "You wanted the short version."
+    assert checks.claim_record([a, b], [a, c]) == [
+        'kept: "You asked about herons."', 'changed or cut: "You said you watched them."',
+        'new in the edit, not checked again: "You wanted the short version."']
+    assert checks.claim_record([], []) == []

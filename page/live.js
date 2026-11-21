@@ -42,6 +42,8 @@
   const LEAD_IN = new RegExp(S.lead_in, "i");
   const READY_ASK = new RegExp(S.ready_ask, "i");           // the listener asking for the ready chapter outright
   const EXPLAINED = new RegExp(S.explained || "$^", "i");   // the guide telling them what it does (holds the pitch nudge)
+  // The guide offering to say what it does (live.page.offer_nudge.offered), read when asked: S can change after load.
+  const offersWhat = (text) => { const o = (S.offer_nudge || {}).offered; return !!(o && new RegExp(o, "i").test(text || "")); };
   const MIC_OFF = new RegExp(S.mic_off_ask, "i");           // "turn off your mic": then only a tap wakes it
   const STALL = new RegExp(S.stall, "i");
   const DECLINE = /^\W*(no|nope|nah|okay|ok|sure|thanks|thank you|sounds good|go ahead|i'?m good|all good|perfect|great|not really|that'?s fine)\b/i;                   // "Let me give that a thought": not an answer (the whole line)
@@ -403,7 +405,7 @@
     L.handoffOpen = null; L.handingBack = null;
     if (L.dir && L.dir.ctl) L.dir.ctl.abort();
     L.dir = { fails: 0, down: false, ctl: null, id: 0, next: null, lines: 0, askedAt: 0, event: null, queued: null,
-              turnOpen: false, silenceIx: 0, sentAt: 0, offered: false };
+              turnOpen: false, silenceIx: 0, sentAt: 0, offered: false, offerLook: false };
     L.recent = [];
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
@@ -569,6 +571,14 @@
         dirEmit("line", { who: "guide", text, began: L.lineAt || t });
         guideSaid(text, t, L.lineAt || t);
         if (!L.explainedAt && EXPLAINED.test(text)) L.explainedAt = t;  // the pitch nudge waits for these (conversationCues)
+        // The earpiece looks once when the guide first offers to say what it does, or says it, after the listener has
+        // spoken: the pitch is coming, and a one-word "sure" is under every_words (Pooja, 2026-11-20: no look between
+        // the offer and the guide's own pitch). Before any listener line it waits for a later offer line.
+        if (L.dir && !L.dir.offerLook && L.lastListenerAt && !(L.own || L.startCalled)
+            && (offersWhat(text) || EXPLAINED.test(text))) {
+          L.dir.offerLook = true;
+          if (!L.dir.event) L.dir.event = "offered";
+        }
         if (text.includes("?")) L.askedAt = t;
         // A promise to start never counts in a line that asks (a pitch or an offer: the listener hasn't agreed
         // yet), and is dropped once the guide asks something else.
@@ -773,6 +783,7 @@
   //   turn_end  when a listener turn ends (no line of theirs for engaged_merge_ms) that had every_words words, or
   //             with every_lines new lines since the last look;
   //   started   once after the started note;
+  //   offered   once, when the guide first offers to say what it does or says it, after a listener line;
   //   silence   once a stretch, after silence_secs with nobody speaking.
   // One look in flight; a newer trigger waits for it (never an abort: it would throw the analysis away). Asked in
   // conversation only (before a chapter starts, and while it is made: company), never while reading, in an aside or
@@ -907,7 +918,7 @@
   function directorTick(t) {
     const D = L.dir;
     const due = directorDue(t);
-    if (due && (!D.queued || D.queued !== "started")) D.queued = due;  // the newest waits; "started" is never lost
+    if (due && D.queued !== "started" && (D.queued !== "offered" || due === "started")) D.queued = due;  // started, then offered, are never lost
     if (D.ctl || !D.queued) return;  // one look in flight
     const trigger = D.queued;
     D.queued = null;
@@ -933,12 +944,12 @@
     fetch("/api/live/direct", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
                                 signal: ctl.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t, sess); } })
+      .then((got) => { if (L.dir === D && D.id === id) { D.ctl = null; directorGot(got, t, sess, trigger); } })
       .catch((e) => { if (L.dir === D && D.id === id) { D.ctl = null; directorFailed(String(e && e.message || e), id, sess); } })
       .finally(() => clearTimeout(timer));
   }
 
-  function directorGot(got, askedAt, sess = L.session) {
+  function directorGot(got, askedAt, sess = L.session, trigger = null) {
     dirEmit("look", { id: got && got.id, got, session: sess });
     const D = L.dir;
     if (!got || got.error) return directorFailed((got && got.error) || "no answer", got && got.id, sess);
@@ -948,7 +959,7 @@
     if (got.changed && got.note) {
       if (D.next) dirFate(D.next, "dropped", "replaced");
       D.next = { id: got.id, kind: got.kind || "when_it_fits", about: got.about || null, note: got.note, askedAt, at: now(),
-                 session: sess };
+                 session: sess, trigger };
     }
   }
 
@@ -968,17 +979,20 @@
   // once, even while they talk (it is worded for its moment, and GPT-Live never reads an instruction aloud), unless it
   // is within min_gap_secs of the last whisper (other page notes don't count). A "now" whisper (a clear yes not acted
   // on, quiet asked for and not given) is exempt from the gap, but is dropped if the listener has spoken since the
-  // look was asked for (the moment has moved), and held while they are mid-utterance. After the start the offer,
-  // the pitch, an interest question or a start are stale; an offer is stale once the guide has said what it does.
+  // look was asked for (the moment has moved), and held while they are mid-utterance. The offered look's interest
+  // question is exempt from the gap too (dirOfferQuestion). After the start the offer,
+  // the pitch, an interest question or a start are stale; an offer is stale once the guide has said what it does; an
+  // interest question is stale once the guide has asked something since the look was asked (Pooja, 2026-11-20).
   function directorVerdict(n, t, st, C) {
     if (!st.here) return "drop";
     if (st.started && ["offer", "pitch", "interest", "start"].includes(n.about)) return "drop";
     if (n.about === "offer" && (st.explained || st.offered)) return "drop";
+    if (n.about === "interest" && st.guideAskedAt > n.askedAt) return "drop";  // the guide asked something since the look
     if (n.kind === "now") {
       if (st.heardAt > n.askedAt) return "drop";
       return st.listenerSpeaking ? "hold" : "send";
     }
-    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000) return "drop";
+    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000 && !dirOfferQuestion(n)) return "drop";
     return "send";
   }
   // Why directorVerdict drops a whisper, in its order (null exactly when it doesn't): for the panel and the history.
@@ -986,9 +1000,15 @@
     if (!st.here) return "not_here";
     if (st.started && ["offer", "pitch", "interest", "start"].includes(n.about)) return "stale_after_start";
     if (n.about === "offer" && (st.explained || st.offered)) return "explained";
+    if (n.about === "interest" && st.guideAskedAt > n.askedAt) return "moved_on";
     if (n.kind === "now") return st.heardAt > n.askedAt ? "listener_spoke" : null;
-    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000) return "gap";
+    if (st.sentAt && t - st.sentAt < (C.min_gap_secs || 0) * 1000 && !dirOfferQuestion(n)) return "gap";
     return null;
+  }
+  // The offered look's one question goes despite the gap: the earpiece's own offer whisper is often the last one,
+  // and the guide would pitch before a later look could ask again (review, 2026-11-20).
+  function dirOfferQuestion(n) {
+    return n.trigger === "offered" && n.about === "interest";
   }
 
   function directorDeliver(t) {
@@ -998,6 +1018,7 @@
       here: dirHere(), heardAt: L.heardAt, listenerSpeaking: dirSpeaking(t) === "listener", sentAt: D.sentAt,
       explained: !!L.explainedAt, started: !!(L.own || L.startCalled),
       offered: D.offered || !!(O.offered && new RegExp(O.offered, "i").test(L.lastGuideLine || "")),
+      guideAskedAt: /\?\s*$/.test(L.lastGuideLine || "") ? L.lastGuideAt : 0,
     };
     const verdict = directorVerdict(n, t, st, C);
     if (verdict === "hold") {

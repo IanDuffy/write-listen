@@ -93,7 +93,7 @@ class Line(BaseModel):
 class Direct(BaseModel):
     session: str
     id: int = 0                   # the page's look number (it echoes back; one look in flight at a time)
-    trigger: str = "cadence"      # cadence, turn_end, silence or started (live.director; director.TRIGGERS)
+    trigger: str = "cadence"      # cadence, turn_end, silence, started or offered (live.director; director.TRIGGERS)
     speaking: str = "none"        # who is speaking right now, from the page's audio: listener, guide or none
     silence_ms: float = 0         # since the last line ended
     last_who: str | None = None   # whose line ended last: guide or listener

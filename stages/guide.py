@@ -134,6 +134,56 @@ def earlier_text(transcript: Path, limit: int = EARLIER_CHARS) -> str:
     return text or NO_EARLIER
 
 
+CONVERSATION_PROFILE_CHARS = 3000
+CUT_MARK = "(some earlier lines are left out)"
+
+
+def _cut_at_line(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    return head.rsplit("\n", 1)[0] if "\n" in head else head
+
+
+def save_conversation(transcript: Path, folder: Path, profile: str) -> Path | None:
+    """00_source/conversation.md in the run: the listener's profile as it was when the chapter started (the
+    memory pass can rewrite profile.md mid-build), then this conversation's spoken lines up to start_chapter,
+    so the build can check what the chapter says about the listener against what they said. Written once:
+    find_run can hand a later conversation the same run, and the file sits in the run's cached system prompt,
+    so a continued run keeps the first conversation's file. The listener's last line before start_chapter can
+    arrive about 3 s late (the input transcript lags) and be missing here; the seed's listener_said covers it.
+    Never breaks start_chapter."""
+    try:
+        out = folder / "00_source" / "conversation.md"
+        if not out.parent.is_dir() or out.exists():
+            return None
+        lines: list[tuple[str, str]] = []
+        for raw in transcript.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict) or not isinstance(rec.get("text"), str):
+                continue
+            who, text = rec.get("who"), " ".join(rec["text"].split())
+            if who in ("guide", "listener") and text:
+                lines.append((who, text))
+        size = lambda xs: sum(len(f"{w}: {t}") + 1 for w, t in xs)  # noqa: E731
+        cut = False
+        for who in ("guide", "listener"):  # the guide's oldest lines go first; the listener's only if still over
+            while size(lines) > EARLIER_CHARS and any(w == who for w, _ in lines):
+                lines.pop(next(i for i, (w, _) in enumerate(lines) if w == who))
+                cut = True
+        talk = ([CUT_MARK] if cut else []) + [f"{w}: {t}" for w, t in lines]
+        profile = _cut_at_line(profile.strip(), CONVERSATION_PROFILE_CHARS) or "(none: a first meeting)"
+        out.write_text("## Earlier conversations (the guide's summary, not their words)\n" + profile
+                       + "\n\n## This conversation\n" + ("\n".join(talk) or "(nothing transcribed)") + "\n",
+                       encoding="utf-8")
+        return out
+    except OSError:
+        return None
+
+
 class Session:
     """One conversation. `start(topic, why, notes)` starts a chapter and returns its run name
     (raising to refuse); `status()` returns the current run's status.json. `fast`: what a fast run
@@ -326,6 +376,7 @@ class Session:
             return {"started": False, "reason": str(getattr(e, "detail", None) or e)}
         from . import memory
         memory.save_seed(self.cfg, self.runs_dir / self.run)  # listener/seeds/<run>.md
+        save_conversation(self.transcript, self.runs_dir / self.run, listener_profile(self.cfg))
         if self.fast and (out := self.fast.started(self.runs_dir / self.run)):
             return out  # a fast run: no time unless earlier runs measured one, and how to wait
         return {"started": True, "minutes": round(sum((self.cfg.get("status_minutes") or {}).values())) or 25}

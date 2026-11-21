@@ -14,6 +14,20 @@ in how the transcript spells them. The persona is better than at the start but d
 (graded 3-6/10): praise and long pitches persist, and going back after a question still leans on the
 page's own cues. Costs: $0.05 per connected minute; a 20-minute live chapter is about $1.10 of voice.
 
+## One question before a thin pitch (2026-11-20)
+
+After Pooja's run (her answers short, the pitch came after one exchange), the earpiece whispers one specific question
+from what they said, for after the guide explains what it does, when nothing has lit them up. A new `offered` look
+catches the guide's first offer ("Want to hear what I do?"), since a "Sure" never reached `turn_end`.
+
+- Replay on saved moments ($0.25, three passes): Pooja at the offer: "Once you've explained what you make, ask which
+  part of the politics, culture or history talk stuck with her." Purnima: the question, then later "offer to pick a
+  surprise for her". Ian's runs 3 and 4, and six personas with a spark: no whisper (a first pass whispered on Ian's
+  omega-3 doubt; the rule now counts a doubt or opinion as a spark).
+- Persona, reserved listener ($0.23): whisper at 1:06 on `offered`; the guide explained, then asked "what's the part
+  that sticks with you?"; she answered ("the relief"), and the guide pitched the psychology of closure at 2:08.
+- Not heard by Ian. The GPT-Live build log is at $19.64 of its $20 cap.
+
 ## The earpiece (2026-11-20): a plan in the background instead of a director per line
 
 **What Ian said.** Not a turn-by-turn assistant: an earpiece that keeps evaluating the conversation and passes

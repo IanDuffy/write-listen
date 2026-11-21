@@ -224,12 +224,15 @@ STALE_AFTER_START = ("offer", "pitch", "interest", "start")
 
 
 def verdict(got: dict, *, here: bool, started: bool, explained: bool, offered: bool, spoke_since_ask: bool,
-            listener_speaking: bool, now: float, sent_at: float | None, min_gap: float) -> str:
+            listener_speaking: bool, now: float, sent_at: float | None, min_gap: float,
+            guide_asked_since: bool = False, trigger: str | None = None) -> str:
     """The page's verdict on a look (live.js directorVerdict), mirrored: "send", "hold" or "drop". Only a whisper
     (a note with changed) is sent; stale kinds go once a chapter has started, an offer once the guide has said
     what it does or was whispered it; a "now" note goes unless the listener has spoken since the look was asked
     for (held while they are mid-line); any other whisper goes at once unless it is within min_gap seconds of
-    the last whisper (other page notes don't count). No lull hold, no maximum age."""
+    the last whisper (other page notes don't count); an "interest" question goes once the guide's last line, ended
+    after the look was asked, asked something (Pooja, 2026-11-20). The offered look's "interest" question is exempt
+    from the gap (live.js dirOfferQuestion). No lull hold, no maximum age."""
     if not (got.get("changed") and got.get("note")) or not here:
         return "drop"
     about = got.get("about")
@@ -237,11 +240,13 @@ def verdict(got: dict, *, here: bool, started: bool, explained: bool, offered: b
         return "drop"
     if about == "offer" and (explained or offered):
         return "drop"
+    if about == "interest" and guide_asked_since:
+        return "drop"
     if got.get("kind") == "now":
         if spoke_since_ask:
             return "drop"
         return "hold" if listener_speaking else "send"
-    if sent_at is not None and now - sent_at < min_gap:
+    if sent_at is not None and now - sent_at < min_gap and not (trigger == "offered" and about == "interest"):
         return "drop"
     return "send"
 
@@ -278,8 +283,9 @@ class Earpiece:
     every TICK_SECS of the conversation and asks on the page's triggers (config live.director): "started" once
     after the started note (after the listener's answer to started_step_back's offer to chat), "turn_end" when a
     listener turn ends (no line from them for live.page.engaged_merge_ms) with every_words words or every_lines
-    new lines since the last look, "cadence" every every_secs with a new line (company_every_secs once started),
-    "silence" once per stretch of silence_secs with nobody speaking. One look in flight; a newer trigger waits.
+    new lines since the last look, "offered" once when the guide first offers to say what it does or says it after
+    a listener line, "cadence" every every_secs with a new line (company_every_secs once started), "silence" once
+    per stretch of silence_secs with nobody speaking. One look in flight; a newer trigger waits.
     Each look gets the earpiece's previous plan and read (as the server reads them from its rows) and goes
     through the same verdict; a whisper is sent at once as an instruction, even while the listener's audio is
     streaming. `stop()` awaits a look in flight, so its cost is logged. Two failures in a row and it is down
@@ -298,6 +304,7 @@ class Earpiece:
         self.reply_wait_from: float | None = None
         self.sent_at: float | None = None
         self.offered, self.fails, self.down, self.stopped, self.rested = False, 0, False, False, False
+        self.offer_looked = False  # the "offered" look, once a conversation (live.js L.dir.offerLook)
         self.inflight: asyncio.Task | None = None
         self.task: asyncio.Task | None = None
         self.held: tuple[dict, dict] | None = None
@@ -330,6 +337,27 @@ class Earpiece:
         """The guide's last line offered to say what it does (live.page.offer_nudge.offered, as the page reads it)."""
         pat = (self.cfg["live"]["page"].get("offer_nudge") or {}).get("offered")
         return bool(pat and self.sim.turns and re.search(pat, self.sim.turns[-1].get("text") or "", re.I))
+
+    def offers(self, text: str) -> bool:
+        """A guide line offering to say what it does (live.page.offer_nudge.offered) or saying it (EXPLAINED)."""
+        pat = (self.cfg["live"]["page"].get("offer_nudge") or {}).get("offered")
+        return bool((pat and re.search(pat, text or "", re.I)) or live.EXPLAINED.search(text or ""))
+
+    def offer_due(self) -> bool:
+        """live.js: the guide's first finished line that offers to say what it does, or says it, after a listener
+        line (an offer line before the listener has spoken waits for a later one), with no chapter started."""
+        if self.offer_looked or self.started():
+            return False
+        heard = [x.get("end") or x["t"] for x in self.sim.timeline
+                 if x["who"] == "listener" and (x.get("text") or "").strip()]
+        return bool(heard) and any(x.get("end") is not None and x["end"] > min(heard) and self.offers(x.get("text") or "")
+                                   for x in self.sim.turns)
+
+    def guide_asked_since(self, t: float) -> bool:
+        """live.js guideAskedAt: the guide's last line asked something and ended after t."""
+        last = self.sim.turns[-1] if self.sim.turns else None
+        return bool(last and last.get("end") is not None and last["end"] > t
+                    and re.search(r"\?\s*$", last.get("text") or ""))
 
     def spoke_since(self, t: float) -> bool:
         return any(x["who"] == "listener" and x.get("text") and x.get("end") is not None and x["end"] > t
@@ -369,6 +397,9 @@ class Earpiece:
         if self.event:
             e, self.event = self.event, None
             return e
+        if self.offer_due():
+            self.offer_looked = True
+            return "offered"
         lis = [x for x in self.sim.timeline if x["who"] == "listener" and x.get("text")]
         if lis and lis[-1] is not self.turn_seen and lis[-1].get("end") is not None and now - lis[-1]["end"] >= self.merge:
             last = self.turn_seen = lis[-1]
@@ -443,7 +474,8 @@ class Earpiece:
         v = verdict(got, here=self.here(), started=self.started(), explained=self.explained(),
                     offered=self.offered or self.offered_by_guide(),
                     spoke_since_ask=self.spoke_since(rec["t"]), listener_speaking=bool(self.sim.speech), now=now,
-                    sent_at=self.sent_at, min_gap=float(self.D["min_gap_secs"] or 0))
+                    sent_at=self.sent_at, min_gap=float(self.D["min_gap_secs"] or 0),
+                    guide_asked_since=self.guide_asked_since(rec["t"]), trigger=rec.get("trigger"))
         if v == "hold":
             self.held = (got, rec)
             return

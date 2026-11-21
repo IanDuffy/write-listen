@@ -12,6 +12,9 @@ is checked here, on each section, before it is locked:
     repair             what is safe to fix by code when a fix call has not: afterwards
                        section_problems finds nothing, so narration never stops on a section
     chapter_problems   check 8 over the whole script
+    listener_claims    the sentences that say what the listener said, asked, watched or wanted, for
+                       the editor to check against their own words (listener_source); claim_record
+                       says what the edit did with them
 """
 
 from __future__ import annotations
@@ -104,7 +107,7 @@ def _quote_home(q: str, entries: dict[int, str]) -> int | None:
     return None
 
 
-def _own_words(q: str, said: str) -> bool:
+def own_words(q: str, said: str) -> bool:
     """Whether a quoted passage is the listener's own words: each piece of it stands word for word
     in what they said. Their words are not a quotation from a source, so no entry has to back them."""
     if not said:
@@ -112,6 +115,9 @@ def _own_words(q: str, said: str) -> bool:
     pieces = [p for p in (_norm_text(x) for x in ELLIPSIS.split(q)) if p]
     body = f" {_norm_text(said)} "
     return bool(pieces) and all(f" {p} " in body for p in pieces)
+
+
+_own_words = own_words
 
 
 def _unbacked(text: str, dossier_text: str, said: str = "") -> list[str]:
@@ -373,3 +379,77 @@ def move_problems(before: str, before_next: str, after: str, after_next: str, mo
                        f"{took} moved in and {gone} declared cut. Restore what is missing, or declare each removed "
                        "passage in cut with its reason")
     return out
+
+
+# --- what the chapter says about the listener -------------------------------------------------
+# A model fixes these (the opening edit, the lock); code only finds the candidates and records what
+# happened, since it cannot tell a true "you said" from a false one. Tightened against the locked
+# sections on disk: no saw/seen/heard, no bare "remember", no when/whenever (they caught generic "you",
+# the chapter's own callbacks, and dropped real claims like "when you told me").
+
+VERBS = (r"said|asked|told|mentioned|wanted|wondered|described|talked|brought up|noticed|watched|"
+         r"grew up|remembered|picked|chose|put to me|been \w+ing|thought about|"
+         r"were (?:(?:just|mostly|only|still|busy|out) )?(?:talking|asking|listening|wondering|discussing|telling|"
+         r"picking|choosing|sitting|watching|thinking|just)")
+CLAIM = re.compile(rf"\byou(?:'ve|'d| have| had)?(?: (?:just|only|once|ever|also|first|mostly))*\s+(?:{VERBS})\b"
+                   r"|\byou(?:'re| are) (?:curious|into|interested)\b"
+                   r"|\byour (?:question|words|own words)\b|\bas you put it\b"
+                   r"|\bwhat you (?:asked|said|told|wanted|described)\b", re.I)
+NOT_CLAIM = re.compile(r"\b(?:have|has|did|do|does|would|could|might|if)\s+$", re.I)  # "have you ever wondered"
+SECTION = re.compile(r"^##\s+(.+?)\s*$", re.M)
+SAID_HEAD, WHY_HEAD, TOPIC_HEAD = "What the listener said", "Why it matters to them", "Topic"
+TYPED = "(the topic above is in their words)"  # stages/seed.py: a typed seed
+NOT_SAID = "(not said)"
+
+
+def listener_claims(text: str) -> list[str]:
+    """The spoken sentences that claim what the listener said, asked, told, watched or wanted, as said
+    (markers and held beats removed, case kept), in order, without duplicates."""
+    out, seen = [], set()
+    for para in re.split(r"\n\s*\n", spoken_text(text)):
+        for s in tts.split_sentences(" ".join(tts.PAUSE.sub(" ", para).split())):
+            s = s.strip()
+            if not any(not NOT_CLAIM.search(s[:m.start()]) for m in CLAIM.finditer(s)):
+                continue
+            if (n := _norm_text(s)) and n not in seen:
+                seen.add(n)
+                out.append(s)
+    return out
+
+
+def _sections(md: str) -> dict[str, str]:
+    heads = list(SECTION.finditer(md))
+    return {h.group(1): md[h.end():heads[i + 1].start() if i + 1 < len(heads) else len(md)].strip()
+            for i, h in enumerate(heads)}
+
+
+def _section(secs: dict[str, str], head: str) -> str:
+    return next((v for k, v in secs.items() if k.startswith(head)), "")
+
+
+def listener_source(seed_md: str, conversation: str, notes: list[str]) -> str:
+    """The listener's own words as one text: the seed's said section (its Topic instead when the seed
+    says the topic is in their words and no conversation was saved), its why unless not said, their lines in the conversation, and
+    their notes. The conversation's summary of earlier conversations never counts: a claim may stand on
+    it, a quotation may not. The Topic otherwise is the guide's framing, not theirs."""
+    secs = _sections(seed_md or "")
+    said = _section(secs, SAID_HEAD)
+    # The typed marker is trusted only for a typed seed (no conversation saved): a guide whose
+    # start_chapter sent an empty listener_said gets the same marker, and its Topic is its own pitch.
+    talk = (conversation or "").strip()
+    if not said or said == TYPED:
+        said = "" if talk and talk != "(none)" else _section(secs, TOPIC_HEAD)
+    why = _section(secs, WHY_HEAD)
+    parts = [said] + ([why] if why and why != NOT_SAID else [])
+    parts += [ln.split(":", 1)[1].strip() for ln in (conversation or "").splitlines() if ln.startswith("listener:")]
+    parts += [n for n in notes if n and n.strip()]
+    return "\n".join(p for p in parts if p)
+
+
+def claim_record(before: list[str], after: list[str]) -> list[str]:
+    """What an edit did with the sentences about the listener: kept, changed or cut, or new in the edit
+    (not checked again: a fix call would cost the listener minutes)."""
+    b, a = {_norm_text(s) for s in before}, {_norm_text(s) for s in after}
+    return ([f'kept: "{short(s, 30)}"' for s in before if _norm_text(s) in a]
+            + [f'changed or cut: "{short(s, 30)}"' for s in before if _norm_text(s) not in a]
+            + [f'new in the edit, not checked again: "{short(s, 30)}"' for s in after if _norm_text(s) not in b])
