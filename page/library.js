@@ -219,6 +219,15 @@
   const pageAudio = $("audio") !== audio ? $("audio") : null;  // index.html's orb chapter, when the page has one
   const remote = new Audio();
   remote.autoplay = true;
+  remote.onplaying = () => Speaker.playing(remote.srcObject);  // recorded on tester pages (page/speaker.js)
+  // page/speaker.js: on Android a headset connected after the Speakerphone switch puts a new mic track in L.stream;
+  // it is sent and recorded in the old one's place.
+  if (window.Speaker && Speaker.follow) Speaker.follow((from, to, stream) => {
+    if (L.stream !== stream) return;
+    if (L.mic === from) L.mic = to;
+    if (L.pc && L.pc.getSenders) for (const sd of L.pc.getSenders()) if (sd.track === from && sd.replaceTrack) sd.replaceTrack(to).catch(() => {});
+    if (L.rec) recAdd(L.rec, stream);
+  });
   const SUPERSEDED = "superseded";
   let state = null;
 
@@ -343,7 +352,7 @@
     try {
       await orbOff();
       check();
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      stream = await Speaker.mic();  // page/speaker.js (served above this file): the loudspeaker on a phone, then the mic
       check();
       L.stream = stream; L.mic = stream.getAudioTracks()[0];
       recAdd(rec, stream);
@@ -373,7 +382,7 @@
       return got;
     } catch (e) {  // this attempt's pieces only: a newer session may own L's by now
       if (pc) { try { pc.close(); } catch (x) {} }
-      if (stream) stream.getTracks().forEach((x) => x.stop());
+      if (stream) { stream.getTracks().forEach((x) => x.stop()); Speaker.free(); }
       if (pc && L.pc === pc) { L.pc = null; L.dc = null; }
       if (stream && L.stream === stream) { L.stream = null; L.mic = null; }
       recClose(rec, null);
@@ -390,7 +399,7 @@
   function hangUp() {
     if (L.pc) { try { L.pc.close(); } catch (e) {} }
     L.pc = null; L.dc = null;
-    if (L.stream) L.stream.getTracks().forEach((x) => x.stop());
+    if (L.stream) { L.stream.getTracks().forEach((x) => x.stop()); Speaker.free(); }
     L.stream = null; L.mic = null;
   }
 

@@ -982,7 +982,7 @@ def mount(app, cfg: dict, on_debrief=None) -> None:
 
     @app.get("/interview.js")
     def interview_js() -> Response:
-        return Response(INTERVIEW_JS.read_text(encoding="utf-8"), media_type="text/javascript",
+        return Response(common.with_speaker(INTERVIEW_JS.read_text(encoding="utf-8"), cfg), media_type="text/javascript",
                         headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/interview/start")

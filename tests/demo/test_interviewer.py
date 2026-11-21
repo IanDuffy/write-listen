@@ -611,6 +611,7 @@ def test_a_stale_session_is_closed_on_the_next_start(world, monkeypatch, cfg):
 def test_interview_js_is_served(world):
     r = world.client.get("/interview.js")
     assert r.status_code == 200 and "window.Interview" in r.text and r.headers["content-type"].startswith("text/javascript")
+    assert r.text.index("window.Speaker = window.Speaker ||") < r.text.index("window.Interview")  # page/speaker.js first
 
 
 # --- after the session: audio and summary ------------------------------------------------------------

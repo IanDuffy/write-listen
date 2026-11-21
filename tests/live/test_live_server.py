@@ -211,6 +211,7 @@ def test_the_page_is_the_live_page_and_its_script_has_the_settings(app):
     js = c.get("/live.js")
     assert js.headers["content-type"].startswith("text/javascript") and "__LIVE_SETTINGS__" not in js.text
     assert '"queue_words_left"' in js.text and '"opened"' in js.text
+    assert js.text.startswith("// window.Speaker:")  # page/speaker.js ahead of it: the voice on a phone's loudspeaker
 
 
 def test_a_finished_chapter_and_the_elevenlabs_setting_keep_the_old_page(app, cfg):

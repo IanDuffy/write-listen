@@ -27,6 +27,7 @@ from pathlib import Path
 from . import director
 
 SESSION_ID = re.compile(r"\d{8}-\d{6}(-\d+)?")
+SPEAKERS = ("guide", "listener", "interviewer")   # the interviewer only in study files (demo/visit.py)
 
 
 def _key(item: str) -> str:
@@ -102,7 +103,13 @@ def timeline(folder: Path, session: str) -> dict:
     path = folder / "sessions" / f"{session}.jsonl"
     if not path.is_file():
         raise FileNotFoundError(session)
-    rows = _rows(path)
+    return timeline_of(_rows(path), folder.name, session)
+
+
+def timeline_of(rows: list[dict], lid: str, session: str) -> dict:
+    """`timeline` on rows already read (pure). The admin's Transcript view (demo/visit.py) reads the interviewer's
+    study files through it too: their "interviewer" lines are lines, and a session row's `mode` and `ended` are
+    kept (the guide's files write neither)."""
     t0 = next((t for t in (_time(r) for r in rows) if t), None)
 
     def stamp(rec: dict) -> dict:
@@ -117,7 +124,7 @@ def timeline(folder: Path, session: str) -> dict:
     for rec in rows:
         who = rec.get("who")
         text = str(rec.get("text") or "").strip()
-        if who in ("guide", "listener") and text:
+        if who in SPEAKERS and text:
             items.append({**stamp(rec), "kind": "line", "who": who, "text": text})
         elif who == "page" and text:
             got = director.whisper_in(text)
@@ -127,9 +134,13 @@ def timeline(folder: Path, session: str) -> dict:
                                 and x["note"].strip() == got[1]), None)
             items.append({**stamp(rec), "kind": "note", "text": text, "whisper": bool(got), "look": look_id})
         elif who == "tool" and rec.get("name"):
-            items.append({**stamp(rec), "kind": "tool", "name": str(rec["name"])})
-        elif who == "session" and rec.get("live_id"):  # a GPT-Live session (the conversation's own start row has none)
-            items.append({**stamp(rec), "kind": "session", "live_id": rec.get("live_id")})
+            items.append({**stamp(rec), "kind": "tool", "name": str(rec["name"]),
+                          "input": rec.get("input") if isinstance(rec.get("input"), dict) else None,
+                          "result": rec.get("result") if isinstance(rec.get("result"), dict) else None})
+        elif who == "session" and (rec.get("live_id") or rec.get("ended")):
+            # A GPT-Live session (the conversation's own start row has none), or one's end (study files, library)
+            items.append({**stamp(rec), "kind": "session", "live_id": rec.get("live_id"), "mode": rec.get("mode"),
+                          "ended": rec.get("ended")})
         elif who == "director":
             st = stamp(rec)
             plan = rec.get("plan") if isinstance(rec.get("plan"), list) else None
@@ -190,7 +201,7 @@ def timeline(folder: Path, session: str) -> dict:
     look_items = [x for x in items if x["kind"] == "look"]
     fates = [x["fate"] for x in look_items if x["fate"]]
     times = [t for t in (_time(r) for r in rows) if t]
-    return {"lid": folder.name, "session": session,
+    return {"lid": lid, "session": session,
             "started": times[0].isoformat() if times else None,
             "ended": times[-1].isoformat() if times else None,
             "director": {"looks": len(look_items), "notes": sum(1 for x in look_items if x.get("note")),

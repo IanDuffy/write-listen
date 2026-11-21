@@ -50,6 +50,18 @@ Caddy can only get the certificate once this works.
 
 ### 4. Run setup
 
+> **How it was actually done (2026-11-21, `demo.ianduffy.com`, 159.203.86.251).** The droplet has root ssh turned
+> off: `ssh wl-droplet` logs in as `deploy`, and every root step goes through `sudo` (you type its password). The
+> repository is public, so no deploy key is needed: clone over HTTPS instead. From the Mac:
+>
+> ```bash
+> scp deploy/setup.sh wl-droplet:
+> ssh -t wl-droplet sudo env REPO=https://github.com/IanDuffy/write-listen.git bash setup.sh
+> ssh -t wl-droplet sudo nano /etc/write-listen/env
+> ```
+>
+> then the second command again. Below, read `ssh root@<ip>` as `ssh -t wl-droplet sudo ...`.
+
 ```bash
 scp deploy/setup.sh root@<ip>:
 ssh root@<ip>
@@ -113,6 +125,10 @@ cp deploy/local.write-listen.backup.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/local.write-listen.backup.plist
 ```
 
+**With root ssh off (the live droplet) this needs a login that can read the folders.** `deploy` can't read
+`/srv/write-listen/listeners/` (owned by `writelisten`), so `WL_DROPLET=root@...` fails there and `WL_DROPLET=wl-droplet`
+gets permission errors. Not set up yet: the DigitalOcean weekly backups are what cover the droplet for now.
+
 The ssh key it uses must work without a passphrase prompt (macOS's keychain counts). The first run to
 `demo.ianduffy.com` records the droplet's host key by itself (`StrictHostKeyChecking=accept-new`: you may
 only have ssh'd to the IP so far); if the droplet is rebuilt, its key changes and the backup stops with
@@ -122,9 +138,11 @@ only have ssh'd to the IP so far); if the droplet is rebuilt, its key changes an
 ## Updating
 
 ```bash
-ssh root@<ip>
-wl deploy
+ssh -t wl-droplet sudo wl deploy
 ```
+
+(`wl` commands other than `deploy` also need `sudo` as the `deploy` user: the keys file is readable only by the
+app's user, and `wl` switches to it when run as root, e.g. `ssh -t wl-droplet sudo wl study create "Sam"`.)
 
 It pulls the checked-out branch, runs `uv sync`, makes sure `listeners/` and `shared/` exist (a fresh
 droplet needs no data migration), checks that the code imports, installs any changed systemd unit,

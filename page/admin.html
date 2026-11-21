@@ -48,7 +48,7 @@
 <main>
   <h1>Testers</h1>
   <p id="total">Loading…</p>
-  <p id="own-earpiece" class="sub" hidden>Your own conversations: <a href="/admin/earpiece?lid=own">earpiece history</a></p>
+  <p id="own-earpiece" class="sub" hidden>Your own conversations: <a href="/admin/transcript?lid=own">transcript</a> · <a href="/admin/earpiece?lid=own">earpiece history</a></p>
   <p id="default-chapter" class="sub" hidden>Every tester without their own setting gets rehearsal chapters (demo.chapter).</p>
   <form id="new" autocomplete="off">
     <input id="label" placeholder="Label for a new tester (e.g. Pilot 1)" aria-label="Label" required>
@@ -123,9 +123,11 @@ function row(t) {
   // The earpiece panel on their page: what the earpiece whispers the guide, live (for Ian's own test runs).
   const ear = `<select data-do="earpiece" aria-label="Earpiece view" title="Show the earpiece panel on their page">${["off", "on"].map((v) =>
     `<option value="${v}"${(t.earpiece_view ? "on" : "off") === v ? " selected" : ""}>Earpiece view: ${v}</option>`).join("")}</select>`;
+  // The whole visit as one transcript (intro, guide, chapter, debrief: demo/visit.py), and the earpiece's history.
+  const transcript = `<a href="/admin/transcript?lid=${encodeURIComponent(t.lid)}">Transcript</a>`;
   const history = `<a href="/admin/earpiece?lid=${encodeURIComponent(t.lid)}">Earpiece history</a>`;
   const actions = `<div class="actions">${t.link ? '<button data-do="revoke">Revoke</button>' : ""}
-    <button data-do="reset">Reset</button>${card}${kind}${ear}${history}<button class="warn" data-do="delete">Delete all data</button></div>`;
+    <button data-do="reset">Reset</button>${card}${kind}${ear}${transcript}${history}<button class="warn" data-do="delete">Delete all data</button></div>`;
   return `<tr data-lid="${esc(t.lid)}" data-label="${esc(t.label)}">${cell("Tester", tester)}${cell("Stage", stage)}`
        + `${cell("Last active", when(t.last_active))}${cell("Chapter", chapter)}${cell("Questions", t.questions)}`
        + `${cell("Debrief", debrief)}${cell("Cost", cost)}${cell("Actions", actions)}</tr>`;

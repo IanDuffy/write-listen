@@ -435,3 +435,73 @@ def test_a_conversation_is_recorded_and_kept(site, page):
     sid = page.ends[-1]["session"]
     path = site.listener / "sessions" / f"{sid}.webm"
     assert wait_for(lambda: path.exists() and path.stat().st_size > 0) and page.errors == []
+
+
+def test_on_a_phone_the_intro_asks_for_the_loudspeaker_before_the_mic_and_the_recording_plays_after_it(site):
+    """page/speaker.js (Ian, 2026-11-21: on his phone the voice came from the ear speaker): the library's live
+    session sets navigator.audioSession.type to "play-and-record" before getUserMedia; the intro over and its mic
+    stopped, it goes back to "auto" before the recorded file plays (not captured, so not ducked)."""
+    import sys
+    from stages.common import ROOT
+    sys.path.insert(0, str(ROOT / "tests" / "live"))
+    from test_live_page import AUDIO_SESSION
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+        except Exception as e:
+            pytest.skip(f"Chromium is not installed for Playwright: {e}")
+        pg = browser.new_context(has_touch=True).new_page()
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.add_init_script(STUB)
+        pg.add_init_script(AUDIO_SESSION)
+        pg.goto(site.url + "/library")
+        pg.wait_for_function("document.getElementById('latest-title').textContent.length > 0")
+        pg.evaluate("""window.__realMic = async () => {  // real tracks, which end when stopped
+          const ac = new AudioContext(), o = ac.createOscillator(), d = ac.createMediaStreamDestination();
+          o.connect(d); o.start(); return d.stream; }""")
+        into_the_recording(pg)
+        assert pg.evaluate("window.__typeAtMic") == ["play-and-record"]
+        assert pg.evaluate("window.__micAsked[0].audio") == {"echoCancellation": True, "noiseSuppression": True,
+                                                             "autoGainControl": True}
+        assert pg.evaluate("navigator.audioSession.type") == "auto" and pg.evaluate("window.__sessionTypes") == [
+            "play-and-record", "auto"]
+        assert errors == []
+        browser.close()
+
+
+def test_on_android_a_headset_connected_mid_session_takes_the_mic_it_sends(site):
+    """page/speaker.js switches the mic to Android's Speakerphone input; a headset connected during a library session
+    gets a new mic track in the same stream, which library.js sends (and records) in the old one's place."""
+    import sys
+    from stages.common import ROOT
+    sys.path.insert(0, str(ROOT / "tests" / "live"))
+    from test_live_page import ANDROID_LATER_HEADSET
+    with sync_api.sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+        except Exception as e:
+            pytest.skip(f"Chromium is not installed for Playwright: {e}")
+        pg = browser.new_context(has_touch=True).new_page()
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.add_init_script(STUB)
+        pg.add_init_script(ANDROID_LATER_HEADSET)
+        pg.goto(site.url + "/library")
+        pg.wait_for_function("document.getElementById('up-title').textContent.length > 0")
+        pg.evaluate("""window.__realMic = async () => {  // real tracks, which end when stopped
+          const ac = new AudioContext(), o = ac.createOscillator(), d = ac.createMediaStreamDestination();
+          o.connect(d); o.start(); return d.stream; }""")
+        pg.click("#change")
+        start_session(pg)
+        assert pg.evaluate("window.__micAsked.map((c) => c.audio.deviceId ? c.audio.deviceId.exact : null)") == [
+            None, "sp-id"]
+        pg.evaluate("window.__oldMic = window.__library.mic; window.__devs.push({ kind: 'audioinput', "
+                    "label: 'Bluetooth headset', deviceId: 'bt', groupId: 'g' }); "
+                    "navigator.mediaDevices.dispatchEvent(new Event('devicechange')); true")
+        pg.wait_for_function("window.__library.mic && window.__library.mic !== window.__oldMic", timeout=5000)
+        assert pg.evaluate("""(() => { const L = window.__library, sent = L.pc.getSenders().map((s) => s.track);
+            return [L.stream.getAudioTracks()[0] === L.mic, L.mic.readyState, window.__oldMic.readyState,
+                    sent.length === 1 && sent[0] === L.mic]; })()""") == [True, "live", "ended", True]
+        assert errors == []
+        browser.close()

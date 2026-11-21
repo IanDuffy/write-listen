@@ -136,14 +136,16 @@ def site(cfg, monkeypatch, own_listeners):
 
 
 class Page:
-    def __init__(self, base):
+    def __init__(self, base, touch=False, init=None):  # touch: a phone's screen; init: a script after the stub
         self.pw = sync_api.sync_playwright().start()
         self.browser = self.pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
-        self.page = self.browser.new_context().new_page()
+        self.page = self.browser.new_context(has_touch=touch).new_page()
         self.posts = []
         self.page.on("request", lambda r: r.method == "POST" and self.posts.append(
             (r.url.split("://", 1)[1].split("/", 1)[1], json.loads(r.post_data or "{}"))))
         self.page.add_init_script(STUB)
+        if init:
+            self.page.add_init_script(init)
         self.page.goto(base + "/")
         self.page.wait_for_function("window.Interview && window.Welcome")
 
@@ -270,6 +272,58 @@ def test_the_three_words_stay_gone_when_the_next_screen_rewrites_the_bodys_class
     assert "2s" in page.js("getComputedStyle(document.getElementById('w-dot')).transitionDuration")  # still growing
     page.wait("getComputedStyle(document.getElementById('w-note')).opacity === '0'", timeout=3000)
     page.wait("window.__handed", timeout=8000)
+
+
+def phone(site):
+    """The gate on a phone with Safari's navigator.audioSession (tests/live/test_live_page.py AUDIO_SESSION)."""
+    sys.path.insert(0, str(ROOT / "tests" / "live"))
+    from test_live_page import AUDIO_SESSION
+    return Page(site.base, touch=True, init=AUDIO_SESSION)
+
+
+def test_on_a_phone_the_tap_asks_for_the_loudspeaker_before_the_mic(site):
+    """Ian on his phone (2026-11-21): the voice came from the ear speaker. The gate's tap sets
+    navigator.audioSession.type to "play-and-record" before getUserMedia (page/speaker.js, served with
+    /interview.js), with echo cancellation on; a refused mic lets it go back to "auto"."""
+    page = phone(site)
+    try:
+        page.js("window.__micDenied = true")
+        page.page.click("#w-gate")
+        page.wait("document.getElementById('w-gate').classList.contains('w-refused')")
+        assert page.js("window.__typeAtMic") == ["play-and-record"] and page.js("navigator.audioSession.type") == "auto"
+        page.js("window.__micDenied = false")
+        page.page.click("#w-again")
+        page.wait("window.Interview.I.started")
+        assert page.js("window.__typeAtMic") == ["play-and-record", "play-and-record"]
+        assert page.js("navigator.audioSession.type") == "play-and-record"
+        assert page.js("window.__micAsked[1].audio") == {"echoCancellation": True, "noiseSuppression": True,
+                                                         "autoGainControl": True}
+        assert page.js("Speaker.live()")
+    finally:
+        page.close()
+
+
+def test_on_android_a_headset_connected_during_the_intro_takes_the_mic_the_voice_hears(site):
+    """Android: the tap's mic is switched to the Speakerphone input (page/speaker.js). A headset connected during
+    the intro gets a new mic track in the same stream; interview.js sends it in the old one's place."""
+    sys.path.insert(0, str(ROOT / "tests" / "live"))
+    from test_live_page import ANDROID_LATER_HEADSET
+    page = Page(site.base, touch=True, init=ANDROID_LATER_HEADSET)
+    try:
+        page.page.click("#w-gate")
+        page.wait("window.Interview.I.started")
+        page.js("window.__oldMic = window.Interview.I.stream.getAudioTracks()[0]; true")
+        assert page.js("window.__micAsked.map((c) => c.audio.deviceId ? c.audio.deviceId.exact : null)") == [None, "sp-id"]
+        page.js("window.__devs.push({ kind: 'audioinput', label: 'Wired headset', deviceId: 'w', groupId: 'g' }); "
+                "navigator.mediaDevices.dispatchEvent(new Event('devicechange')); true")
+        page.wait("window.Interview.I.stream.getAudioTracks()[0] !== window.__oldMic", timeout=5000)
+        assert page.js("""(() => { const I = window.Interview.I, t = I.stream.getAudioTracks()[0];
+            const sent = I.pc.getSenders().map((s) => s.track);
+            return [t.readyState, window.__oldMic.readyState, sent.length === 1 && sent[0] === t]; })()""") == \
+            ["live", "ended", True]
+        assert page.js("Speaker.live()")
+    finally:
+        page.close()
 
 
 def test_mic_refused_says_so_and_tries_again(site, page):

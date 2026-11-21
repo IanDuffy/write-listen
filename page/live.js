@@ -187,7 +187,7 @@
   // A connect that ends without a live session: the mic released (it was asked for again), and a paused
   // chapter stays paused where it was.
   function notLive(resume) {
-    if (L.stream && !L.pc) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; }
+    if (L.stream && !L.pc) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; Speaker.free(); }
     if (resume && resume.startsWith("paused")) { L.phase = "paused"; L.pauseAt = now(); }
   }
 
@@ -206,12 +206,17 @@
     const sayOnly = resume === "ready";  // only to say the chapter is ready: no mic, never on (Ian asked for it off)
     try {
       if (!L.stream && !sayOnly) {
-        L.stream = await navigator.mediaDevices.getUserMedia(
-          { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        const got = await Speaker.mic();  // page/speaker.js: the loudspeaker on a phone, then the mic
+        // Ended (or a newer connect began) while the mic opened, which on Android can take seconds (the
+        // Speakerphone retry): this capture was never L's, and a newer connect asks for its own, so it is
+        // stopped here (once, it was left live beside the newer one's whenever the phase was "connecting" again).
+        if (mine !== L.epoch) { got.getTracks().forEach((x) => x.stop()); Speaker.free(); return true; }
+        L.stream = got;
         L.mic = L.stream.getAudioTracks()[0];
         meters.input(L.stream);
       }
     } catch (e) {
+      if (mine !== L.epoch) return true;  // refused after the end or a newer connect: that one owns the state
       if (L.tester) {  // testers can't type (it's hidden): ask for the mic, as the gate does, and a tap asks again
         L.micRefused = true;
         L.phase = resume && resume.startsWith("paused") ? "paused" : resume ? "resting" : "idle";
@@ -231,7 +236,7 @@
     pc.ontrack = (e) => {
       remote.srcObject = e.streams[0];
       const p = remote.play();  // playing from the moment the track arrives, not left to autoplay at the first word
-      if (p && p.catch) p.catch(() => {});
+      if (p && p.then) p.then(() => Speaker.playing(e.streams[0]), () => {});  // recorded (tester pages): page/speaker.js
       meters.output(e.streams[0]);
     };
     const hold = resume ? null : L.hold;
@@ -239,6 +244,7 @@
     if (L.mic) {
       if (sayOnly) L.mic.enabled = false;
       sender = pc.addTrack(L.mic, L.stream);
+      L.sender = sender;  // a headset connected later moves the mic to a new track (Speaker.follow, below)
       // Opened ahead of the handover: the mic is the interviewer's until then, so nothing of it is sent here.
       if (hold && sender && sender.replaceTrack) sender.replaceTrack(null).catch(() => {});
     } else pc.addTransceiver("audio", { direction: "sendrecv" });  // no mic at all: it only speaks
@@ -482,6 +488,7 @@
     if (L.stream && !keepStream) L.stream.getTracks().forEach((t) => t.stop());
     if (keepStream && L.mic) L.mic.enabled = true;  // muted here, perhaps: the interviewer must be heard
     L.stream = L.mic = null;
+    Speaker.free();
     if (L.session) quietPost("/api/chat/end", { session: L.session });
     // A chapter heard to the end: its reading, cut from the session's recording, becomes the episode.
     if (L.finished && L.run && !L.archived) { L.archived = true; quietPost("/api/live/archive", { run: L.run }); }
@@ -1351,7 +1358,7 @@
     }
     let ctx = null, track = null;
     try {
-      track = L.mic.clone();
+      track = Speaker.hold(L.mic.clone());
       track.enabled = true;
       ctx = new AudioContext();
       await ctx.audioWorklet.addModule("/wake.js");
@@ -1367,12 +1374,25 @@
       mark("wake-failed", String(e && e.message || e));
       if (track) track.stop();
       if (ctx) ctx.close().catch(() => {});
+      Speaker.free();
     }
   }
 
+  // page/speaker.js: on Android a headset connected after the Speakerphone switch gets a new mic track, put in
+  // L.stream in place of the old one; it is sent where the old one was (a held handover's sender carries none
+  // until released, with L.mic), metered, and the wake listener's clone is taken from it again.
+  if (window.Speaker && Speaker.follow) Speaker.follow((from, to, stream) => {
+    if (L.mic !== from && L.stream !== stream) return;
+    if (L.mic === from) L.mic = to;
+    const sd = L.sender;
+    if (sd && sd.track === from && sd.replaceTrack) sd.replaceTrack(to).catch(() => {});
+    if (L.stream) meters.input(L.stream);
+    if (W.track) listenForWake();
+  });
+
   function stopWake() {
     W.token++;
-    if (W.track) W.track.stop();
+    if (W.track) { W.track.stop(); Speaker.free(); }
     if (W.ctx) W.ctx.close().catch(() => {});
     W.ctx = W.track = null;
   }
@@ -1933,8 +1953,7 @@
   const micLive = (s) => !!(s && s.getAudioTracks().some((t) => t.readyState === "live"));
   function askMic() {  // a promise of the mic, or null if it is refused
     try {
-      return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-        .catch(() => null);
+      return Speaker.mic().catch(() => null);
     } catch (e) { return Promise.resolve(null); }
   }
 
@@ -1980,7 +1999,7 @@
     const finish = () => {
       if (!L.debriefing) return;
       L.debriefing = false;
-      if (stream) stream.getTracks().forEach((t) => t.stop());  // the mic is released once the debrief is over
+      if (stream) { stream.getTracks().forEach((t) => t.stop()); Speaker.free(); }  // the mic is released once the debrief is over
       skin("debrief", false);
       render();
       loadDemo();  // done: End demo is gone for good; dropped part-way: it is there to go back to it
@@ -2106,7 +2125,7 @@
     L.handedOver = true;  // End demo shows from the reveal
     skin("tester", true);
     L.handoff = { name: who };
-    if (stream) { L.stream = stream; L.mic = stream.getAudioTracks()[0] || null; meters.input(stream); }
+    if (stream) { L.stream = stream; L.mic = Speaker.hold(stream.getAudioTracks()[0]) || null; meters.input(stream); }
     skin("handoff", true);
     render();
     requestAnimationFrame(() => requestAnimationFrame(() => { skin("warm", true); render(); }));  // after a frame: the fill's transition runs
@@ -2316,7 +2335,7 @@
     const pc = L.pc, dc = L.dc;
     if (L.mic) L.mic.enabled = false;
     L.muted = true;
-    if (!keepMic && L.stream) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; }
+    if (!keepMic && L.stream) { L.stream.getTracks().forEach((x) => x.stop()); L.stream = L.mic = null; Speaker.free(); }
     if (!pc && !dc) return;
     const snap = { session: L.session, live_id: L.liveId, seconds: L.seconds, backend: L.backend.model ? { ...L.backend } : null };
     reported = L.liveId;  // reported below, once

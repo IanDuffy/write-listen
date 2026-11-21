@@ -9,6 +9,9 @@ they heard, their moments, and what they did. Never the script or the guide's in
                                   the piece). Facts only; demo/interviewer.account turns them into the lines
                                   the interviewer reads (wording in prompts/interviewer_notes.md `did_*`).
     add_event(listener_dir, ...)  one button press, appended to study/events.jsonl (POST /api/demo/event)
+    events(listener_dir)          the presses (never audio_route: nothing that reads presses sees it)
+    audio_routes(listener_dir)    the page's audio_route records (page/speaker.js: the phone, its audio inputs and
+                                  outputs, the mic in use; Ian's Android phone, 2026-11-21), for the admin's transcript
 
 moments and chapter_context read the tester's newest live chapter (listeners/<lid>/chapters/<run>/ with
 fast.json "voice": "live"). A live chapter has no word timing until its archive is built, so a moment's time
@@ -26,7 +29,8 @@ activity reads, and says nothing about what has no record:
                               status.json; live/reading.jsonl and fast/player.json (whether any was heard)
     study/events.jsonl        the page's button presses: end_demo (with the phase at the tap), pause, seek,
                               ask (a tap to ask it something; their words, if any were heard, are a moment),
-                              tap_talk; play is recorded and not read (whether any was heard is above)
+                              tap_talk; play is recorded and not read (whether any was heard is above).
+                              audio_route records (not presses) are left out of all of it
 """
 
 from __future__ import annotations
@@ -167,7 +171,12 @@ def _read_minutes(root: Path, wps: float) -> float:
 
 # --- what they did (Ian's notes, 2026-11-18) ----------------------------------------------------------
 
-EVENTS = ("end_demo", "play", "pause", "seek", "ask", "tap_talk")
+PRESSES = ("end_demo", "play", "pause", "seek", "ask", "tap_talk")
+AUDIO_ROUTE = "audio_route"   # not a press: page/speaker.js's record of the phone's audio route (data, below)
+EVENTS = PRESSES + (AUDIO_ROUTE,)
+AUDIO_MAX_BYTES = 128_000     # audio_route records stop here, so presses always keep room in the file
+AUDIO_REASONS = ("mic", "speakerphone", "devicechange", "playing", "headset")
+AUDIO_RESULTS = ("switched", "no label", "headset present", "failed", "moved")
 PHASES = ("talk", "making", "resting", "reading", "aside", "paused", "ended")
 EVENTS_FILE = "events.jsonl"
 EVENTS_MAX_BYTES = 256_000   # a page can't fill the disk: past this, presses are no longer recorded
@@ -203,13 +212,61 @@ def _ts(s) -> float | None:
         return None
 
 
+def _plain(v, n: int = 80):
+    """A JSON scalar kept as it is (a string clipped to n characters); anything else is None."""
+    if isinstance(v, bool) or v is None:
+        return v
+    if isinstance(v, (int, float)):
+        return v if math.isfinite(v) else None
+    if isinstance(v, str):
+        return " ".join(v.split())[:n]
+    return None
+
+
+def audio_fields(data) -> dict:
+    """An audio_route record's data as page/speaker.js sends it, bounded: only its own fields, short strings,
+    at most 12 labels of each kind."""
+    if not isinstance(data, dict):
+        return {}
+    labels = lambda v: [_plain(x, 60) for x in v[:12] if isinstance(x, str)] if isinstance(v, list) else []  # noqa: E731
+    out = {"reason": data.get("reason") if data.get("reason") in AUDIO_REASONS else None,
+           "result": data.get("result") if data.get("result") in AUDIO_RESULTS else None,
+           "ua": _plain(data.get("ua"), 300) if isinstance(data.get("ua"), str) else None,
+           "inputs": labels(data.get("inputs")), "outputs": labels(data.get("outputs")),
+           "track_label": _plain(data.get("track_label")) if isinstance(data.get("track_label"), str) else None,
+           "live_mic_tracks": data.get("live_mic_tracks") if isinstance(data.get("live_mic_tracks"), int)
+           and not isinstance(data.get("live_mic_tracks"), bool) and 0 <= data["live_mic_tracks"] < 100 else None}
+    hints = data.get("ua_hints")
+    out["ua_hints"] = {k: _plain(hints.get(k), 40) for k in ("model", "platform", "android", "chrome")} \
+        if isinstance(hints, dict) else None
+    s = data.get("settings")
+    out["settings"] = {k: _plain(s.get(k)) for k in ("deviceId", "echoCancellation", "noiseSuppression",
+                                                     "autoGainControl", "sampleRate")} if isinstance(s, dict) else None
+    ec = data.get("ec_modes")
+    out["ec_modes"] = [_plain(x, 20) for x in ec[:6]] if isinstance(ec, list) else None
+    return out
+
+
 def add_event(listener_dir: Path, event: str, phase: str | None = None, chapter_t=None,
-              detail: str | None = None) -> dict | None:
+              detail: str | None = None, data=None) -> dict | None:
     """Append one button press to study/events.jsonl: {"t", "event", "phase", "chapter_t", "detail"}. Only a
     known event; an unknown phase is kept as None, the position as a finite number of seconds, the detail
-    short. None (nothing written) for an unknown event or a file already at EVENTS_MAX_BYTES."""
+    short. None (nothing written) for an unknown event or a file already at EVENTS_MAX_BYTES.
+
+    audio_route (page/speaker.js) is no press: {"t", "event", "data"}, its data through audio_fields, and nothing
+    written once the file is at AUDIO_MAX_BYTES."""
     if event not in EVENTS:
         return None
+    if event == AUDIO_ROUTE:
+        rec = {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": event, "data": audio_fields(data)}
+        p = Path(listener_dir) / "study" / EVENTS_FILE
+        with _EVENTS_LOCK:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if p.exists() and p.stat().st_size > AUDIO_MAX_BYTES:
+                return None
+            with open(p, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return rec
     try:
         at = float(chapter_t) if chapter_t is not None else None
     except (TypeError, ValueError):
@@ -230,7 +287,14 @@ def add_event(listener_dir: Path, event: str, phase: str | None = None, chapter_
 
 
 def events(listener_dir: Path) -> list[dict]:
-    return [e for e in _read_jsonl(Path(listener_dir) / "study" / EVENTS_FILE) if e.get("event") in EVENTS]
+    """The presses (PRESSES), in order; audio_route records are left out."""
+    return [e for e in _read_jsonl(Path(listener_dir) / "study" / EVENTS_FILE) if e.get("event") in PRESSES]
+
+
+def audio_routes(listener_dir: Path) -> list[dict]:
+    """The audio_route records, in order."""
+    return [e for e in _read_jsonl(Path(listener_dir) / "study" / EVENTS_FILE)
+            if e.get("event") == AUDIO_ROUTE and isinstance(e.get("data"), dict)]
 
 
 def _conversation(listener_dir: Path, cfg: dict | None) -> dict:

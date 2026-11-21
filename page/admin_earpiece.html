@@ -133,7 +133,7 @@ function itemHtml(x) {
   if (x.kind === "look") return `<li class="look${x.error ? " error" : ""}" data-id="${esc(x.id)}">${stamp(x)}<div class="body">${lookHtml(x)}</div></li>`;
   if (x.kind === "note") return `<li class="note${x.whisper ? " whisper" : ""}">${stamp(x)}<div class="body">${x.whisper ? `Whisper reached the guide (look ${esc(x.look)})` : "App note"}: ${esc(x.text)}</div></li>`;
   if (x.kind === "tool") return `<li class="tool">${stamp(x)}<div class="body">Tool: ${esc(x.name)}</div></li>`;
-  if (x.kind === "session") return `<li class="session">${stamp(x)}<div class="body">New voice session</div></li>`;
+  if (x.kind === "session") return `<li class="session">${stamp(x)}<div class="body">${x.ended ? `Voice session ended (${esc(x.ended)})` : "New voice session"}</div></li>`;
   return "";
 }
 

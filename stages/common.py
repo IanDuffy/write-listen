@@ -321,6 +321,35 @@ def owner_of(root: Path) -> Path | None:
     return root.parent.parent if root.parent.name == "chapters" else None
 
 
+# --- page scripts -------------------------------------------------------------
+
+SPEAKER_JS = ROOT / "page" / "speaker.js"
+
+
+SPEAKER_SLOT = "/*SPEAKER_SETTINGS*/{}/*END*/"
+
+
+def speaker_settings(cfg: dict | None) -> dict:
+    """page/speaker.js's settings: config.yaml `speaker` (android_speakerphone, report_gap_ms, switch_timeout_ms),
+    and `report` (the audio_route records go to POST /api/demo/event) only in tester mode, the one place that
+    route answers."""
+    cfg = cfg or {}
+    sp = cfg.get("speaker") or {}
+    out = {k: sp[k] for k in ("android_speakerphone", "report_gap_ms", "switch_timeout_ms") if k in sp}
+    out["report"] = bool((cfg.get("demo") or {}).get("enabled")) and sp.get("report", True) is not False
+    return out
+
+
+def with_speaker(js: str, cfg: dict | None = None) -> str:
+    """A page script that opens the mic, with page/speaker.js ahead of it (the voices on a phone's loudspeaker,
+    Ian 2026-11-21) and its settings filled in from `cfg`. interview.js, live.js and library.js are each served
+    this way; in one document the first to run defines window.Speaker and the others keep it."""
+    if not js:
+        return js
+    speaker = SPEAKER_JS.read_text(encoding="utf-8").replace(SPEAKER_SLOT, json.dumps(speaker_settings(cfg)), 1)
+    return speaker + "\n" + js
+
+
 # --- prompts ------------------------------------------------------------------
 
 def load_prompt(name: str, **values: str) -> str:

@@ -140,7 +140,7 @@ def mount(app: FastAPI, cfg: dict, pipe=None, chat=None) -> None:
 
     @app.get("/library.js")
     def library_js() -> Response:  # the live sessions (Play's intro, Change); absent, the page plays plainly
-        text = LIBRARY_JS.read_text(encoding="utf-8") if LIBRARY_JS.exists() else ""
+        text = common.with_speaker(LIBRARY_JS.read_text(encoding="utf-8"), cfg) if LIBRARY_JS.exists() else ""
         return Response(text, media_type="text/javascript")
 
     @app.get("/api/library")

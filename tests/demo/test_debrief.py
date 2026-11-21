@@ -393,3 +393,26 @@ def test_a_tap_to_ask_with_no_words_recorded_is_told_as_a_tap(cfg, tmp_path):
     assert "- They tapped to ask it something twice, but no question of theirs was recorded." in v["did"].splitlines()
     assert v["asking"].startswith("They tapped to ask it something twice") and "never stopped it to ask anything" not in v["did"]
     assert "{" not in v["did"] + v["asking"]
+
+
+def test_audio_route_records_are_not_presses(tmp_path, monkeypatch):
+    """page/speaker.js's audio_route records share study/events.jsonl but are no press: events() (the debrief's
+    activity, the End demo lookups) never sees them, and they stop at AUDIO_MAX_BYTES so presses keep room."""
+    lis = tmp_path / "t-sam"
+    debrief.add_event(lis, "pause", "reading", 12)
+    rec = debrief.add_event(lis, "audio_route", "reading", 5, "detail", data={"reason": "mic", "inputs": ["Speakerphone"],
+                                                                        "live_mic_tracks": True, "result": "made up"})
+    assert set(rec) == {"t", "event", "data"} and rec["data"]["reason"] == "mic" and rec["data"]["result"] is None
+    assert rec["data"]["live_mic_tracks"] is None and rec["data"]["inputs"] == ["Speakerphone"]
+    debrief.add_event(lis, "tap_talk", "resting")
+    before = debrief.activity(lis)
+    assert [e["event"] for e in debrief.events(lis)] == ["pause", "tap_talk"]
+    assert [e["data"]["reason"] for e in debrief.audio_routes(lis)] == ["mic"]
+    assert before["pauses"] == 1 and before["taps"] == 1
+    for _ in range(5):
+        debrief.add_event(lis, "audio_route", data={"reason": "playing"})
+    assert debrief.activity(lis) == before
+    monkeypatch.setattr(debrief, "AUDIO_MAX_BYTES", 10)
+    assert debrief.add_event(lis, "audio_route", data={"reason": "mic"}) is None
+    assert debrief.add_event(lis, "seek", "reading", 3) is not None   # presses still recorded
+    assert debrief.audio_fields("not a dict") == {} and debrief.audio_fields(None) == {}

@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "live"))
-from test_live_page import (RUN, STUB, Page, offered, read_through, say_yes, site, start_chapter,  # noqa: E402,F401
-                            world)
+from test_live_page import (AUDIO_SESSION, RUN, STUB, Page, offered, read_through, say_yes, site,  # noqa: E402,F401
+                            start_chapter, world)
 
 from faststart import base  # noqa: E402
 
@@ -44,11 +44,11 @@ class DemoPage(Page):
     """The live page, a tester's when `tester` (body class "tester", as the server serves it), with the
     interviewer stubbed."""
 
-    def __init__(self, base_url, tester=True, before=None):
+    def __init__(self, base_url, tester=True, before=None, touch=False):
         from test_live_page import sync_api
         self.pw = sync_api.sync_playwright().start()
         self.browser = self.pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
-        self.page = self.browser.new_context().new_page()
+        self.page = self.browser.new_context(has_touch=touch).new_page()
         self.posts = []
         self.page.on("request", lambda r: r.method == "POST" and self.posts.append(
             (r.url.split("://", 1)[1].split("/", 1)[1], json.loads(r.post_data or "{}"))))
@@ -114,8 +114,8 @@ def demo(world, cfg):
     world.cfg = cfg
     pages = []
 
-    def open_page(tester=True, before=None):
-        p = DemoPage(world.base, tester, before)
+    def open_page(tester=True, before=None, touch=False):
+        p = DemoPage(world.base, tester, before, touch)
         pages.append(p)
         return p
     world.open_demo = open_page
@@ -1237,3 +1237,34 @@ def test_the_library_has_no_debrief_card(demo):
     assert "Got five minutes" not in p.page.text_content("#library")
     state = p.js("fetch('/api/library').then((r) => r.json())")
     assert "debrief" not in state
+
+
+# --- the phone's loudspeaker (page/speaker.js; Ian, 2026-11-21) ---------------------------------------------------
+
+def test_a_mic_handed_over_on_a_phone_is_kept_on_the_loudspeaker(demo):
+    """The gate's mic, handed to the guide: counted as live, so "play-and-record" holds while it is open, even
+    for a stream asked for some other way."""
+    w = demo
+    p = w.open_demo(tester=False, touch=True, before=lambda page: page.add_init_script(AUDIO_SESSION))
+    p.js("""async () => {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });  // not through Speaker.mic
+      Live.handoff({ name: "Sam", stream: s });
+    }""")
+    p.wait("L.started && L.phase === 'talk'")
+    assert p.js("window.__typeAtMic") == ["auto"] and p.js("navigator.audioSession.type") == "play-and-record"
+    assert p.js("Speaker.live()")
+
+
+def test_the_debriefs_mic_on_a_phone_asks_for_the_loudspeaker_first_and_lets_it_go_after(demo):
+    """End demo on a page they came back to: the mic asked for in the tap comes after "play-and-record"; the
+    debrief over and its mic stopped, the type goes back to "auto"."""
+    w = demo
+    as_tester(w.cfg, debrief_card="on")
+    p = w.open_demo(touch=True, before=lambda page: page.add_init_script(AUDIO_SESSION))
+    p.wait("document.body.classList.contains('end-demo')")
+    p.js("document.getElementById('end-demo').click()")
+    p.page.wait_for_function("window.__interview.length === 1", timeout=4000)
+    assert p.js("window.__typeAtMic") == ["play-and-record"] and p.js("navigator.audioSession.type") == "play-and-record"
+    p.js("window.__interviewDone()")
+    p.wait("!L.debriefing")
+    assert p.js("navigator.audioSession.type") == "auto" and not p.js("Speaker.live()")

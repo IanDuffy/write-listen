@@ -21,7 +21,7 @@ import pytest
 
 import server
 from fakes import FakeAnthropic, Responder
-from stages import llm, memory
+from stages import common, llm, memory
 from stages.common import ROOT
 from voice.gpt_live import session as S
 
@@ -209,17 +209,39 @@ def site(cfg, tmp_path, monkeypatch):
     srv.should_exit = True
 
 
-class Page:
-    """One page in headless Chromium; GPT-Live's side is played through window.__emit."""
+# Safari's navigator.audioSession (16.4+; Chromium has none), and the type each getUserMedia call saw: page/speaker.js
+# sets "play-and-record" before the mic on a phone, so the voices come from the loudspeaker (Ian, 2026-11-21).
+AUDIO_SESSION = r"""
+(() => {
+  let type = "auto";
+  window.__sessionTypes = [];
+  Object.defineProperty(navigator, "audioSession", { configurable: true, value: {
+    get type() { return type; }, set type(v) { type = v; window.__sessionTypes.push(v); } } });
+  const ask = navigator.mediaDevices.getUserMedia;
+  window.__typeAtMic = [];
+  window.__micAsked = [];
+  navigator.mediaDevices.getUserMedia = function (c) {
+    window.__typeAtMic.push(type); window.__micAsked.push(c); return ask.call(this, c); };
+})();
+"""
 
-    def __init__(self, base):
+
+class Page:
+    """One page in headless Chromium; GPT-Live's side is played through window.__emit. `touch`: a phone's
+    screen (any-pointer: coarse); `init`: a script after the stub (AUDIO_SESSION)."""
+
+    def __init__(self, base, touch=False, init=None):
         self.pw = sync_api.sync_playwright().start()
         self.browser = self.pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
-        self.page = self.browser.new_context().new_page()
+        self.page = self.browser.new_context(has_touch=touch).new_page()
         self.posts = []
+        self.errors = []
+        self.page.on("pageerror", lambda e: self.errors.append(str(e)))
         self.page.on("request", lambda r: r.method == "POST" and self.posts.append(
             (r.url.split("://", 1)[1].split("/", 1)[1], json.loads(r.post_data or "{}"))))
         self.page.add_init_script(STUB)
+        if init:
+            self.page.add_init_script(init)
         self.page.goto(base + "/")
         self.page.wait_for_function("window.Live && window.Align")
         self.ms = 0  # session-relative time for the transcript's start_ms/end_ms
@@ -279,8 +301,8 @@ def world(site):
     base, w, offers = site
     pages = []
 
-    def open_page():
-        p = Page(base)
+    def open_page(**kw):
+        p = Page(base, **kw)
         pages.append(p)
         return p
     w.open, w.offers, w.notes = open_page, offers, S.notes()
@@ -289,10 +311,10 @@ def world(site):
         p.close()
 
 
-def connect(w, greet=True, start=True):
+def connect(w, greet=True, start=True, **open_kw):
     """The page open, the orb tapped, the session started; the guide says hello, and (`start`) starts
     the chapter: start_chapter through the server, whose run (the World's) the page may then read."""
-    p = w.open()
+    p = w.open(**open_kw)
     p.page.click("#orb")
     p.wait("L.started && L.phase === 'talk'")
     if greet:
@@ -328,10 +350,10 @@ def say_yes(p, words="Yes please."):
     return p
 
 
-def start_reading(w, *lock):
+def start_reading(w, *lock, **open_kw):
     """Connected, the chapter's opening written and offered, the listener's yes, the guide's lead-in,
     then the first paragraph sent."""
-    p = connect(w)
+    p = connect(w, **open_kw)
     offered(p, w, *lock)
     return say_yes(p)
 
@@ -4073,3 +4095,233 @@ def test_directorWhy_names_each_drop_and_nothing_else(world):
     assert p.js("[window.Live.dirHere(), window.Live.dirHereWhy()]") == [False, "muted"]
     p.js("() => { window.Live.L.muted = false; window.Live.L.phase = 'resting'; }")
     assert p.js("[window.Live.dirHere(), window.Live.dirHereWhy()]") == [False, "phase resting"]
+
+
+# --- the phone's loudspeaker (page/speaker.js; Ian, 2026-11-21: the voice came from the ear speaker) -----------
+
+def test_on_a_phone_the_loudspeaker_is_asked_for_before_the_mic_and_let_go_once_no_mic_is_open(world):
+    """iPhone Safari: navigator.audioSession.type is "play-and-record" before getUserMedia (the loudspeaker while
+    the mic is open; headphones still win), stays so while any mic track lives (the wake listener's clone too),
+    and goes back to "auto" only once every one has stopped. The mic keeps its echo cancellation."""
+    w = world
+    p = connect(w, start=False, touch=True, init=AUDIO_SESSION)
+    assert p.js("window.__typeAtMic") == ["play-and-record"]
+    assert p.js("window.__micAsked[0].audio") == {"echoCancellation": True, "noiseSuppression": True,
+                                                   "autoGainControl": True}
+    assert p.js("Speaker.live()")
+    p.page.click("#orb")  # rest: the session closes, the mic is kept for the wake listener (a clone)
+    p.wait("window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=5000)
+    assert p.js("navigator.audioSession.type") == "play-and-record" and "auto" not in p.js("window.__sessionTypes")
+    p.page.click("#stop")  # Stop listening: the mic and the clone stopped
+    p.wait("L.phase === 'idle' && !L.stream", timeout=5000)
+    p.page.wait_for_function("navigator.audioSession.type === 'auto'", timeout=3000)
+    assert p.js("window.__sessionTypes") == ["play-and-record", "auto"] and not p.js("Speaker.live()")
+    p.page.click("#orb")  # a new conversation: asked for again before the mic
+    p.wait("L.started && L.phase === 'talk'")
+    assert p.js("window.__typeAtMic") == ["play-and-record", "play-and-record"]
+    assert p.errors == []
+
+
+
+# Chrome on Android (Ian's phone, 2026-11-21: the voice from the ear speaker): its fixed input labels, and the
+# second capture (deviceId exact) failing when window.__failSecond is set. page/speaker.js reopens the mic on
+# "Speakerphone" when no headset is listed.
+ANDROID = r"""
+(() => {
+  Object.defineProperty(navigator, "userAgent", { configurable: true,
+    get: () => "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36" });
+  navigator.mediaDevices.enumerateDevices = async () => [
+    { kind: "audioinput", label: "Speakerphone", deviceId: "sp-id", groupId: "g" },
+    { kind: "audioinput", label: "Headset earpiece", deviceId: "ear-id", groupId: "g" }];
+  const ask = navigator.mediaDevices.getUserMedia;
+  window.__micAsked = [];
+  navigator.mediaDevices.getUserMedia = async function (c) {
+    window.__micAsked.push(c);
+    if (c.audio && c.audio.deviceId && window.__failSecond) throw new DOMException("busy", "NotReadableError");
+    return ask.call(this, c);
+  };
+})();
+"""
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_on_android_the_page_talks_on_the_stream_speaker_mic_resolved_with(world, fail):
+    """The second capture of "Speakerphone" is the one the guide hears (sent on the peer connection, metered), the
+    first stopped; when the second fails, the first is kept and the conversation goes on the same."""
+    w = world
+    p = connect(w, start=False, touch=True, init=ANDROID + ("window.__failSecond = true;" if fail else ""))
+    asked = p.js("window.__micAsked.map((c) => c.audio.deviceId ? c.audio.deviceId.exact : null)")
+    assert asked == [None, "sp-id"]
+    assert p.js("window.__micAsked[1].audio.echoCancellation") is True
+    assert p.L("L.stream.getAudioTracks()[0] === L.mic && L.mic.readyState === 'live'")
+    assert p.js("window.__pcs[window.__pcs.length - 1].tracks.includes(window.Live.L.mic)")
+    assert p.js("Speaker.live()")
+    p.say("Hi there.")
+    p.wait("L.phase === 'talk'")
+    assert p.errors == []
+
+
+# A headset connected after the switch: the devices listed can change, and the fake peer connection's addTrack gives a
+# sender whose replaceTrack swaps the track it sends.
+ANDROID_LATER_HEADSET = ANDROID + r"""
+(() => {
+  window.__devs = [{ kind: "audioinput", label: "Speakerphone", deviceId: "sp-id", groupId: "g" },
+                   { kind: "audioinput", label: "Headset earpiece", deviceId: "ear-id", groupId: "g" }];
+  navigator.mediaDevices.enumerateDevices = async () => window.__devs.slice();
+  const P = window.RTCPeerConnection.prototype, add = P.addTrack;
+  P.addTrack = function (t, s) {
+    add.call(this, t, s);
+    const pc = this;
+    pc.tracks = pc.tracks || [];
+    const sender = { track: t, async replaceTrack(n) {
+      const i = pc.tracks.indexOf(sender.track);
+      if (i >= 0) pc.tracks.splice(i, 1);
+      if (n) pc.tracks.push(n);
+      sender.track = n;
+    } };
+    (pc.__senders = pc.__senders || []).push(sender);
+    return sender;
+  };
+  P.getSenders = function () { return (this.__senders || []).slice(); };
+})();
+"""
+
+
+@pytest.mark.parametrize("resting", [False, True])
+def test_on_android_a_headset_connected_after_the_switch_takes_the_guides_mic(world, resting):
+    """Chrome keeps the asked-for Speakerphone input while it is there (always), so a headset connected later would
+    never be chosen: page/speaker.js opens a capture with no device asked for and puts its track in L.stream; the
+    page sends it where the old one was sent, and a resting page's wake listener listens on it."""
+    w = world
+    p = connect(w, start=False, touch=True, init=ANDROID_LATER_HEADSET)
+    p.js("window.__oldMic = window.Live.L.mic; true")
+    if resting:
+        p.page.click("#orb")  # rest: the session closes, the mic is kept for the wake listener (a clone)
+        p.wait("window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=5000)
+    p.js("window.__devs.push({ kind: 'audioinput', label: 'Bluetooth headset', deviceId: 'bt', groupId: 'g' }); "
+         "navigator.mediaDevices.dispatchEvent(new Event('devicechange')); true")
+    p.wait("L.mic && L.mic !== window.__oldMic", timeout=5000)
+    asked = p.js("window.__micAsked.map((c) => c.audio.deviceId ? c.audio.deviceId.exact : null)")
+    assert asked == [None, "sp-id", None]
+    assert p.L("L.stream.getAudioTracks().length === 1 && L.stream.getAudioTracks()[0] === L.mic")
+    assert p.L("L.mic.readyState === 'live'") and p.js("window.__oldMic.readyState") == "ended"
+    if resting:
+        p.wait("window.Live.L.log.filter((m) => m[1] === 'wake-listening').length === 2", timeout=5000)
+        assert p.L("L.phase") == "resting"
+    else:
+        assert p.L("L.sender.track === L.mic")
+        assert p.js("(() => { const pc = window.__pcs[window.__pcs.length - 1]; "
+                    "return pc.tracks.includes(window.Live.L.mic) && !pc.tracks.includes(window.__oldMic); })()")
+        assert p.L("L.mic.enabled") == p.js("window.__oldMic.enabled")
+        p.say("Hi there.")
+        p.wait("L.phase === 'talk'")
+    assert p.js("Speaker.live()")
+    assert p.errors == []
+
+
+# Each mic request waits for the test (window.__micWait[i]() lets it open); window.__given: the streams handed out.
+DELAYED_MIC = r"""
+(() => {
+  const ask = navigator.mediaDevices.getUserMedia;
+  window.__given = [];
+  window.__micWait = [];
+  navigator.mediaDevices.getUserMedia = function (c) {
+    return new Promise((resolve, reject) => window.__micWait.push(() =>
+      ask.call(navigator.mediaDevices, c).then((s) => { window.__given.push(s); resolve(s); }, reject)));
+  };
+})();
+"""
+
+
+def test_a_mic_that_opens_after_its_conversation_ended_is_stopped_not_left_beside_the_next(world):
+    """The conversation ends while its mic is still opening (the library's Play, Reset or End demo: on Android the
+    Speakerphone retry can take seconds) and a tap starts the next, which asks for its own. The first capture,
+    opening late, is stopped; once it was kept live beside the next one's, because the phase read "connecting" again."""
+    w = world
+    p = w.open(init=DELAYED_MIC)
+    p.page.click("#orb")
+    p.page.wait_for_function("window.__micWait.length === 1")
+    assert p.L("L.phase") == "connecting"
+    p.js("window.Orb.end(); true")
+    p.wait("L.phase === 'idle' && !L.ending")
+    p.page.click("#orb")  # the next conversation, the first mic request still open
+    p.page.wait_for_function("window.__micWait.length === 2")
+    p.js("window.__micWait[0](); true")  # the first opens now
+    p.page.wait_for_function("window.__given.length === 1")
+    p.page.wait_for_function("window.__given[0].getAudioTracks()[0].readyState === 'ended'", timeout=3000)
+    assert p.L("L.stream === null && L.phase === 'connecting'")
+    p.js("window.__micWait[1](); true")
+    p.wait("L.started && L.phase === 'talk'")
+    assert p.L("L.stream === window.__given[1] && L.mic.readyState === 'live'")
+    assert p.js("window.__given[0].getAudioTracks()[0].readyState") == "ended"
+    assert p.js("window.__pcs.length") == 1 and p.js("window.__pcs[0].tracks.includes(window.Live.L.mic)")
+    assert p.errors == []
+
+
+def test_the_wake_listeners_own_mic_keeps_the_loudspeaker_until_it_stops(world):
+    """The wake listener's clone counts as a live mic by itself (Speaker.hold) and stopping it lets the loudspeaker go
+    (stopWake's Speaker.free). Today the main mic is still open beside it during a rest, so this is set up by hand:
+    the main track stopped while the clone listens."""
+    w = world
+    p = connect(w, start=False, touch=True, init=AUDIO_SESSION)
+    p.page.click("#orb")  # rest: the wake listener opens its clone of the mic
+    p.wait("window.Live.L.log.some((m) => m[1] === 'wake-listening')", timeout=5000)
+    p.js("window.Live.L.mic.stop(); Speaker.free(); true")  # only the clone left
+    assert p.js("Speaker.live()") and p.js("navigator.audioSession.type") == "play-and-record"
+    assert "auto" not in p.js("window.__sessionTypes")
+    p.js("window.Live.L.phase = 'idle'; true")  # the page's tick stops the wake listener once not resting
+    p.page.wait_for_function("navigator.audioSession.type === 'auto'", timeout=3000)
+    assert not p.js("Speaker.live()") and p.js("window.__sessionTypes") == ["play-and-record", "auto"]
+    assert p.errors == []
+
+def test_pause_lets_the_loudspeaker_go_and_play_asks_for_it_again_before_the_mic(world):
+    """Pause closes the session and stops the mic ("auto": nothing is captured); play asks for "play-and-record"
+    before the mic it opens again."""
+    w = world
+    p = start_reading(w, touch=True, init=AUDIO_SESSION)
+    read_through(p, w, "s1-p01")
+    p.wait("L.feed.cur && L.feed.cur.id === 's1-p02' && L.feed.cur.sentAt")
+    p.page.click("#play")
+    p.wait("L.phase === 'paused' && !L.pc && !L.stream", timeout=4000)
+    assert p.js("navigator.audioSession.type") == "auto"
+    p.page.wait_for_timeout(600)
+    p.page.click("#play")
+    p.wait("L.phase === 'reading' && L.liveId === 'live_2'", timeout=6000)
+    assert p.js("window.__typeAtMic") == ["play-and-record", "play-and-record"]
+    assert p.js("navigator.audioSession.type") == "play-and-record"
+
+
+def test_a_laptop_with_audio_session_is_left_alone(world):
+    """Safari on a laptop (no touch screen) keeps its own audio session."""
+    w = world
+    p = connect(w, start=False, init=AUDIO_SESSION)  # no touch screen
+    assert p.js("window.__typeAtMic") == ["auto"] and p.js("window.__sessionTypes") == []
+    p.js("document.getElementById('stop').click()")
+    p.wait("L.phase === 'idle' && !L.stream", timeout=5000)
+    assert p.js("window.__sessionTypes") == [] and p.errors == []
+
+
+def test_a_phone_browser_without_audio_session_still_talks(world):
+    """Chrome on Android (and Firefox) have no navigator.audioSession: the page talks as before, no errors."""
+    w = world
+    q = connect(w, start=False, touch=True)
+    assert q.js("'audioSession' in navigator") is False and q.js("window.__mics") == 1
+    q.js("document.getElementById('stop').click()")
+    q.wait("L.phase === 'idle' && !L.stream", timeout=5000)
+    assert q.errors == []
+
+
+def test_the_served_scripts_that_open_the_mic_carry_speaker_js_once_per_document(world):
+    """live.js and library.js are served with page/speaker.js at the top; the page has one window.Speaker."""
+    w = world
+    speaker = (ROOT / "page" / "speaker.js").read_text(encoding="utf-8")
+    head, tail = speaker.split(common.SPEAKER_SLOT)   # its settings slot, filled from config when served
+    for path in ("/live.js", "/library.js"):
+        text = urllib.request.urlopen(w.base + path).read().decode()
+        assert text.startswith(head) and tail in text and common.SPEAKER_SLOT not in text, path
+        assert text.count("window.Speaker = window.Speaker ||") == 1, path
+    p = w.open()
+    assert p.js("typeof Speaker.mic") == "function"
+    assert p.js("Object.keys(Speaker).sort()") == ["follow", "free", "hold", "live", "mic", "playing", "reports",
+                                                    "settings"]
+    assert p.js("Speaker.settings.report") is False   # Ian's own app: no tester, nothing posted

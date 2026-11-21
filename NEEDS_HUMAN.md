@@ -10,6 +10,17 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## Phones (2026-11-21): the voices on the loudspeaker
+On the droplet, after `ssh -t wl-droplet sudo wl deploy`:
+- Android Chrome, no headphones, Bluetooth audio not connected: open a fresh tester link and tap. The interviewer and
+  then the guide should come from the bottom loudspeaker at normal volume, not the ear speaker. Then once with Bluetooth
+  headphones connected partway through: the voice should move to them.
+- iPhone Safari: the same, including after a rest and a pause (the moments the route used to drop to the ear speaker).
+- In `/admin`, that tester's **Transcript**: grey "Audio" lines name the phone, its inputs and the mic. "Speakerphone
+  retry: switched" and still quiet means Android ignored Chrome's request; "failed" means the phone refused the second
+  capture; "no label" means Chrome listed no Speakerphone input. To turn the Android step off:
+  `speaker.android_speakerphone: false` in config.yaml.
+
 ## After run 4 (2026-11-20): a real chapter that matches what you said
 - Use a real chapter (not rehearsal): `wl study create "Ian run 5" --name Ian`. Rehearsal still replays the heron
   chapter, whatever you ask for.

@@ -444,3 +444,45 @@ def test_a_held_row_written_after_its_sent_row_is_still_sent(dcfg, tmp_path, no_
     look1 = next(x for x in t["items"] if x["kind"] == "look")
     assert look1["fate"]["fate"] == "sent" and look1["fate"]["held_secs"] == 3.2
     assert t["director"]["sent"] == 1 and t["director"]["held"] == 1
+
+
+def test_the_transcript_page_on_a_phone(dcfg, site):
+    """The admin's Transcript view (Ian, 2026-11-21): the whole visit, readable at phone width."""
+    from test_visit import _seed
+    base, browser = site
+    lid = _seed(dcfg)
+    page = browser.new_page()
+    page.goto(base + "/admin")
+    link = page.wait_for_selector(f"tr[data-lid='{lid}'] a[href^='/admin/transcript']")
+    assert link.get_attribute("href") == f"/admin/transcript?lid={lid}"
+
+    phone = browser.new_page(viewport={"width": 375, "height": 812})
+    phone.goto(base + f"/admin/transcript?lid={lid}")
+    phone.wait_for_selector("ol.part li.line")
+    assert phone.inner_text("#title") == "Transcript: Ian run 4 (Ian)"
+    assert [h.inner_text().split("\n")[0] for h in phone.query_selector_all("h2")] == [
+        "Intro with the interviewer21:25:19", "Conversation with the guide21:25:39", "Debrief with the interviewer21:32:57"]
+    text = phone.inner_text("#content")
+    for want in ("Interviewer", "Hi, is this Ian?", "Hey, Ian! I'm Hanne.", "Chapter asked for:",
+                 "Question asked mid-chapter at part 1, paragraph 5", "Pressed End demo", "Debrief ended"):
+        assert want in text, want
+    assert "Ask about the park" not in text   # an earpiece whisper
+    assert phone.get_attribute("#earpiece", "href") == f"/admin/earpiece?lid={lid}"
+    assert phone.get_attribute("#download", "href") == f"/api/admin/transcript/{lid}/text"
+    phone.click("li.event.note summary >> nth=0")
+    assert "This session picks up" in phone.inner_text("#content") or "Begin now" in phone.inner_text("#content")
+    assert phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    # A folder spanning days: an older chapter gets its own dated part, no "?" times, dates not a length
+    from tester_fakes import jsonl as _jsonl, write as _write
+    old_ch = testers.folder(lid) / "chapters" / "herons-20261114"
+    _write(old_ch / "status.json", {"state": "ready", "started": "2026-11-14T00:11:46",
+                                    "updated": "2026-11-14T01:00:05", "title": "Herons", "run": old_ch.name})
+    _jsonl(old_ch / "fast_timeline.jsonl", [{"ts": "2026-11-14T00:23:17", "event": "ready"}])
+    phone.reload()
+    phone.wait_for_selector("ol.part li.line")
+    heads = [h.inner_text().split("\n")[0] for h in phone.query_selector_all("h2")]
+    assert heads[:2] == ["Chapter records with no conversation recordedSat 14 Nov, 00:11:46",
+                         "Intro with the interviewerFri 20 Nov, 21:25:19"], heads
+    assert "?" not in [b.inner_text() for b in phone.query_selector_all(".when b")]
+    assert " to " in phone.inner_text("#summary") and " long " not in phone.inner_text("#summary")

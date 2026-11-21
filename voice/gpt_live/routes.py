@@ -290,6 +290,7 @@ def mount(app, cfg: dict, pipe, chat) -> None:
     @app.get("/live.js")
     def live_js() -> Response:
         text = LIVE_JS.read_text(encoding="utf-8").replace("__LIVE_SETTINGS__", json.dumps(page_settings(cfg)))
+        text = common.with_speaker(text, cfg)  # page/speaker.js: the voice on a phone's loudspeaker
         return Response(text, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
     @app.get("/earpiece.js")

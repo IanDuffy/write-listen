@@ -24,6 +24,12 @@
 
   const I = { epoch: 0, pc: null, dc: null, sid: null, connecting: false, ctx: null, opts: {}, S: {}, notes: {},
               stateNow: null };
+  // page/speaker.js: on Android a headset connected after the Speakerphone switch puts a new mic track in the
+  // stream (the one the tap opened); it is sent in the old one's place.
+  if (window.Speaker && Speaker.follow) Speaker.follow((from, to, stream) => {
+    if (!I.pc || I.stream !== stream || !I.pc.getSenders) return;
+    for (const sd of I.pc.getSenders()) if (sd.track === from && sd.replaceTrack) sd.replaceTrack(to).catch(() => {});
+  });
 
   async function post(url, body) {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -120,10 +126,10 @@
       if (I.pc !== pc) return;
       voice.srcObject = e.streams[0];
       const p = voice.play();
-      if (p && p.catch) p.catch(() => {});
+      if (p && p.then) p.then(() => Speaker.playing(e.streams[0]), () => {});  // page/speaker.js
       meter(e.streams[0]);
     };
-    const track = I.stream && I.stream.getAudioTracks()[0];
+    const track = I.stream && Speaker.hold(I.stream.getAudioTracks()[0]);  // page/speaker.js (served above this file)
     if (track) { track.enabled = true; pc.addTrack(track, I.stream); }
     else pc.addTransceiver("audio", { direction: "sendrecv" });
     const dc = pc.createDataChannel("oai-events");

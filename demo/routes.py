@@ -11,7 +11,8 @@
                                     (end_demo, play, pause, seek, ask, tap_talk), appended to their
                                     study/events.jsonl for the debrief's account of what they did
                                     (demo/debrief.py). Tester mode only; 404 without a tester, 400 for an
-                                    event it doesn't know
+                                    event it doesn't know. Also {event: "audio_route", data}: page/speaker.js's
+                                    record of the phone's audio route (not a press; the admin transcript shows it)
     GET  /admin                     page/admin.html
     GET  /api/admin/testers         every tester's record and state, and the cost totals
     POST /api/admin/testers         {label, name?, rehearsal?}: a new link (name: what the interviewer greets them
@@ -35,6 +36,11 @@
                                     (voice/gpt_live/earpiece_history.py); lid "own" is the active listener
                                     (Ian's own when demo mode is off)
     GET  /api/admin/earpiece/{lid}/{session}   one conversation's timeline: lines, looks, notes and their fates
+    GET  /admin/transcript          page/admin_transcript.html (?lid=<lid or own>): the whole visit as one transcript
+                                    (Ian, 2026-11-21): intro, every conversation with the guide, the chapter and
+                                    questions asked in it, presses, debrief (demo/visit.py; no earpiece notes)
+    GET  /api/admin/transcript/{lid}        that timeline as JSON {lid, label, name, started, ended, items}
+    GET  /api/admin/transcript/{lid}/text   the same as a plain-text download
 
 The admin routes answer on loopback (no forwarding headers: behind Caddy every request comes from
 127.0.0.1) or with HTTP basic auth matching ADMIN_USER / ADMIN_PASSWORD from the environment; otherwise 401
@@ -45,6 +51,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import os
 import re
 import secrets as _secrets
@@ -62,6 +69,7 @@ BLANK = ROOT / "page" / "blank.html"
 GATE = ROOT / "page" / "gate.html"   # part C's
 ADMIN = ROOT / "page" / "admin.html"
 ADMIN_EARPIECE = ROOT / "page" / "admin_earpiece.html"
+ADMIN_TRANSCRIPT = ROOT / "page" / "admin_transcript.html"
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 FORWARDED = ("x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "forwarded", "x-real-ip")
 STUDY_FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(md|jsonl|json)")
@@ -85,6 +93,7 @@ class Event(BaseModel):
     phase: str | None = Field(default=None, max_length=40)
     chapter_t: float | None = None
     detail: str | None = Field(default=None, max_length=2000)
+    data: dict | None = None   # audio_route only (page/speaker.js), bounded by debrief.audio_fields
 
 
 def demo_on(cfg: dict) -> bool:
@@ -238,6 +247,11 @@ def mount(app: FastAPI, cfg: dict) -> None:
             raise HTTPException(404)
         if req.event not in debrief.EVENTS:
             raise HTTPException(400, "Unknown event.")
+        if req.event == debrief.AUDIO_ROUTE:   # page/speaker.js: the phone's audio route, not a press
+            if req.data is not None and len(json.dumps(req.data, default=str)) > 8000:
+                raise HTTPException(413, "Too large.")
+            saved = debrief.add_event(testers.folder(rec["lid"]), req.event, data=req.data)
+            return {"ok": True, "saved": saved is not None}
         saved = debrief.add_event(testers.folder(rec["lid"]), req.event, req.phase, req.chapter_t, req.detail)
         return {"ok": True, "saved": saved is not None}
 
@@ -340,11 +354,39 @@ def mount(app: FastAPI, cfg: dict) -> None:
 
     def earpiece_folder(lid: str) -> tuple:
         """(folder, label) for a tester's id, or "own": the active listener (after guard(), so never a tester's
-        cookie scope)."""
+        cookie scope). The Transcript view's too."""
         if lid == "own":
             return common.listener_dir(cfg), "Your own"
         rec = _tester_or_404(lid)
         return testers.folder(lid), rec.get("label") or lid
+
+    def visit_of(lid: str) -> dict:
+        from . import visit
+        d, label = earpiece_folder(lid)
+        rec = testers.record(lid) if lid != "own" else None
+        name = (rec or {}).get("name") or (rec or {}).get("given_name") or (None if rec else "You")
+        return {"lid": lid, "label": label, **visit.read(d, name)}
+
+    @app.get("/admin/transcript", response_class=HTMLResponse)
+    def admin_transcript_page(request: Request) -> Response:
+        guard(request)
+        return HTMLResponse(ADMIN_TRANSCRIPT.read_text(encoding="utf-8"), headers=NO_STORE)
+
+    @app.get("/api/admin/transcript/{lid}")
+    def admin_transcript(lid: str, request: Request) -> JSONResponse:
+        guard(request)
+        return JSONResponse(visit_of(lid), headers=NO_STORE)
+
+    @app.get("/api/admin/transcript/{lid}/text")
+    def admin_transcript_text(lid: str, request: Request) -> Response:
+        guard(request)
+        from . import visit
+        got = visit_of(lid)
+        title = got["label"] + (f" ({got['name']})" if got.get("name") and got["name"] not in (got["label"], "You")
+                                else "")
+        safe = re.sub(r"[^A-Za-z0-9._-]", "-", lid)
+        return PlainTextResponse(visit.text(got, title), headers={
+            **NO_STORE, "Content-Disposition": f'attachment; filename="{safe}-transcript.txt"'})
 
     @app.get("/api/admin/earpiece/{lid}")
     def admin_earpiece_list(lid: str, request: Request) -> JSONResponse:

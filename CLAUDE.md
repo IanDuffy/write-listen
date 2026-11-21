@@ -724,6 +724,35 @@ Run 4's invented "You said you watched herons by the river" came from the rehear
   whisper went at 1:06 on `offered`, the guide asked it after explaining ("what's the part that sticks with you?"),
   then pitched on her answer. Not heard by Ian.
 
+## Deployed, phones and the whole visit (2026-11-21, feature/tester-demo)
+
+- **The droplet** (DEPLOY.md): 159.203.86.251, `https://demo.ianduffy.com`, live since 2026-11-21. Root ssh is off:
+  `ssh wl-droplet` logs in as `deploy`, whose sudo password Ian types (never an agent). Updates:
+  `ssh -t wl-droplet sudo wl deploy`. The repository is public, so the droplet clones over HTTPS (setup.sh run with
+  `REPO=https://github.com/IanDuffy/write-listen.git`; no deploy key). setup.sh now creates `/var/lib/caddy`
+  (without it Caddy served no certificate).
+- **The loudspeaker** (`page/speaker.js`, `window.Speaker`, served at the top of `/live.js`, `/library.js` and
+  `/interview.js` by `stages/common.with_speaker(js, cfg)`; config `speaker`). Ian's first phone test (Android
+  Chrome): the voices came from the ear speaker, very quiet. Every mic open goes through `Speaker.mic()`; tracks
+  opened otherwise are `Speaker.hold`, stops are followed by `Speaker.free()`. iPhone: `audioSession.type =
+  "play-and-record"` before the mic and while any mic track lives, then `auto`. Android: Chrome asks Android for a
+  communication device (never the ear speaker) without checking it took, so once the first capture is open and no
+  headset input is listed, a second capture of the "Speakerphone" input opens while the first is live, then the
+  first stops (`speaker.android_speakerphone`, the off switch; any failure keeps the first). A headset connected
+  after that switch gets a no-device capture swapped into the same stream (`Speaker.follow`; live.js, interview.js
+  and library.js replace their sender's track). Inferred from the Chromium source; **not yet tried on a phone**.
+- **`audio_route` records** (tester mode): each mic open, the Speakerphone step, a device change and the voice's first
+  sound post `POST /api/demo/event` `{event: "audio_route", data}` (phone model and Android/Chrome version from
+  client hints, inputs, outputs, the mic's label and settings), at most one per reason per `report_gap_ms`. Kept in
+  `study/events.jsonl` beside the presses but never read as one (`debrief.events()` returns `PRESSES` only;
+  `debrief.audio_routes()`), so the debrief's account is unchanged.
+- **The whole visit in admin** (Ian: "show the full transcript ... not only the debrief"): `demo/visit.py` builds one
+  timeline from the intro, every guide conversation (typed and voice, its tools in words, rests and resumes), the
+  chapter (made, ready, each paragraph read, collapsed to ranges; asides), the presses, the audio lines (grey) and
+  the debrief. Earpiece notes are left out (they have their own view). `/admin/transcript?lid=<lid|own>`
+  (`page/admin_transcript.html`), JSON at `/api/admin/transcript/{lid}`, plain text at `.../text`; a Transcript
+  link on each tester in `/admin`.
+
 ## Local setup
 
 ```bash

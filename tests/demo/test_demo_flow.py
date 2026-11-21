@@ -167,8 +167,12 @@ def test_a_tester_goes_from_the_link_through_the_intro_to_the_guide_and_the_debr
     assert len([b for b in page.posted("api/interview/start") if b["mode"] == "debrief"]) == 1
     assert not page.page.is_visible("#end-demo")  # not during the debrief
     # what they pressed, for the debrief's account of the session (study/, never sessions/)
-    pressed = [json.loads(x) for x in (site.folder / "study" / "events.jsonl").read_text().splitlines()]
+    recs = [json.loads(x) for x in (site.folder / "study" / "events.jsonl").read_text().splitlines()]
+    pressed = [e for e in recs if e["event"] != "audio_route"]
     assert [(e["event"], e["phase"]) for e in pressed] == [("end_demo", "talk")]
+    # ... beside page/speaker.js's audio route records (the gate's mic open, the voices playing), never presses
+    routes = [e["data"]["reason"] for e in recs if e["event"] == "audio_route"]
+    assert "mic" in routes and set(routes) <= {"mic", "playing", "devicechange", "speakerphone"}
     # The debrief ends itself (Ian's note, 2026-11-18: "there was no clear exit"): its farewell is the end, with
     # no closing question and no tool call; the page acts on the words.
     # (A debrief the tester said nothing in is never done: they answer first.)

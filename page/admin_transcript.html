@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Transcript</title>
+<!--
+  A tester's whole visit as one transcript (Ian, 2026-11-21), served at /admin/transcript by demo/routes.py and
+  guarded there like /admin. ?lid=<tester id or own>. In time order: the interviewer's intro, every conversation
+  with the guide, the chapter and the questions asked in it, presses, the debrief. Speakers' lines, and grey
+  event lines in plain words for app notes (tap to see the note's words), tools, the chapter and presses.
+  Earpiece notes are not here: the Earpiece history has them.
+  Data: /api/admin/transcript/<lid> (demo/visit.py); plain text: /api/admin/transcript/<lid>/text.
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; --warn: #b3412e; --soft: #f1efe9; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; --warn: #e07a66; --soft: #1f1e1c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 22px 0 4px; padding: 0 0 4px; border-bottom: 2px solid var(--accent); }
+  h2 .sub { font-weight: 400; margin-left: 6px; }
+  a { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; }
+  #msg { min-height: 1.4em; color: var(--muted); }
+  ol.part { list-style: none; margin: 0; padding: 0; }
+  ol.part > li { display: grid; grid-template-columns: 62px 1fr; gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .when { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .when b { color: var(--fg); font-weight: 600; display: block; }
+  .body { min-width: 0; overflow-wrap: anywhere; }
+  .who { font-weight: 600; margin-right: 4px; }
+  li.line.guide .who { color: var(--accent); }
+  li.line.interviewer .who { color: var(--muted); }
+  li.event { padding: 3px 0; }
+  li.event .body { color: var(--muted); font-size: 13px; }
+  li.event.chapter .body, li.event.aside .body { color: var(--fg); }
+  li.event.chapter .body::before, li.event.aside .body::before { content: "◆ "; color: var(--accent); }
+  li.event .when b { font-weight: 400; color: var(--muted); }
+  li.event.audio .body { font-size: 12px; }
+  details summary { cursor: pointer; }
+  details p { margin: 4px 0 2px; white-space: pre-wrap; }
+  @media (max-width: 600px) {
+    ol.part > li { grid-template-columns: 52px 1fr; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="sub"><a href="/admin">Testers</a> · <a id="earpiece" href="/admin/earpiece">Earpiece history</a> · <a id="download" href="#">Download as text</a></p>
+  <h1 id="title">Transcript</h1>
+  <p id="summary" class="sub"></p>
+  <div id="msg" aria-live="polite">Loading…</div>
+  <div id="content"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length <= n ? t : t.slice(0, n - 1).trimEnd() + "…"; };
+const lid = new URLSearchParams(location.search).get("lid") || "own";
+const mss = (s) => (s == null || s < 0) ? "?" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const when = (iso) => {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+
+$("earpiece").href = `/admin/earpiece?lid=${encodeURIComponent(lid)}`;
+$("download").href = `/api/admin/transcript/${encodeURIComponent(lid)}/text`;
+
+function stamp(x) { return `<div class="when"><b>${mss(x.secs)}</b>${esc(x.clock || "")}</div>`; }
+
+function itemHtml(x) {
+  if (x.kind === "line") {
+    return `<li class="line ${esc(x.who)}">${stamp(x)}<div class="body"><span class="who">${esc(x.speaker)}</span>${esc(x.text)}</div></li>`;
+  }
+  // An app note: its first words in the line, all of them on a tap.
+  const body = x.detail
+    ? `<details><summary>${esc(x.text)}: ${esc(clip(x.detail, 90))}</summary><p>${esc(x.detail)}</p></details>`
+    : esc(x.text);
+  return `<li class="event ${esc(x.type || "")}">${stamp(x)}<div class="body">${body}</div></li>`;
+}
+
+async function load() {
+  const r = await fetch(`/api/admin/transcript/${encodeURIComponent(lid)}`);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  const got = await r.json();
+  const who = got.name && got.name !== got.label && got.name !== "You" ? ` (${got.name})` : "";
+  $("title").textContent = `Transcript: ${got.label}${who}`;
+  document.title = `Transcript: ${got.label}`;
+  const lines = got.items.filter((x) => x.kind === "line").length;
+  // A folder spanning days (your own) gives its dates, not a length in minutes; each part's header gets its date.
+  const days = new Set(got.items.filter((x) => x.kind === "part").map((x) => x.date)).size > 1;
+  const span = days ? `${when(got.started)} to ${when(got.ended)}`
+    : `${when(got.started)} · ${mss((new Date(got.ended) - new Date(got.started)) / 1000)} long`;
+  $("summary").textContent = got.started
+    ? `${span} · ${lines} lines. `
+      + "Times: m:ss since the visit began, and the clock; a line's time is when it ended. Tap an app note to read it. Earpiece notes are in the Earpiece history."
+    : "";
+  if (!got.items.length) { $("msg").textContent = "Nothing recorded yet."; return; }
+  $("msg").textContent = "";
+  // One list per part (intro, each conversation with the guide, debrief), under its header.
+  let html = "", open = false;
+  for (const x of got.items) {
+    if (x.kind === "part") {
+      if (open) html += "</ol>";
+      html += `<h2>${esc(x.text)}<span class="sub">${days && x.date ? esc(x.date) + ", " : ""}${esc(x.clock)}</span></h2><ol class="part">`;
+      open = true;
+      continue;
+    }
+    if (!open) { html += '<ol class="part">'; open = true; }
+    html += itemHtml(x);
+  }
+  if (open) html += "</ol>";
+  $("content").innerHTML = html;
+}
+
+load().catch((e) => { $("msg").textContent = "Couldn't load: " + e.message; });
+</script>
+</body>
+</html>

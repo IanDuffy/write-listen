@@ -610,6 +610,13 @@ rehearsal:                # faststart/rehearsal.py: no research, writing or mode
   opening_seconds: 90     # the opening is ready this long after the start; the source's steps before it are scaled to fit
   after_speed: 1.0        # after the opening, the source's own pace times this (2.0 = twice as fast: the parts arrive sooner; below about 1.0, e.g. 0.5, the listener catches up and gets a check-in)
 
+# The voices on a phone's loudspeaker (page/speaker.js, served with every page script that opens the mic).
+speaker:
+  android_speakerphone: true  # Android: reopen the mic on Chrome's "Speakerphone" input when no headset is listed (Ian's phone, 2026-11-21: the voice came from the ear speaker); false: the first capture as it opened
+  report: true                # tester mode only: each mic open, the Speakerphone step, a device change and the voice's first sound are recorded (audio_route in study/events.jsonl; the admin's transcript shows them)
+  report_gap_ms: 5000         # at most one record per reason this often
+  switch_timeout_ms: 4000     # the second capture not open by then: the first is kept
+
 # Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys.
 demo:
   enabled: false            # tester mode: cookies required, gate, interviewer. Off: the app as today (Ian's own).

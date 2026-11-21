@@ -77,7 +77,7 @@
     if (window.Interview) Interview.unlock(W.ctx);
     let asked;
     try {
-      asked = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      asked = Speaker.mic();  // the phone's loudspeaker, then the mic (page/speaker.js, served with /interview.js)
     } catch (x) { asked = Promise.reject(x); }
     asked.then(talk, refused);
   }
