@@ -84,7 +84,7 @@ def test_shellcheck():
 
 def test_caddyfile_key_lines():
     text = (DEPLOY / "Caddyfile").read_text(encoding="utf-8")
-    assert "listen.ianduffy.com {" in text
+    assert "demo.ianduffy.com {" in text
     assert "reverse_proxy 127.0.0.1:8765" in text
     assert "@admin path /admin /admin/* /api/admin /api/admin/*" in text
     assert "basic_auth @admin" in text and "caddy hash-password" in text
@@ -166,7 +166,7 @@ def _render(env, tmp_path):
 def test_render_fills_domain_and_login(tmp_path):
     out = _render({"WL_DOMAIN": "listen.example.com", "WL_ADMIN_USER": "ian", "WL_ADMIN_HASH": HASH}, tmp_path)
     assert out.returncode == 0, out.stderr
-    assert "listen.example.com {" in out.stdout and "listen.ianduffy.com {" not in out.stdout
+    assert "listen.example.com {" in out.stdout and "demo.ianduffy.com {" not in out.stdout
     assert f"\t\tian {HASH}\n" in out.stdout
     assert "REPLACE_WITH" not in out.stdout
 

@@ -39,11 +39,11 @@ Note its IP address.
 
 ### 3. Point the domain at it
 
-Wherever ianduffy.com's DNS lives, add an **A record**: name `listen`, value the droplet's IP, TTL 300.
+Wherever ianduffy.com's DNS lives, add an **A record**: name `demo`, value the droplet's IP, TTL 300.
 Check from the Mac until it answers with the IP:
 
 ```bash
-dig +short listen.ianduffy.com
+dig +short demo.ianduffy.com
 ```
 
 Caddy can only get the certificate once this works.
@@ -69,7 +69,7 @@ nano /etc/write-listen/env
 
 - `OPENAI_API_KEY`, and `WRITE_LISTEN_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`).
 - `ADMIN_USER` and `ADMIN_PASSWORD`: the admin page's login (a long password of letters and digits).
-- `WL_BASE_URL`: `https://listen.ianduffy.com`.
+- `WL_BASE_URL`: `https://demo.ianduffy.com`.
 - `TZ`: your time zone, e.g. `America/New_York`.
 - Leave `WL_DEMO=1`: it is tester mode. Without it the site would be the whole app, open to anyone;
   setup and `wl deploy` stop the app if they find it off.
@@ -81,12 +81,12 @@ and https, and checks the app: it must answer, and a visitor without a link must
 
 ### 5. Make a tester link
 
-Open `https://listen.ianduffy.com/admin`, log in, and create a link for yourself (label "Ian test").
+Open `https://demo.ianduffy.com/admin`, log in, and create a link for yourself (label "Ian test").
 Copy it.
 
 ### 6. Check it on a phone
 
-- In a private window, `https://listen.ianduffy.com`: only the ground and the dot, no text.
+- In a private window, `https://demo.ianduffy.com`: only the ground and the dot, no text.
 - Open your tester link on the phone: the address bar ends at `/`, the gate shows "Tap to begin".
 - Tap: the phone asks for the microphone (it only does over HTTPS). Talk to the interviewer through the
   handover to the guide.
@@ -100,7 +100,7 @@ Copy it.
   (unchanged files are hard links, so a night costs only what changed). Try it by hand first:
 
 ```bash
-WL_DROPLET=root@listen.ianduffy.com bash deploy/backup.sh
+WL_DROPLET=root@demo.ianduffy.com bash deploy/backup.sh
 ```
 
 Then nightly at 03:30 with launchd (a Mac asleep then runs it when it wakes). launchd can't read scripts
@@ -114,9 +114,9 @@ launchctl load ~/Library/LaunchAgents/local.write-listen.backup.plist
 ```
 
 The ssh key it uses must work without a passphrase prompt (macOS's keychain counts). The first run to
-`listen.ianduffy.com` records the droplet's host key by itself (`StrictHostKeyChecking=accept-new`: you may
+`demo.ianduffy.com` records the droplet's host key by itself (`StrictHostKeyChecking=accept-new`: you may
 only have ssh'd to the IP so far); if the droplet is rebuilt, its key changes and the backup stops with
-"Host key verification failed" until you run `ssh-keygen -R listen.ianduffy.com`. Its log is
+"Host key verification failed" until you run `ssh-keygen -R demo.ianduffy.com`. Its log is
 `~/write-listen-backups/backup.log`.
 
 ## Updating
@@ -146,7 +146,7 @@ setup.sh's link to `/etc/write-listen/env`), e.g. `wl study create "Sam"` prints
 | Anything odd in the app | `journalctl -u write-listen -f` (live), `journalctl -u write-listen --since "1 hour ago"`, or `/var/log/write-listen/app-<date>.log` for a past day |
 | A chapter stalled or failed | its `run.log` and `status.json` under `/srv/write-listen/listeners/<tester>/chapters/<run>/` |
 | Rate limits | the app and conversations: `journalctl -u write-listen \| grep -i -e 429 -e "rate limit"`; chapter builds print to their own `run.log`, not the journal: `grep -i -e 429 -e "rate limit" /srv/write-listen/listeners/*/chapters/*/run.log` |
-| The site doesn't load, or a certificate error | `journalctl -u caddy -n 50`. Usually DNS not pointing at the droplet yet (`dig +short listen.ianduffy.com`) or port 80/443 closed (`ufw status`). Access log: `/var/log/caddy/write-listen.log` |
+| The site doesn't load, or a certificate error | `journalctl -u caddy -n 50`. Usually DNS not pointing at the droplet yet (`dig +short demo.ianduffy.com`) or port 80/443 closed (`ufw status`). Access log: `/var/log/caddy/write-listen.log` |
 | 502 from Caddy | the app is down: `systemctl status write-listen`, then the journal |
 | Every page is blank, even with a link | the cookie didn't stick: open the tester link again in that browser (a private window forgets it) |
 | The admin login keeps asking | the hash in `/etc/caddy/Caddyfile` doesn't match. Change `ADMIN_PASSWORD` in the env file and run `bash /srv/write-listen/deploy/setup.sh` again; or by hand: `caddy hash-password`, paste the hash on the login line in `/etc/caddy/Caddyfile`, `systemctl reload caddy`, and `systemctl restart write-listen` if you changed the env file |

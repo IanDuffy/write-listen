@@ -11,7 +11,7 @@ import os
 import re
 import sys
 
-TEMPLATE_DOMAIN = "listen.ianduffy.com"
+TEMPLATE_DOMAIN = "demo.ianduffy.com"
 # The placeholder login line inside basic_auth: "<user> <bcrypt hash>".
 LOGIN_LINE = re.compile(r"^(\s*)ADMIN_USER \$2a\$14\$REPLACE_WITH_THE_HASH_FROM_caddy_hash-password$", re.M)
 

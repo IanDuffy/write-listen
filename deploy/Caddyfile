@@ -7,7 +7,7 @@
 # in place of the placeholder line below, then `systemctl reload caddy`. Use the same pair as
 # ADMIN_USER/ADMIN_PASSWORD in the env file: Caddy passes the login on and the app checks it too.
 
-listen.ianduffy.com {
+demo.ianduffy.com {
 	# The admin page and its API: a username and password (the app also guards them).
 	@admin path /admin /admin/* /api/admin /api/admin/*
 	basic_auth @admin {

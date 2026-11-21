@@ -4,9 +4,9 @@
 # (deploy/local.write-listen.backup.plist; DEPLOY.md). Unchanged files are hard links to the night
 # before, so a night costs only what changed.
 #
-#     WL_DROPLET=root@listen.ianduffy.com bash deploy/backup.sh
+#     WL_DROPLET=root@demo.ianduffy.com bash deploy/backup.sh
 set -euo pipefail
-host="${WL_DROPLET:-root@listen.ianduffy.com}"
+host="${WL_DROPLET:-root@demo.ianduffy.com}"
 dest="${WL_BACKUPS:-$HOME/write-listen-backups}"
 day=$(date +%Y-%m-%d)
 

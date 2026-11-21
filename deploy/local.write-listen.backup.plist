@@ -17,7 +17,7 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>WL_DROPLET</key>
-		<string>root@listen.ianduffy.com</string>
+		<string>root@demo.ianduffy.com</string>
 	</dict>
 	<key>StartCalendarInterval</key>
 	<dict>

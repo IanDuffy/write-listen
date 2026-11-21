@@ -620,7 +620,7 @@ demo:
   secure_cookie: auto       # auto: Secure when the request came over https (X-Forwarded-Proto from Caddy)
   chapter_minutes: 10       # testers' chapter length (written into their settings.json)
   chapter: real             # real | rehearsal: what a tester's live start_chapter makes. tester.json "chapter" wins (wl study create --rehearsal, the admin page). rehearsal replays a finished chapter (faststart/rehearsal.py): no research, writing or model calls
-  base_url: null            # the links' origin for `wl study create` (env WL_BASE_URL wins), e.g. https://listen.ianduffy.com
+  base_url: null            # the links' origin for `wl study create` (env WL_BASE_URL wins), e.g. https://demo.ianduffy.com
   interviewer:                  # part C: demo/interviewer.py, page/interview.js, prompts/interviewer*.md
     voice: cedar                # its own GPT-Live voice (the guide's is live.voice); model and backend are live's
     store: true                 # OpenAI keeps the session's audio 30 days; fetched into study/<live_id>.mp3
