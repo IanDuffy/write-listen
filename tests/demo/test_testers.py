@@ -31,7 +31,7 @@ def body_text(html: str) -> str:
 
 def test_create_makes_a_token_a_registry_entry_and_a_folder_with_the_demo_settings(dcfg):
     got = testers.create(dcfg, "Pilot 1")
-    assert got["lid"] == "t-pilot-1" and len(got["token"]) == 32
+    assert got["lid"] == "t-pilot-1" and len(got["token"]) == testers.TOKEN_LENGTH == 10
     assert got["link"] == f"http://127.0.0.1:8765/t/{got['token']}"
     reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
     assert reg["tokens"][got["token"]]["lid"] == "t-pilot-1"
@@ -408,3 +408,23 @@ def test_earpiece_view_is_off_unless_asked_and_survives_reset_and_rebuild(dcfg):
     assert "earpiece_view" not in testers.record(lid)
     assert testers.set_earpiece_view(plain["lid"], True)["earpiece_view"] is True
     assert testers.earpiece_view(testers.record(plain["lid"])) is True
+
+
+def test_links_are_short_and_old_long_links_still_open(dcfg, tmp_path):
+    """Ian (2026-11-21): the links were "unnecessarily long strings". New tokens are 10 characters of lowercase letters
+    and digits without look-alikes; a 32-character token from before still opens its tester."""
+    made = [testers.create(dcfg, f"Pilot {i}") for i in range(30)]
+    tokens = [m["token"] for m in made]
+    assert len(set(tokens)) == 30
+    assert all(len(t) == 10 and set(t) <= set(testers.TOKEN_ALPHABET) for t in tokens)
+    assert not set("".join(tokens)) & set("01ilo")
+    assert made[0]["link"] == f"http://127.0.0.1:8765/t/{tokens[0]}"
+    old = "AbCdEfGhIjKlMnOpQrStUvWxYz012_-9"
+    reg = json.loads((common.SHARED_DIR / "testers.json").read_text())
+    reg["tokens"][old] = {"lid": made[1]["lid"], "label": "Pilot 1", "created": "x"}
+    (common.SHARED_DIR / "testers.json").write_text(json.dumps(reg))
+    c = client(dcfg, tmp_path)
+    for t in (tokens[0], old):
+        r = c.get(f"/t/{t}")
+        assert r.status_code == 302 and r.headers["location"] == "/" and testers.COOKIE in r.headers["set-cookie"]
+    assert testers.lookup("short") is None and testers.lookup(tokens[0].upper()) is None

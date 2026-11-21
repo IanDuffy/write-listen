@@ -87,7 +87,7 @@ The tester folder's own settings come from `profiles.save_settings(cfg, {"chapte
 ### Testers (B provides)
 
 - `demo/testers.py`:
-  - `create(cfg, label) -> {token, lid, label, link}`; tokens are `secrets.token_urlsafe(24)` (32 characters).
+  - `create(cfg, label) -> {token, lid, label, link}`; tokens are 10 characters of lowercase letters and digits without look-alikes (`testers.new_token`; 32-character `token_urlsafe` tokens from before still open).
   - registry `shared/testers.json` `{"tokens": {token: {"lid", "label", "created"}}}`; tester record
     `listeners/<lid>/tester.json` `{label, lid, token, created, opened_at, consent_at, name, debrief_card:
     "auto"|"on"|"off", stage_hint}`.

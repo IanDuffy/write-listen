@@ -52,7 +52,12 @@ from stages.common import StageError
 
 COOKIE = "wl_tester"   # demo.cookie; routes.mount sets it from config
 CARD_VALUES = ("auto", "on", "off")
-TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,64}")
+# A link's token (Ian, 2026-11-21: "unnecessarily long strings"): 10 characters of lowercase letters and digits
+# without look-alikes (0/o, 1/l/i), about 50 bits: far beyond guessing over HTTPS for a few dozen testers, and easy
+# to read out or type on a phone. Links made before (32 characters of token_urlsafe) still open.
+TOKEN_ALPHABET = "23456789abcdefghjkmnpqrstuvwxyz"
+TOKEN_LENGTH = 10
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{10,64}")
 NAME_LINE = "Their name is {name} (they told the interviewer just now)."
 GIVEN_LINE = "Their name is {name} (Ian gave it when he invited them)."  # the guide reads this: say what is true
 # Labels that are not what you'd call someone: the interviewer asks the name instead of "Hi, is this Pilot?".
@@ -194,7 +199,7 @@ def create(cfg: dict, label: str, base: str | None = None, name: str | None = No
     view = {"earpiece_view": True} if earpiece_view else {}
     with _LOCK:
         lid = _new_lid(label)
-        token = secrets.token_urlsafe(24)  # 32 characters
+        token = new_token()
         created = now()
         rec = {"label": label, "lid": lid, "token": token, "created": created, "opened_at": None,
                "consent_at": None, "name": None, "given_name": given, "debrief_card": "auto", "stage_hint": None,
@@ -206,6 +211,15 @@ def create(cfg: dict, label: str, base: str | None = None, name: str | None = No
         _save_registry({**reg, "tokens": tokens})
     return {"token": token, "lid": lid, "label": label, "name": given, "link": link(cfg, token, base),
             **({"chapter": chapter} if chapter else {}), **view}
+
+
+def new_token() -> str:
+    """A fresh link token, never one already in the registry."""
+    taken = set(_registry()["tokens"])
+    while True:
+        token = "".join(secrets.choice(TOKEN_ALPHABET) for _ in range(TOKEN_LENGTH))
+        if token not in taken:
+            return token
 
 
 def lookup(token: str | None) -> dict | None:
