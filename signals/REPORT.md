@@ -7,11 +7,14 @@ Ian's build plan: "Listener Signals Build Plan" (2026-11-21, Claude Docs). Built
 conversations. None of it has run on a real conversation: this cloud session has no `listeners/` folder and cannot
 reach OpenAI, so the plan's "what the measures did on the real conversations, and how they lined up with Ian's marks"
 is still open. Both flags are off, so nothing a tester touches has changed. The first tester recordings expire on
-**2026-12-16**: run `wl signals fetch --all` on the droplet before then (below).
+**2026-12-16**: run `wl signals fetch --all` on the droplet before then (below), and again within 30 days of every
+later visit.
 
 ## What to run, in order
 
-On the droplet (the testers' folders live there), after `ssh -t wl-droplet sudo wl deploy` with this branch:
+On the droplet (the testers' folders live there). `wl deploy` pulls the droplet's own branch
+(`feature/tester-demo`), so this branch has to be merged into it first (it is a fast-forward from `b1d44ac`), then
+`ssh -t wl-droplet sudo wl deploy`:
 
 ```bash
 ssh -t wl-droplet sudo wl signals fetch --all    # keeps every recording; says why for any it can't get
@@ -25,6 +28,10 @@ Then open `/admin`, click **Signals** on a tester's row, pick a conversation or 
 
 Locally the same commands work for your own listener (`wl signals fetch`, `run`, `report`, default `own`).
 
+`fetch` says what happened to each recording: `have` (already kept, or hard-linked from a copy on disk), `fetched`,
+`missing` (OpenAI has none: past its 30 days, or never stored), or `error` (anything else; run it again). A refused
+key (401/403) stops the run's requests at once. A rerun only downloads what is new.
+
 ## What was built
 
 | Package | Files | State |
@@ -34,7 +41,7 @@ Locally the same commands work for your own listener (`wl signals fetch`, `run`,
 | 3. Replay measurer | `signals/measure.py`, `signals/store.py`, `wl signals run [lid] [--all]` | Built, tested on synthetic two-channel WAVs |
 | 4. Admin timeline and marks | `signals/routes.py`, `page/admin_signals.html`, `page/admin.html` | Built, tested offline and in headless Chromium |
 | 5. Live measuring | `page/sig.js`, `page/live.js`, `page/interview.js`, `Line.sig` in both line routes, `signals/live.py` | Built behind `signals.live` (off) |
-| 6. Earpiece note | `voice/gpt_live/director.py`, `prompts/live_director.md`, `prompts/live_director_moment.md` | Built behind `live.director.signals` (off) |
+| 6. Earpiece note | `voice/gpt_live/director.py`, `prompts/live_director_signals.md`, `prompts/live_director_moment.md` | Built behind `live.director.signals` (off) |
 | 7. Report | this file, a section in `CLAUDE.md`, `NEEDS_HUMAN.md` | Written; the real-data part waits for the commands above |
 
 Also `wl signals report` (`signals/report.py`), which answers the plan's open questions from the data once it is on
@@ -79,11 +86,24 @@ threshold: "Their last turn: nothing outside their norm." Thresholds are the pla
 - **The look and the line race.** The page posts the listener's line (with its measures) and asks for a look at
   about the same moment. The look carries `sig_turn`, and `director.heard` waits up to `signals_wait_ms` (400) for
   that turn's record, outside the conversation lock. A record from an earlier turn gives no note rather than a
-  stale one.
+  stale one, and `sig_turn` 0 (a typed line came last, or nothing has been said) gives none at once.
+- **The earpiece's prompts are untouched with the flag off.** What the note means is in
+  `prompts/live_director_signals.md`, appended to the earpiece's system prompt only with `live.director.signals` on;
+  off, the system prompt, each look and each director row are byte for byte what they were at `b1d44ac`.
 - **`director.look()` stays pure.** `ask()` reads the note and passes the block in; with no note `{{signals}}` is
   empty and the look renders byte for byte as before.
 - **Bleed** in the replay also covers 150 ms after the other voice stops (`bleed_tail_ms`): without it the room's
   echo of the guide merged into the listener's next turn and shortened the pause.
+- **The page follows the replay's turn rule.** A line that continues the listener's own speech (one utterance
+  split into two lines by the transcript's timing) gets no pause before answering, as the replay would give it; a
+  resume after a rest starts a new session, so its first turn is not timed from the guide's last words before the
+  rest; and a sound under the guide (a laugh, an "mm", an echo of the guide on a loudspeaker) never stands in for the
+  answer or reads as a cut-in.
+- **A replay hides page records only from view.** Where a recording record replaces page turns, the timeline shows
+  the recording's; the page norm still counts the page turns, so a later page turn keeps the norm (and the note)
+  the earpiece was given, and the timeline shows that note.
+- **A reset tester stays reset.** `wl signals run` and `fetch` check the listener folder is still the one they
+  started on (its inode) before every write; a folder reset or deleted mid-run gets nothing, and the command says so.
 - **Text to turns** in the replay: the transcript's rows are matched to audio turns in order, by nearest time, with
   the transcript's lag searched from -3 to +4 s around 2.5 s per session. Audio turns with no row (sounds GPT-Live
   never transcribed) are dropped.
@@ -110,9 +130,14 @@ threshold: "Their last turn: nothing outside their norm." Thresholds are the pla
   processing.
 - **Turn edges on the page** follow the transcript, which lags the voice by 2 to 3 s, so speech that starts in that
   lag can be counted in the previous line. The guide's voice between turns usually separates them.
-- **The page's record agrees with the replay's** (package 5's done-check) is untested: it needs one real
-  conversation with `signals.live: true`, then `wl signals run`, and the two sets compared on the timeline
-  (page records drop out where a recording record replaces them; the JSON keeps both).
+- **The page's record agrees with the replay's** (package 5's done-check) is untested on real audio: it needs one
+  real conversation with `signals.live: true`, then `wl signals run`, then `wl signals report`, whose "Page against
+  recording" section puts each page turn beside the recording turn that replaced it (differences in start, end, gap,
+  length and words, how many times fall within 300 ms) and lists page turns the replay matched to nothing, with why.
+- **The visit view on a long folder.** Your own folder can span days of chapters. The view zooms to 4 pixels a second
+  for up to about 46 days of axis, less after that (browsers cap a page's width), and draws only the stretch on
+  screen. Collapsing long idle gaps on the axis would fix it for good, but marks are stored as seconds on the axis,
+  so that is your call. Testers' visits are under an hour and unaffected.
 - **Disk:** about 5.8 MB a minute of conversation in `signals/audio/`.
 
 ## Turning the flags on
@@ -120,7 +145,30 @@ threshold: "Their last turn: nothing outside their norm." Thresholds are the pla
 1. `signals.live: true` in `config.yaml` (or on the droplet's config) records page measures for every conversation.
    Nothing reads them live; the admin timeline shows them. No cost.
 2. `live.director.signals: true` gives each earpiece look its note. Each look's director row records it as
-   `heard` (`/admin/earpiece` shows looks; the note is in the row). Cost: about 30 more input words a look.
+   `heard`, and the signals timeline shows it in the look's panel ("The note it had"). Cost: about 30 more input
+   words a look, and the section in `prompts/live_director_signals.md` once per conversation (cached).
+
+## Review
+
+After the build, five reviewers read the change from different sides (the replay, the page, the server and
+earpiece, the admin view, the plan), and every finding was checked by two skeptics. Twelve were confirmed (two
+pairs were the same bug), all fixed with regression tests, each fix checked again by someone who had not written it:
+
+- `wl signals run` could write an old visit's records into a tester's folder reset while it ran.
+- `fetch` called any failed download "missing" and blamed expiry; a bad key or a passing server error now reads as an
+  error to retry.
+- `report` left out marks on conversations with no records yet.
+- On the page: a pause invented when one utterance was split into two lines; a rest's length counted as a pause;
+  a sound under the guide's reply taken for the answer and called a cut-in.
+- After a replay, the page norm lost the page turns the replay covered.
+- With the earpiece's flag off its system prompt still changed (now in its own file, appended only when on).
+- After a typed line, the look described the previous spoken turn as their last.
+- On the timeline: lines with no record stopped later turns linking to theirs; a later line could be linked to an
+  earlier turn.
+
+Before committing, `tests/live`, `tests/demo` and `tests/signals` were run together; two page tests that failed
+once under load (other work sharing the four CPUs) pass alone, three times running, and never reach signals code
+with the flags off.
 
 ## Tests
 
