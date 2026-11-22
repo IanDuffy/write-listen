@@ -2011,9 +2011,27 @@
     if (!window.Interview || !Interview.start) { mark("debrief", "no interviewer"); return finish(); }
     mark("debrief", "start");
     try {
-      const p = Interview.start("debrief", { stream, onDone: finish });
+      const p = Interview.start("debrief", { stream, onDone: finish, onLook: debriefLook });
       if (p && p.catch) p.catch((e) => { mark("debrief-failed", String(e && e.message || e)); finish(); });
     } catch (e) { mark("debrief-failed", String(e && e.message || e)); finish(); }
+  }
+
+  // The debrief's earpiece (page/interview.js onLook; docs/debrief-earpiece-design.md): its looks, notes and lines go to
+  // the panel as the guide's do (dirEmit's events), filed under "debrief-<sid>", with interview.js's neutral roles
+  // ("in" them, "out" the voice) named as the panel reads them. The debrief's start says whether this tester has the
+  // view on (their tester.json): the panel is loaded then if it isn't already. Nothing here decides anything.
+  function debriefLook(ev) {
+    try {
+      const WHO = { in: "listener", out: "guide" };
+      const e = { ...ev, session: `debrief-${ev.sid}` };
+      delete e.sid; delete e.view;
+      if (e.who) e.who = WHO[e.who] || e.who;
+      if (e.speaking) e.speaking = WHO[e.speaking] || e.speaking;
+      if (ev.type === "conversation") { e.debrief = true; if (ev.view) loadEarpiece(); }
+      L.dirEvents.push(e);
+      if (L.dirEvents.length > 500) L.dirEvents.splice(0, L.dirEvents.length - 500);
+      if (window.Earpiece) window.Earpiece.event(e);
+    } catch (err) { /* the panel's trouble is its own */ }
   }
 
   function skin(cls, on) { if (on) L.skin.add(cls); else L.skin.delete(cls); }

@@ -5,6 +5,8 @@
 // live.js hands it (dirEmit), and Live.S.director.enabled. It never calls into Live, never posts and never
 // changes L: what it shows cannot change what the page does. The admin's history (/admin/earpiece) is built from
 // the transcript on the server, not from this.
+// The debrief's earpiece (docs/debrief-earpiece-design.md) comes through live.js too (debriefLook), as conversation
+// "debrief-<sid>": the panel stays up during the debrief while it shows one, and says "interviewer" for it.
 (function () {
   "use strict";
   if (window.Earpiece) return;
@@ -30,6 +32,14 @@
   const sentTexts = new Set();
   let session = null, down = false, forgotPending = false, seq = 0;
   let prevPlan = null;      // the previous look with a plan in this conversation
+
+  const isDebrief = (s) => String(s || "").startsWith("debrief-");
+  const voiceOf = (s) => (isDebrief(s) ? "interviewer" : "guide");
+  const Voice = (s) => (isDebrief(s) ? "Interviewer" : "Guide");
+  function reasonText(f, s) {
+    if (f.reason === "moved_on" && isDebrief(s)) return "the interviewer had already taken its turn";
+    return REASONS[f.reason] || f.reason || "?";
+  }
 
   const keyOf = (s, id) => `${s || ""}:${id}`;
   const norm = (x) => String(x || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -67,7 +77,8 @@
     switch (ev.type) {
       case "conversation":
         session = ev.session; down = false; prevPlan = null; forgotPending = false;
-        add({ kind: "divider", ev, text: `Conversation ${ev.session || ""}${ev.handoff ? " (handed over)" : ""}` });
+        add({ kind: "divider", ev, text: isDebrief(ev.session) ? "Debrief"
+          : `Conversation ${ev.session || ""}${ev.handoff ? " (handed over)" : ""}` });
         break;
       case "session":
         add({ kind: "divider", ev, text: `New voice session (${ev.reason || "?"})` });
@@ -144,7 +155,7 @@
   font: 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ep-fg); background: var(--ep-bg);
   border: 1px solid var(--ep-line); border-radius: 10px; box-shadow: 0 2px 12px rgba(0,0,0,.08); }
 @media (max-width: 599px) { #earpiece { top: calc(56px + env(safe-area-inset-top, 0px)); } }
-body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
+body.handoff:not(.revealed) #earpiece, body.debrief #earpiece:not(.ep-debrief) { display: none; }
 #earpiece-head { position: sticky; top: 0; display: flex; gap: 6px; align-items: baseline; width: 100%; box-sizing: border-box;
   font: inherit; color: inherit; background: var(--ep-bg); border: 0; border-bottom: 1px solid var(--ep-line);
   padding: 7px 10px; cursor: pointer; text-align: left; }
@@ -250,10 +261,10 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
       return d;
     }
     d.dataset.fate = f.fate; d.dataset.reason = f.reason || "";
-    if (f.fate === "sent") d.textContent = it.held ? `Held ${mss(it.held.secs)}, sent ${mss(f.secs)}` : `Sent to the guide at ${mss(f.secs)}`;
+    if (f.fate === "sent") d.textContent = it.held ? `Held ${mss(it.held.secs)}, sent ${mss(f.secs)}` : `Sent to the ${voiceOf(it.session)} at ${mss(f.secs)}`;
     else {
       const why = f.reason === "not_here" && f.detail ? `not here (${f.detail})`
-        : (REASONS[f.reason] || f.reason || "?") + (f.reason === "gap" && f.detail ? ` (${f.detail})` : "")
+        : reasonText(f, it.session) + (f.reason === "gap" && f.detail ? ` (${f.detail})` : "")
           + (f.reason === "forgotten" && f.detail ? ` (${f.detail})` : "");
       d.textContent = `Dropped at ${mss(f.secs)}: ${why}`;
     }
@@ -286,10 +297,10 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
     if (g.changed && g.note) {
       const w = el("div", "whisper");
       w.append(el("div", "note-text", g.note));
-      w.append(el("div", "muted", `${g.kind || "when_it_fits"} · ${g.about || "–"}`));
+      w.append(el("div", "muted", `${g.kind || (isDebrief(it.session) ? "next_turn" : "when_it_fits")} · ${g.about || "–"}`));
       w.append(fateLine(it));
       if (it.fate && it.fate.fate === "sent" && it.reply) {
-        w.append(el("div", "reply", `Guide began ${it.reply.after.toFixed(1)} s after: “${cut(it.reply.text, 140)}”`));
+        w.append(el("div", "reply", `${Voice(it.session)} began ${it.reply.after.toFixed(1)} s after: “${cut(it.reply.text, 140)}”`));
       }
       li.append(w);
     }
@@ -313,14 +324,15 @@ body.handoff:not(.revealed) #earpiece, body.debrief #earpiece { display: none; }
     const n = mine.length;
     const sent = mine.filter((x) => x.fate && x.fate.fate === "sent").length;
     const dropped = mine.filter((x) => x.fate && x.fate.fate === "dropped").length;
-    const off = !((Live.S && Live.S.director) || {}).enabled;
+    const off = !isDebrief(session) && !((Live.S && Live.S.director) || {}).enabled;
     head.replaceChildren(el("b", null, "Earpiece"),
-      el("span", "meta", `${session || ""} · ${n} look${n === 1 ? "" : "s"} · ${sent} sent · ${dropped} dropped`));
+      el("span", "meta", `${isDebrief(session) ? "Debrief" : session || ""} · ${n} look${n === 1 ? "" : "s"} · ${sent} sent · ${dropped} dropped`));
     if (off || down) head.append(el("span", "state", off ? "off" : "down"));
   }
 
   function render() {
     if (!root) return;
+    root.classList.toggle("ep-debrief", isDebrief(session));  // up during the debrief only while it shows one
     renderHead();
     const frag = document.createDocumentFragment();
     for (let i = items.length - 1; i >= 0; i--) frag.append(itemLi(items[i]));

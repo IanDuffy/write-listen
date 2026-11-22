@@ -1,19 +1,25 @@
 // window.Interview: the welcome before, and the talk after, as one small voice session of its own.
 //
 //   Interview.unlock(ctx)   call inside the tap: lets the voice play on phones (and keeps ctx for the level meter)
-//   Interview.start(mode, {stream, onNear, onHandoff, onDone, onState}) -> Promise<bool>: true once the session started
+//   Interview.start(mode, {stream, onNear, onHandoff, onDone, onState, onLook}) -> Promise<bool>: true once the session started
 //                           mode "intro" or "debrief"; stream: the caller's mic (never stopped here, so the
 //                           next part of the page can reuse it); onState("connecting"|"speaking"|"quiet"|"closed")
 //                           onNear({scripts, entry}) when the handover is decided (its last words are being
 //                           said): the caller gets the next part ready; I.next names the same from the start;
 //                           onHandoff({name, stream, scripts, entry}) after the handover's last words;
 //                           onDone({ok, how}) when a session ends any other way (also when it failed to start)
+//                           onLook(ev): the debrief's earpiece, as it happens (looks, notes and what became of them,
+//                           the lines), for a panel; who/speaking are "in" (them) and "out" (the voice); never awaited
 //   Interview.end()         close now; Interview.busy()
 //
 // The browser's offer goes through /api/interview/start (the server holds the key; no key ever reaches the
 // page). The session's tools run at /api/interview/tool; the page acts on a result's `act`, never on a tool's
 // name. Lines go to /api/interview/line, the cost to /api/interview/usage, and /api/interview/end closes.
 // The voice speaks first: the opening note is sent as speakable context the moment the session starts.
+// The debrief's earpiece (settings.direct; docs/debrief-earpiece-design.md): a look at the start, while they are still
+// answering and at a turn's end nothing covered, at /api/interview/direct; a note it sends goes at once as an
+// instruction (notes.direct), for the voice's next turn, unless that turn has been taken; what became of each note goes
+// to /api/interview/direct/fate.
 (() => {
   "use strict";
   const GONE = "gone";
@@ -82,6 +88,7 @@
     unmute();
     send("session.instructions.append", { delegation_id: null, content: text });
     note(text);
+    if (directOn()) emit("note", { text });
   }
 
   // The voice's level, for the dot's pulse: an analyser on the incoming sound when there is an AudioContext.
@@ -111,7 +118,10 @@
       out: "", outAt: 0, inp: "", inAt: 0, spokeAt: 0, heardAt: 0, spoken: false, seconds: 0,
       backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(), pending: null, name: null,
       act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, farewellAt: 0, said: 0,
-      graceAt: 0, graceAct: null, stateNow: null, hang: null, noteAt: 0, noteKind: null, handHeld: false });
+      graceAt: 0, graceAct: null, stateNow: null, hang: null, noteAt: 0, noteKind: null, handHeld: false,
+      // the debrief's earpiece: the look in flight, its numbering, failures, the last lines, this turn of theirs
+      look: null, lookId: 0, lookQueued: null, lookFails: 0, lookDown: false, recent: [], turn: "", turnOpen: false,
+      hearAt: 0, hearWords: -1, themSince: false, taken: 0, questions: 0, outStart: 0, inStartAt: 0, view: false });
   }
 
   async function start(mode, opts = {}) {
@@ -143,7 +153,8 @@
       const got = await post("/api/interview/start", { mode, sdp: pc.localDescription.sdp });
       sid = got.sid;
       if (gone()) throw new Error(GONE);
-      Object.assign(I, { sid, liveId: got.live_id, notes: got.notes || {}, S: got.settings || {}, next: got.next || null });
+      Object.assign(I, { sid, liveId: got.live_id, notes: got.notes || {}, S: got.settings || {}, next: got.next || null,
+                         view: !!got.earpiece_view });
       await pc.setRemoteDescription({ type: "answer", sdp: got.sdp });
       const ok = await until(() => I.started || gone(), I.S.start_timeout_ms || 10000);
       if (gone()) throw new Error(GONE);
@@ -161,6 +172,7 @@
     I.startedAt = now();
     state("quiet");
     speakable(I.notes.opened);
+    if (directOn()) { emit("conversation", { view: I.view }); ask("opened"); }
     setTimeout(() => {  // nothing said yet: once more, as an instruction with the mic open
       if (!gone() && I.sid && !I.spoken && !I.inp) instruct(`[${I.notes.opened}]`);
     }, I.S.greet_fallback_ms || 4000);
@@ -174,6 +186,7 @@
       case "session.output_transcript.delta": {
         const d = (m.delta || "").replace(/\[[^\]]*\]\s*/g, "");
         I.spokeAt = now(); I.spoken = true;
+        if (!I.out) I.outStart = now();
         I.out += d; I.outAt = now();
         // The handover's words, as they are said: the page calls the tool itself at once (the voice rarely
         // does), so the next part is being got ready while the sentence ends. Waiting for the line to end and
@@ -184,7 +197,11 @@
         }
         break;
       }
-      case "session.input_transcript.delta": I.inp += m.delta || ""; I.inAt = I.heardAt = now(); break;
+      case "session.input_transcript.delta":
+        if (!I.inp) I.inStartAt = now();
+        I.inp += m.delta || ""; I.inAt = I.heardAt = now();
+        if (m.delta && m.delta.trim()) { I.themSince = true; I.turnOpen = true; }
+        break;
       case "response.event": backend(m.event || {}); break;
       case "session.usage.updated": if (m.usage && m.usage.seconds != null) I.seconds = m.usage.seconds; break;
       case "session.closed":
@@ -305,11 +322,11 @@
     const t = now(), S = I.S, lineQuiet = S.line_quiet_ms || 900;
     if (I.inp && t - I.inAt > lineQuiet) {
       const text = I.inp.trim(); I.inp = "";
-      if (text) { I.lastThemAt = t; quiet("/api/interview/line", { sid: I.sid, who: "in", text }); }
+      if (text) { I.lastThemAt = t; quiet("/api/interview/line", { sid: I.sid, who: "in", text }); heardLine(text, t); }
     }
     if (I.out && t - I.outAt > lineQuiet) {
       const text = I.out.trim(); I.out = "";
-      if (text) { quiet("/api/interview/line", { sid: I.sid, who: "out", text }); lineSaid(text, t); }
+      if (text) { quiet("/api/interview/line", { sid: I.sid, who: "out", text }); lineSaid(text, t); saidLine(text, t); }
     }
     const lv = level();
     const speaking = lv > (S.speaking_level || 0.02) || t - I.spokeAt < 500;
@@ -324,6 +341,7 @@
     waiting(t, speaking);
     hanging(t, speaking);
     clock(t);
+    if (directOn()) direct(t);
   }, 100);
 
   // The page's notes to the voice, one kind at a time: two different notes are never sent closer together than
@@ -377,6 +395,124 @@
       if (!I.farewellAt && mins > (S.debrief_max_minutes || 9)) cue("wrap", I.notes.wrap_now, t);
       if (mins > (S.debrief_max_minutes || 9) + 1 && !I.act) { I.act = "timeout"; finish("timeout"); }
     }
+  }
+
+  // --- the debrief's earpiece (docs/debrief-earpiece-design.md; Ian, 2026-11-22) ------------------------------
+  // A background look at the talk keeps a plan and, when its advice changes, a short note for the voice's next turn.
+  // A debrief is two minutes and a few turns, so it looks while they are still answering: its note is in place as
+  // they finish. A note whose turn the voice has already taken is dropped (used a turn late, it would ask the old
+  // thing). Off (settings.direct.enabled false, or not the debrief) it never asks, sends or posts anything.
+  const D = () => I.S.direct || {};
+  function directOn() { return I.mode === "debrief" && !!D().enabled && !!I.sid; }
+  const words = (x) => String(x || "").split(/\s+/).filter(Boolean).length;
+  const secsNow = () => (I.startedAt ? Math.round((now() - I.startedAt) / 100) / 10 : null);
+
+  // For a panel (onLook): never throws, never awaited, nothing read back.
+  function emit(type, fields = {}) {
+    if (!I.opts.onLook) return;
+    try { I.opts.onLook({ type, at: now(), secs: secsNow(), sid: I.sid, ...fields }); } catch (e) { /* the panel's own */ }
+  }
+
+  function remember(who, text) {
+    I.recent.push({ who, text });
+    if (I.recent.length > 10) I.recent.splice(0, I.recent.length - 10);
+  }
+
+  // A line of theirs, finished: part of this turn (a turn ends once no new words come for turn_merge_ms).
+  function heardLine(text, t) {
+    if (!directOn()) return;
+    remember("in", text);
+    I.turn = (I.turn ? I.turn + " " : "") + text;
+    emit("line", { who: "in", text, began: I.inStartAt || t });
+  }
+
+  // A line of the voice's, finished. A reply (a question, or reply_words or more, never a stall) after they spoke is
+  // the voice taking its turn: a note for that turn is stale from then on, and their next turn starts afresh.
+  function saidLine(text, t) {
+    if (!directOn()) return;
+    remember("out", text);
+    if (text.includes("?")) I.questions++;
+    emit("line", { who: "out", text, began: I.outStart || t });
+    const stall = rx("stall");
+    const turnLine = (text.includes("?") || words(text) >= (I.S.reply_words || 3)) && !(stall && stall.test(text.replace(/[‘’]/g, "'")));
+    if (turnLine) {
+      if (I.themSince) I.taken++;
+      I.themSince = false; I.turn = ""; I.turnOpen = false; I.hearAt = 0; I.hearWords = -1;
+    }
+  }
+
+  // Why no look (or no note) now: "" when one may go. The voice's end is near or decided, or the clock has spoken.
+  function notHere() {
+    if (I.closing) return "closing";
+    if (I.farewellAt) return "farewell";
+    if (I.act || I.pending) return "ending";
+    if (I.cues.time || I.cues.wrap) return "time";
+    return "";
+  }
+
+  function direct(t) {
+    if (I.lookDown || notHere()) return;
+    const C = D(), soFar = words(I.turn) + words(I.inp);
+    // While they speak: once their turn has hear_words words, then every hear_every_ms with new words.
+    if (I.inp && soFar >= (C.hear_words || 8) && soFar > I.hearWords
+        && (!I.hearAt || t - I.hearAt >= (C.hear_every_ms || 5000))) {
+      I.hearAt = t; I.hearWords = soFar;
+      ask("hearing");
+    }
+    // Their turn is over (no new words for turn_merge_ms): a look, unless one while they spoke covered it.
+    if (I.turnOpen && !I.inp && t - I.inAt >= (C.turn_merge_ms || 1500)) {
+      I.turnOpen = false;
+      if (I.hearWords < 0 || soFar - I.hearWords >= (C.hear_words || 8)) ask("turn_end");
+    }
+    if (I.lookQueued && !I.look) { const q = I.lookQueued; I.lookQueued = null; ask(q); }
+  }
+
+  function ask(trigger) {
+    if (!directOn() || I.lookDown || notHere()) return;
+    if (I.look) { I.lookQueued = trigger; return; }  // one look in flight; the newest trigger waits
+    const C = D(), id = ++I.lookId, sid = I.sid, t = now(), ctl = new AbortController();
+    const look = { id, ctl, askedAt: t, taken: I.taken, trigger };
+    I.look = look;
+    const body = { sid, id, trigger, recent: I.recent.slice(-10), hearing: I.inp.trim(),
+                   page: { seconds: Math.round((t - I.startedAt) / 1000), questions: I.questions, time_up: !!I.cues.time } };
+    emit("ask", { id, trigger, speaking: I.inp ? "in" : "none" });
+    const timer = setTimeout(() => ctl.abort(), (C.timeout_ms || 5000) + 1500);
+    fetch("/api/interview/direct", { method: "POST", headers: { "Content-Type": "application/json" },
+                                     body: JSON.stringify(body), signal: ctl.signal })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((got) => { if (I.look === look && I.sid === sid) { I.look = null; answered(got, look); } })
+      .catch((e) => { if (I.look === look && I.sid === sid) { I.look = null; failed(String((e && e.message) || e), id); } })
+      .finally(() => clearTimeout(timer));
+  }
+
+  function answered(got, look) {
+    emit("look", { id: look.id, got });
+    if (!got || got.error) return failed((got && got.error) || "no answer", look.id);
+    I.lookFails = 0;
+    if (!(got.changed && got.note)) return;
+    const n = { id: look.id, note: got.note, kind: got.kind || "next_turn", about: got.about || null, askedAt: look.askedAt,
+                taken: look.taken };
+    const why = notHere();
+    if (why) return fate(n, "dropped", "not_here", why);
+    if (I.taken > n.taken) return fate(n, "dropped", "moved_on");  // the voice took the turn this note was for
+    const text = String(I.notes.direct || "").replace("{note}", n.note);
+    if (!text || !I.notes.direct) return fate(n, "dropped", "not_here", "no wrapper");
+    fate(n, "sent", null, null, { text });
+    I.noteAt = now(); I.noteKind = "direct";  // waiting and hanging keep their gap after it (it bypasses theirs)
+    instruct(text);
+  }
+
+  function failed(why, id) {
+    I.lookFails++;
+    emit("fail", { id, why, fails: I.lookFails });
+    if (I.lookFails >= 2 && !I.lookDown) { I.lookDown = true; I.lookQueued = null; emit("down", {}); }
+  }
+
+  function fate(n, what, reason = null, detail = null, extra = {}) {
+    const body = { sid: I.sid, id: n.id, fate: what, reason, detail: detail ? String(detail).slice(0, 200) : null,
+                   secs: secsNow(), held_ms: null };
+    if (I.sid && n.id != null) quiet("/api/interview/direct/fate", body);
+    emit("fate", { ...body, note: n.note, kind: n.kind, about: n.about, ...extra });
   }
 
   // --- the end -------------------------------------------------------------------------------------------
