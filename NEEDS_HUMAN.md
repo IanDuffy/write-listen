@@ -10,6 +10,23 @@ WL_DEMO=1 .venv/bin/python server.py
 
 (Locally the admin page is http://127.0.0.1:8765/admin.)
 
+## Listener Signals (2026-11-22): before 2026-12-16, then before turning a flag on
+Branch `ccr-bfa36549-2hocwb`, not merged. `wl deploy` pulls the droplet's own branch, so merge this into
+`feature/tester-demo` (or switch the droplet's checkout) first. Details: `signals/REPORT.md`.
+- **Keep the recordings.** OpenAI deletes each conversation's recording 30 days after it; the first tester sessions
+  (2026-11-16) go on **2026-12-16**. On the droplet: `ssh -t wl-droplet sudo wl signals fetch --all`. It says why for
+  any it can't get. Run it again within 30 days of every later visit (a rerun only downloads what is new). Locally,
+  `wl signals fetch` does the same for your own conversations.
+- **Measure and read.** `sudo wl signals run --all`, then `sudo wl signals report --all`: the sound tags GPT-Live
+  writes, how much the guide bleeds into the mic on phones, where each listener's norm starts, and what was mentioned.
+- **Listen and mark.** `/admin` > **Signals** on a tester > a conversation or the whole visit. Play from a point,
+  click the chart where you hear something ("lost them here", "lit up"), then `wl signals report` again: it lists the
+  turns near each mark. Whether the numbers mean anything is your call; the plan says marks come before any flag.
+- **Then, if they do:** `signals.live: true` records page measures on every conversation (nothing reads them live; one
+  real conversation then `wl signals run` checks page against recording in the report). `live.director.signals: true`
+  gives each earpiece look a line of facts; the earpiece's look panel in the signals view shows the line it had.
+- **Your call:** an earpiece for the debrief interviewer, as a separate branch (the plan's suggestion) or added here.
+
 ## Phones (2026-11-21): the voices on the loudspeaker
 On the droplet, after `ssh -t wl-droplet sudo wl deploy`:
 - Android Chrome, no headphones, Bluetooth audio not connected: open a fresh tester link and tap. The interviewer and

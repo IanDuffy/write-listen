@@ -753,6 +753,61 @@ Run 4's invented "You said you watched herons by the river" came from the rehear
   (`page/admin_transcript.html`), JSON at `/api/admin/transcript/{lid}`, plain text at `.../text`; a Transcript
   link on each tester in `/admin`.
 
+## Listener Signals (branch `ccr-bfa36549-2hocwb`, 2026-11-22)
+
+Spec: Ian's "Listener Signals Build Plan" (2026-11-21, a Claude Docs artifact; not in the repo). The earpiece reads
+text, so a flat "yeah, it was good" reads the same as a warm one: measure how each listener turn sounded, compared
+with that listener's own norm, show it to Ian over time, and (behind a flag) give the earpiece one line of facts.
+Report, decisions, the plan's open questions and what Ian runs: `signals/REPORT.md`. Code in `signals/`, tests
+`tests/signals/`. Built from `feature/tester-demo` at `b1d44ac`; not merged, so `wl deploy` (which pulls the
+droplet's branch) does not bring it until it is. **Nothing has run on a real conversation yet** (no `listeners/` in
+the cloud checkout, OpenAI blocked there). Both flags are off.
+
+- **The record** (`signals/record.py`, pure): one per listener turn, in `<listener>/signals/<stem>.jsonl` beside
+  `sessions/` and `study/`, never inside them (`memory.meeting()` counts `sessions/*.jsonl`; `demo/state.py` reads
+  `study/*.jsonl`). `<stem>` is the transcript's (`20261121-101500`, `intro-<sid>`, `debrief-<sid>`). Measures
+  (`gap_ms, dur_ms, speak_ms, words, wps, pauses, longest_pause_ms, hedges, fillers, tags, trailed, cut_in, rms_db,
+  pitch_sd_st`) are null when not taken, never guessed; `place()` adds `norm` (median of the latest `norm_turns`
+  earlier turns of `min_words`+, none before `min_turns`), `change` (ratio; dB for loudness), `trend` (last three),
+  `mention` (past `signals.thresholds`; tags, cut-ins, trailing off always) and `note` (at most 30 words, numbers
+  beside the norm, never a feeling). The norm is **per source** (`page` and `recording` are different instruments)
+  and carries across the visit in time order. Word counts follow live.js `words()`; tags arrive in pieces
+  ("[inhale" + "]Yeah": `record.join`).
+- **The store** (`signals/store.py`): latest line per (source, turn) wins; a recording record's `replaces` hides the
+  page turns it covers when shown (`merged`), never from the page norm (`recent` filters by source first). It creates
+  only `signals/`, never the listener folder (a tester reset mid-write stays gone). Marks in `<stem>.marks.jsonl`,
+  recordings in `signals/audio/<live_id>.wav` (per GPT-Live session: a guide conversation spans several).
+- **`wl signals fetch|run|report [lid] [--all]`** (`signals/cli.py`; lid `own` or a tester id; `--all` adds `own` only
+  with demo mode off). `fetch` (`signals/fetch.py`) keeps every recording: hard-links a chapter's `live/<id>.wav` or
+  `study/<id>.wav`, else downloads (`session.recording(why=)`); 404 is "missing", other failures "error" (401/403
+  stops the run). The guide's onboarding recordings were kept nowhere before this. OpenAI deletes each 30 days after
+  its session: **the first tester recordings go on 2026-12-16**. `run` (`signals/measure.py`) finds turns in the
+  stereo recording (listener left, other voice right; GPT-Live's silence is digital zero; bleed under the other
+  voice and `bleed_tail_ms` after it; turns by the page's merge rule), matches transcript rows to turns by order and
+  nearest time with the lag searched per session, and writes recording records; a conversation changed in the last
+  5 minutes waits unless `--force`; a reset folder is never written. `report` (`signals/report.py`): sound tags,
+  bleed per recording beside the phone (`audio_route`), where the norm first appeared, mentions, Ian's marks with the
+  turns near them, and page against recording for the same turns (package 5's check).
+- **Admin** (`signals/routes.py`, `page/admin_signals.html`; guarded like the other admin pages): `/admin/signals?lid=`
+  lists conversations, `&session=<stem>` or `&session=visit` plots five strips (pause, words, rate, pitch spread,
+  loudness) against the norm, tags and cut-ins on the top edge, the earpiece's looks and whisper fates on the same
+  axis (a look's panel shows the note it had), marks (click the chart; `POST .../{stem}/mark`), playback from a point
+  when the recording is on disk. "Signals" link per tester in `/admin`.
+- **Live measuring** (`signals.live`, off; also on with `live.director.signals`): `page/sig.js` (`window.Sig`),
+  prepended to `/live.js` and `/interview.js` only while on (`common.with_sig`); off, both are served byte for byte as
+  before and the line post is `{session, who, text}`. Its own analysers (not `dirAudio`'s 600 ms meters), the replay's
+  rules (bleed, fill, min run; the replay's turn rule for a gap: no pause before answering when the listener's own
+  speech ran up to the turn; a session boundary on resume; the longest segment of a line, not a burst under the
+  reply). A spoken listener line posts `live_id` and `sig`; the line routes call `signals.live.record_line`, which
+  never fails the line. Typed lines carry none.
+- **The earpiece's note** (`live.director.signals`, off): the page sends `sig_turn` (0: no measured latest turn, e.g.
+  after a typed line); `director.heard` waits up to `signals_wait_ms` (400) for that turn's record outside the lock,
+  and the look gets `<listener_signals>note</listener_signals>` via `{{signals}}` in `live_director_moment.md`; the
+  director row records `heard` (never `text` or `note`). `prompts/live_director_signals.md` is appended to the system
+  prompt only with the flag on, so off, the earpiece's prompts and rows are byte for byte as before.
+- Not built (the plan's out of scope): an earpiece for the debrief interviewer (the plan's one question for Ian:
+  separate branch or here), emotion labels or models, camera.
+
 ## Local setup
 
 ```bash
@@ -934,6 +989,7 @@ real key), so locally it must be in `.env`.
 - `guide.py`: the guide's conversation (milestone 3); `memory.py`: the listener's memory (milestone 5).
 - `voice.py`: the ElevenLabs agent (milestone 4); `page/wake.js`: the page's local listener while the guide rests.
 - `ask/` and `page/ask.js`: asking mid-chapter by voice; `episode/`: the episode page (timed transcript, references).
+- `signals/`, `page/sig.js`, `page/admin_signals.html`: Listener Signals (turn records, the replay, the admin timeline).
 - One module per stage; `ledger.py` (03b and the ledger data model),
   `research.py` (04 and the merge), `ledger_update.py` (04b), `coverage.py`
   (07b); `estimate.py`, `smoketest.py`, `voicetest.py`, `ping.py`.
