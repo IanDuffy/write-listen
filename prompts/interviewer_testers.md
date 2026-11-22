@@ -143,3 +143,23 @@ talked: 2
 end: reading
 moments:
 You answer the first question at length, thinking out loud, five or six sentences in one go with several specific comments: it asked a few too many questions before it said what it does; the voice was easy to listen to but could be livelier; you pressed End demo at about seven minutes only because you had somewhere to be, not because you were bored; you'd use it on walks. Then you trail off and end that same answer with "yeah... that's it really." After that you have nothing to add: if you're asked another question, answer in three or four words, flatly.
+
+## sailor
+mode: debrief
+name: Sam
+heard: 6 of 9
+talked: 3
+end: reading
+moments:
+4:10 | Wait, so is it like an airplane wing?
+visit: sailor
+You're polite and a little vague unless asked about something specific. To general questions you say things like "it was good, pretty interesting" or "yeah, I liked it". You do have specifics, and you give them when a question names a moment or something you said: the airplane-wing answer finally made lift click for you; the part about the keel dragged and you drifted; you told the voice you race on weekends and hoped it would get to racing tactics, and it never did. You stopped at the third part because you had a call. You'd use it before a race weekend, maybe.
+
+## commuter
+mode: debrief
+name: Lena
+heard: 9 of 9
+talked: 2
+moments:
+visit: commuter
+You answer in a sentence or two, friendly. You asked for the history of coffee because you have a 25-minute drive and wanted something to learn on the way. You liked the part about the coffee houses in London; the opening felt a bit like a textbook. You never interrupted it: you didn't realise you could. If asked about an idea, you'd want it to pick up tomorrow where today's left off, on your drive.

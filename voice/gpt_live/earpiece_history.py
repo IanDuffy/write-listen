@@ -27,6 +27,9 @@ from pathlib import Path
 from . import director
 
 SESSION_ID = re.compile(r"\d{8}-\d{6}(-\d+)?")
+# The debrief's earpiece (demo/debrief_earpiece.py; Ian, 2026-11-22) writes its looks into study/debrief-<sid>.jsonl:
+# listed as "debrief-<sid>".
+DEBRIEF_ID = re.compile(r"debrief-\d{8}-\d{6}(-\d+)?")
 SPEAKERS = ("guide", "listener", "interviewer")   # the interviewer only in study files (demo/visit.py)
 
 
@@ -70,10 +73,34 @@ def _time(rec: dict) -> datetime | None:
 
 
 def _files(folder: Path) -> list[Path]:
+    """The guide's conversations (sessions/<id>.jsonl); demo/visit.py reads these as the guide's."""
     d = folder / "sessions"
     if not d.is_dir():
         return []
     return [p for p in d.glob("*.jsonl") if SESSION_ID.fullmatch(p.stem)]
+
+
+def _debrief_files(folder: Path) -> list[Path]:
+    """The debriefs (study/debrief-<sid>.jsonl), where the debrief's earpiece writes its looks."""
+    d = folder / "study"
+    if not d.is_dir():
+        return []
+    return [p for p in d.glob("debrief-*.jsonl") if DEBRIEF_ID.fullmatch(p.stem)]
+
+
+def _path(folder: Path, session: str) -> Path:
+    if DEBRIEF_ID.fullmatch(session or ""):
+        return folder / "study" / f"{session}.jsonl"
+    if SESSION_ID.fullmatch(session or ""):
+        return folder / "sessions" / f"{session}.jsonl"
+    raise FileNotFoundError(session)
+
+
+def whisper_in(text: str):
+    """(kind, note) when a page note is an earpiece's whisper as delivered: the guide's (voice/gpt_live/notes.md
+    direct*) or the debrief's (prompts/interviewer_notes.md direct_debrief); else None."""
+    from demo import debrief_earpiece
+    return director.whisper_in(text) or debrief_earpiece.whisper_in(text)
 
 
 def _speech(rec: dict) -> bool:
@@ -84,11 +111,12 @@ def conversations(folder: Path) -> list[dict]:
     """Every conversation in this listener's sessions/, newest first, with its earpiece's counts (as the timeline
     counts them, so a note sent in an older conversation with no fate rows counts as sent)."""
     out = []
-    for p in _files(folder):
+    for p in _files(folder) + _debrief_files(folder):
         got = timeline(folder, p.stem)
         times = [t for t in (_time(r) for r in _rows(p)) if t]
         D = got["director"]
-        out.append({"session": p.stem, "started": got["started"], "ended": got["ended"],
+        out.append({"session": p.stem, "kind": "debrief" if DEBRIEF_ID.fullmatch(p.stem) else "conversation",
+                    "started": got["started"], "ended": got["ended"],
                     "minutes": round((times[-1] - times[0]).total_seconds() / 60, 1) if times else 0.0,
                     "lines": sum(1 for x in got["items"] if x["kind"] == "line"),
                     **{k: D[k] for k in ("looks", "notes", "sent", "dropped", "errors", "cost_usd")}})
@@ -98,9 +126,7 @@ def conversations(folder: Path) -> list[dict]:
 def timeline(folder: Path, session: str) -> dict:
     """One conversation's timeline (see the module's notes). Raises FileNotFoundError for an id that isn't a
     conversation's or a missing file."""
-    if not SESSION_ID.fullmatch(session or ""):
-        raise FileNotFoundError(session)
-    path = folder / "sessions" / f"{session}.jsonl"
+    path = _path(folder, session)
     if not path.is_file():
         raise FileNotFoundError(session)
     return timeline_of(_rows(path), folder.name, session)
@@ -127,7 +153,7 @@ def timeline_of(rows: list[dict], lid: str, session: str) -> dict:
         if who in SPEAKERS and text:
             items.append({**stamp(rec), "kind": "line", "who": who, "text": text})
         elif who == "page" and text:
-            got = director.whisper_in(text)
+            got = whisper_in(text)
             look_id = None
             if got:
                 look_id = next((x["id"] for x in reversed(items) if x["kind"] == "look" and x.get("note")
@@ -170,7 +196,7 @@ def timeline_of(rows: list[dict], lid: str, session: str) -> dict:
         if look is None or look["delivered"] is not None:
             continue
         look["delivered"] = {k: x[k] for k in ("t", "clock", "secs")}
-        reply = next((y for y in items[i + 1:] if y["kind"] == "line" and y["who"] == "guide"), None)
+        reply = next((y for y in items[i + 1:] if y["kind"] == "line" and y["who"] in ("guide", "interviewer")), None)
         if reply:
             look["reply"] = {**{k: reply[k] for k in ("t", "clock", "secs")},
                              "after_secs": reply["secs"] - x["secs"], "text": reply["text"]}

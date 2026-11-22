@@ -753,6 +753,39 @@ Run 4's invented "You said you watched herons by the river" came from the rehear
   (`page/admin_transcript.html`), JSON at `/api/admin/transcript/{lid}`, plain text at `.../text`; a Transcript
   link on each tester in `/admin`.
 
+## The debrief's earpiece (2026-11-22, feature/tester-demo)
+
+Ian, after testing with friends: the debrief's questions were "a little generic, not bad, but not connecting or acting
+like a real product interview ... the director role may help with figuring out the right path". His choices: the same
+~2 minutes (the ceiling stays), it may know their own words and the piece's outline, and he sees it in the panel and
+in Earpiece history. Design: `docs/debrief-earpiece-design.md`.
+- **The visit brief** (`demo/debrief.visit_brief`, code only, at most 3,500 characters): what they asked for and why
+  (seed.md), their own lines to the voice in this visit's conversations, the outline's titles and `lands` marked
+  heard / partly heard / not heard (live/reading.jsonl), stopped if it was, their questions mid-piece with the voice's
+  first answer. A rehearsal gets one line (a stand-in, not theirs) and no outline. It is the debrief's `{{visit}}`
+  (THEIR VISIT in `prompts/interviewer_debrief.md`, `visit_none` when empty) and goes into the debrief's first row.
+  HOW YOU ASK now starts: after the opening, one specific thing from their visit, in their terms.
+- **The earpiece** (`demo/debrief_earpiece.py`, `prompts/interviewer_director.md` and `_moment.md`, stage
+  `interviewer_director`: Sonnet 5.5 low; config `demo.interviewer.director`): a sibling of the guide's (it reuses
+  `director.shape`/`decide`, now parameterised, and `merge_recent`). Plan: the opening, the moment behind their first
+  answer, the one thing from their visit most worth asking, the close. Notes (`about` follow_up, thread, moment, idea,
+  unanswered, wrap; kind `next_turn`) go by `POST /api/interview/direct`; fates by `/api/interview/direct/fate`
+  (`moved_on` added); rows `director`/`director_fate` in study/debrief-<sid>.jsonl, never `text`; cost in
+  study/log.jsonl (kind interviewer). Looks: `opened` (plan only), `hearing` while they answer (from `hear_words`,
+  again every `hear_every_ms`), `turn_end` when nothing covered the turn. A note whose turn the interviewer already
+  took is dropped (`moved_on`), not used a turn late. The wrapper is `prompts/interviewer_notes.md` `direct_debrief`.
+  tests/conftest.py turns it off; tests about it turn it on.
+- **Seeing it:** the panel follows the debrief for testers with the earpiece view (live.js forwards the interviewer's
+  events); `/admin/earpiece` lists `debrief-<sid>` beside the guide's conversations. demo/visit.py still leaves the
+  earpiece out (`earpiece_history._files` stays the guide's; `_debrief_files` is the history's).
+- **Checks:** a replay of 15 scripted moments through the real look ($0.08): it plans only at the start, waits on a
+  half answer, follows a vague answer to its moment, catches an idea mid-sentence, moves on once an answer is specific,
+  and wraps after three questions. Two prompt rules came from it (never dig into an already specific answer; count the
+  answer in progress toward enough). The live voice can't be reached from a cloud session (its proxy refuses
+  WebSocket upgrades): `python -m demo.sim_interviewer debrief --persona sailor --persona commuter --earpiece` on the
+  Mac (testers with a `visit:` bring a brief from `prompts/interviewer_visits.md`; `--no-visit` for the old debrief).
+  Not yet heard by Ian.
+
 ## Local setup
 
 ```bash

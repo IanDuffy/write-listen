@@ -33,6 +33,10 @@ def cfg():
     # The live guide's earpiece calls Claude in the background (live.director, on in config.yaml); tests about it
     # turn it on themselves, so no page test without a fake client can reach the real API through it.
     c["live"]["director"] = {**(c["live"].get("director") or {}), "enabled": False}
+    # Likewise the debrief's earpiece (demo.interviewer.director, on in config.yaml): every page test that starts a
+    # debrief would otherwise post looks that reach Claude. Tests about it turn it on themselves.
+    iv = c.setdefault("demo", {}).setdefault("interviewer", {})
+    iv["director"] = {**(iv.get("director") or {}), "enabled": False}
     return c
 
 

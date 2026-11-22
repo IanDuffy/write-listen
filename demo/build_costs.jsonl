@@ -284,3 +284,4 @@
 {"t": "2026-11-19T23:03:20", "what": "claude interviewer_tester terse", "seconds": null, "backend_tokens": null, "usd": 0.000648}
 {"t": "2026-11-19T23:03:37", "what": "claude interviewer_tester terse", "seconds": null, "backend_tokens": null, "usd": 0.000828}
 {"t": "2026-11-19T23:03:51", "what": "gpt-live interviewer intro terse", "seconds": 34.0, "backend_tokens": {"model": "gpt-6.1-terra", "input": 4428, "output": 21, "cached": 2066}, "usd": 0.030904}
+{"t": "2026-11-22T05:34:13", "what": "claude interviewer_director replay (15 scripted moments, 2026-11-22)", "seconds": null, "backend_tokens": null, "usd": 0.081}

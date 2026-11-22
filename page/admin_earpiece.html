@@ -33,7 +33,7 @@
   .when b { color: var(--fg); font-weight: 600; display: block; }
   .body { min-width: 0; overflow-wrap: anywhere; }
   .who { font-weight: 600; }
-  li.line.guide .who { color: var(--accent); }
+  li.line.guide .who, li.line.interviewer .who { color: var(--accent); }
   li.note .body, li.tool .body, li.session .body { color: var(--muted); font-size: 13px; }
   li.note.whisper .body { color: var(--fg); }
   li.look .body { background: var(--soft); border-left: 3px solid var(--accent); border-radius: 6px; padding: 6px 10px; }
@@ -73,6 +73,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const q = new URLSearchParams(location.search);
 const lid = q.get("lid") || "own", session = q.get("session");
+const debrief = /^debrief-/.test(session || "");
 const mss = (s) => (s == null || s < 0) ? "?" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const money = (x) => "$" + (x || 0).toFixed(2);
 const when = (iso) => {
@@ -129,9 +130,9 @@ function lookHtml(x) {
 }
 
 function itemHtml(x) {
-  if (x.kind === "line") return `<li class="line ${esc(x.who)}">${stamp(x)}<div class="body"><span class="who">${x.who === "guide" ? "Guide" : "Listener"}</span> ${esc(x.text)}</div></li>`;
+  if (x.kind === "line") return `<li class="line ${esc(x.who)}">${stamp(x)}<div class="body"><span class="who">${{ guide: "Guide", interviewer: "Interviewer" }[x.who] || "Listener"}</span> ${esc(x.text)}</div></li>`;
   if (x.kind === "look") return `<li class="look${x.error ? " error" : ""}" data-id="${esc(x.id)}">${stamp(x)}<div class="body">${lookHtml(x)}</div></li>`;
-  if (x.kind === "note") return `<li class="note${x.whisper ? " whisper" : ""}">${stamp(x)}<div class="body">${x.whisper ? `Whisper reached the guide (look ${esc(x.look)})` : "App note"}: ${esc(x.text)}</div></li>`;
+  if (x.kind === "note") return `<li class="note${x.whisper ? " whisper" : ""}">${stamp(x)}<div class="body">${x.whisper ? `Whisper reached the ${debrief ? "interviewer" : "guide"} (look ${esc(x.look)})` : "App note"}: ${esc(x.text)}</div></li>`;
   if (x.kind === "tool") return `<li class="tool">${stamp(x)}<div class="body">Tool: ${esc(x.name)}</div></li>`;
   if (x.kind === "session") return `<li class="session">${stamp(x)}<div class="body">${x.ended ? `Voice session ended (${esc(x.ended)})` : "New voice session"}</div></li>`;
   return "";
@@ -143,7 +144,7 @@ async function list() {
   $("crumb").textContent = "";
   $("msg").textContent = got.conversations.length ? "" : "No conversations yet.";
   if (!got.conversations.length) return;
-  const rows = got.conversations.map((c) => `<tr><td data-label="Conversation"><a href="?lid=${encodeURIComponent(lid)}&session=${encodeURIComponent(c.session)}">${esc(when(c.started))}</a><div class="sub">${esc(c.session)}</div></td>`
+  const rows = got.conversations.map((c) => `<tr><td data-label="Conversation"><a href="?lid=${encodeURIComponent(lid)}&session=${encodeURIComponent(c.session)}">${esc(when(c.started))}</a><div class="sub">${c.kind === "debrief" ? "Debrief · " : ""}${esc(c.session)}</div></td>`
     + `<td data-label="Length">${c.minutes} min · ${c.lines} lines</td>`
     + `<td data-label="Earpiece">${c.looks} looks · ${c.notes} notes · ${c.sent} sent · ${c.dropped} dropped${c.errors ? ` · ${c.errors} failed` : ""}</td>`
     + `<td data-label="Cost">${money(c.cost_usd)}</td></tr>`).join("");
@@ -153,7 +154,7 @@ async function list() {
 async function one() {
   const got = await api(`/api/admin/earpiece/${encodeURIComponent(lid)}/${encodeURIComponent(session)}`);
   $("crumb").innerHTML = `· <a href="?lid=${encodeURIComponent(lid)}">${esc(got.label)}</a>`;
-  $("title").textContent = `Conversation ${when(got.started)}`;
+  $("title").textContent = `${debrief ? "Debrief" : "Conversation"} ${when(got.started)}`;
   const D = got.director;
   const n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   $("summary").textContent = `${n(D.looks, "look", "looks")} · ${n(D.notes, "note", "notes")} · ${D.sent} sent · ${D.held} held · ${D.dropped} dropped`

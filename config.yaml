@@ -83,6 +83,9 @@ stages:
   # a cadence (live.director), never per line. Sonnet at low: 14 of 14 acceptable on held-out moments at a median
   # 1.9 s; Haiku was 0.5 s faster but 7 of 14 (scratch director.report.md). Costs go to listener/sessions/log.jsonl.
   director: {model: claude-sonnet-5-5, max_tokens: 1500, effort: low, expected_output_tokens: 150}
+  # The debrief's earpiece (demo/debrief_earpiece.py, prompts/interviewer_director.md; Ian, 2026-11-22). Costs go to the
+  # tester's study/log.jsonl (kind interviewer), so the admin page counts them.
+  interviewer_director: {model: claude-sonnet-5-5, max_tokens: 1500, effort: low, expected_output_tokens: 150}
 
 chapter:
   target_words: 6000
@@ -647,6 +650,14 @@ demo:
       handover_min_ms: 10000    # ... and those words count only once the tester has spoken and the intro is this old (never heard: 3x)
       act_grace_ms: 3500        # said "I'll hand you over" (or the debrief's farewell) with no tool call: the page acts
       reply_wait_ms: 6000       # they finished this long ago and it has said nothing but "mm": the page tells it they're waiting (again at 3x)
+    director:                   # the debrief's earpiece (docs/debrief-earpiece-design.md; Ian, 2026-11-22)
+      enabled: true
+      hear_words: 8             # a look while they are still answering, once their turn has this many words,
+      hear_every_ms: 5000       # and again this often while they keep talking (its note is ready as they finish)
+      turn_merge_ms: 1500       # their turn has ended once no new words came for this long (a look then, if none covered it)
+      timeout_ms: 5000          # the look's wait on the server
+      max_calls: 20             # per debrief; then no more looks (the debrief goes on as before)
+      max_usd: 0.30             # per debrief
     checks:                     # demo/sim_interviewer.py (acceptance checks 4 and 8), never run by tests
       intro_minutes: 2          # a simulated intro's connected time at most
       debrief_minutes: 6        # a debrief's (live.checks.run_cap_usd also bounds it: $0.40 is 8 minutes)

@@ -10,6 +10,9 @@
                                                                  nothing asked that didn't happen, and it ends
                                                                  itself: no question once they've said they're
                                                                  done, the farewell by name
+    python -m demo.sim_interviewer debrief --earpiece [--no-visit]  the debrief's earpiece mirrored (class Ear); the
+                                                                 testers with a visit (`visit:`) bring their brief
+                                                                 (prompts/interviewer_visits.md) unless --no-visit
     python -m demo.sim_interviewer grade <run.json>              grade one saved run again
     --persona <key> (repeatable) runs only those personas, e.g. --persona fragments --persona asksback
 
@@ -139,7 +142,7 @@ def personas(mode: str | None = None) -> list[dict]:
         p = {"key": key.strip(), "mode": "intro", "name": "", "known": None, "asks": False, "heard": None, "moments": []}
         text, in_moments = [], False
         for line in rest.splitlines():
-            m = re.match(r"^(mode|name|known|asks|heard|moments|" + "|".join(DID) + r"):\s*(.*)$", line)
+            m = re.match(r"^(mode|name|known|asks|heard|moments|visit|" + "|".join(DID) + r"):\s*(.*)$", line)
             if m:
                 k, v = m.groups()
                 in_moments = k == "moments"
@@ -156,8 +159,20 @@ def personas(mode: str | None = None) -> list[dict]:
             in_moments = False
             text.append(line)
         p["text"] = "\n".join(text).strip()
+        if p.get("visit"):  # the visit brief (prompts/interviewer_visits.md): the interviewer's, and the tester knows it
+            p["visit_text"] = visits().get(p["visit"], "")
+            p["text"] += "\n\nWhat happened in your visit, as the app recorded it:\n" + p["visit_text"]
         if mode is None or p["mode"] == mode:
             out.append(p)
+    return out
+
+
+def visits() -> dict[str, str]:
+    """prompts/interviewer_visits.md: {key: brief}."""
+    out = {}
+    for block in re.split(r"^## +", load_prompt("interviewer_visits"), flags=re.M)[1:]:
+        key, _, rest = block.partition("\n")
+        out[key.strip()] = rest.strip()
     return out
 
 
@@ -187,7 +202,10 @@ def values_for(p: dict) -> dict:
     heard, minutes = heard_of(p)
     ctx = {"run": "sim", "title": "The Nine Levers", "summary": "Why Donella Meadows' list of places to intervene "
            "in a system still matters, from a 1990s trade meeting to today.", "minutes_heard": heard, "minutes": minutes}
-    return IV.values_from(p["name"], ctx, p["moments"], activity_for(p))
+    if p.get("visit_text"):  # its own piece, from the brief
+        m = re.search(r'Title: "([^"]+)"', p["visit_text"])
+        ctx = {**ctx, "title": m.group(1) if m else ctx["title"], "summary": ""}
+    return IV.values_from(p["name"], ctx, p["moments"], activity_for(p), visit=p.get("visit_text") or "")
 
 
 class Tools:
@@ -245,6 +263,73 @@ def tester_reply(cfg: dict, run: Run, p: dict, timeline: list[dict], moment: str
     if LEAVE in text:
         return LEAVE
     return text
+
+
+# --- the earpiece, as the page runs it (page/interview.js; docs/debrief-earpiece-design.md) ------------------
+
+class Ear:
+    """The debrief's earpiece mirrored: the same look (demo/debrief_earpiece.look, the real prompt and model) at the
+    start (`opened`, plan only), while the tester speaks a line of hear_words or more (`hearing`, their first words;
+    the look runs while the line is spoken and its note is sent when it comes back, as the page does), and after a
+    shorter line (`turn_end`). A note whose turn was taken (an interviewer line ended after the look was asked) is
+    dropped as moved_on, as the page drops it. Its looks are kept for the run's record."""
+
+    def __init__(self, cfg: dict, run: Run, values: dict, notes: dict):
+        from demo import debrief_earpiece as E
+        self.E, self.cfg, self.run, self.values, self.notes = E, cfg, run, values, notes
+        self.D = E.settings(cfg)
+        self.plan, self.read, self.sent, self.looks = None, "(first look)", [], []
+
+    def lines(self, timeline: list[dict]) -> list[dict]:
+        out = []
+        for x in sorted(timeline, key=lambda r: r["t"]):
+            who = {"guide": "interviewer", "listener": "listener"}.get(x["who"])
+            if who and x.get("text"):
+                out.append({"secs": int(x["t"]), "who": who, "text": x["text"]})
+            elif x["who"] == "app" and x.get("kind") == "instructions" and x.get("text"):
+                out.append({"secs": int(x["t"]), "who": "app", "text": x["text"]})
+        return out
+
+    def look(self, timeline: list[dict], trigger: str, hearing: str, seconds: float) -> dict:
+        from voice.gpt_live import director
+        lines = self.lines(timeline)
+        user = self.E.look(lines=lines, trigger=trigger, hearing=hearing, seconds=int(seconds),
+                           questions=self.E.questions_asked(lines), time_up=False, did=str(self.values.get("did") or ""),
+                           visit=str(self.values.get("visit") or ""), plan=self.plan, last_read=self.read)
+        S.check_cap(self.cfg, 0.02, "Claude interviewer_director", COSTS)
+        got = director.decide(self.cfg, self.run, user, stage=self.E.STAGE, system="interviewer_director",
+                              schema=self.E.SCHEMA, parse_fn=self.E.parse)
+        S.log_cost(f"claude interviewer_director {trigger}", got.get("cost_usd") or 0.0, path=COSTS)
+        self.plan = got.get("plan") or self.plan
+        self.read = got.get("read") or self.read
+        rec = {"t": round(seconds, 1), "trigger": trigger, "hearing": hearing, **{k: got.get(k) for k in
+               ("read", "plan", "next", "changed", "about", "note", "ms", "error")}}
+        self.looks.append(rec)
+        return rec
+
+    async def deliver(self, sim, rec: dict, asked_turns: int) -> None:
+        if not (rec.get("changed") and rec.get("note")):
+            return
+        if any("?" in t["text"] or len(t["text"].split()) >= IV.PAGE_DEFAULTS["reply_words"] for t in sim.turns[asked_turns:]):
+            rec["fate"] = "dropped: moved_on"
+            return
+        rec["fate"] = f"sent at {sim.now():.1f}"
+        await sim.note("instructions", self.notes["direct"].replace("{note}", rec["note"]))
+
+    async def hearing(self, sim, reply: str) -> None:
+        """Speak `reply`, looking while it is spoken (a line of hear_words or more) or after it (a shorter one)."""
+        words = reply.split()
+        asked = len(sim.turns)
+        if len(words) >= int(self.D["hear_words"]):
+            part = " ".join(words[: max(int(self.D["hear_words"]), int(len(words) * 0.6))])
+            say = asyncio.create_task(sim.say(reply))
+            rec = await asyncio.to_thread(self.look, sim.timeline, "hearing", part, sim.now())
+            await self.deliver(sim, rec, asked)
+            await say
+            return
+        await sim.say(reply)
+        rec = await asyncio.to_thread(self.look, sim.timeline, "turn_end", "", sim.now())
+        await self.deliver(sim, rec, asked)
 
 
 # --- one conversation -------------------------------------------------------------------------------
@@ -414,7 +499,7 @@ def page_closes(timeline: list, page: dict) -> bool:
 
 async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, max_minutes: float | None = None,
                    run: Run | None = None, reply_fn=None, sim_kwargs: dict | None = None,
-                   wait_secs: float = WAIT_SECS) -> dict:
+                   wait_secs: float = WAIT_SECS, earpiece: bool = False) -> dict:
     """One intro or debrief by voice; returns (and saves) its transcript with the code checks."""
     mode, run = p["mode"], run or log_run()
     I = IV.icfg(cfg)
@@ -433,6 +518,9 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
     PAGE = {**IV.PAGE_DEFAULTS, **(I.get("page") or {})}
     await sim.connect()
     await sim.note("commentary", notes["opened"])  # the page's opening, as speakable context
+    ear = Ear(cfg, run, values, notes) if earpiece and mode == "debrief" else None
+    if ear:
+        await asyncio.to_thread(ear.look, sim.timeline, "opened", "", sim.now())
     since, said, silent, stop, by_page, noted = 0, 0, 0, "turns", None, False
     done_tool = "handoff_to_guide" if mode == "intro" else "end_debrief"
     reply_wait = min(float(PAGE["reply_wait_ms"]) / 1000, wait_secs)
@@ -508,7 +596,10 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
                     break
                 continue
             silent = 0
-            await sim.say(reply)
+            if ear:
+                await ear.hearing(sim, reply)
+            else:
+                await sim.say(reply)
             spoke_at = sim.now()
             said += 1
             if said >= max_turns:
@@ -522,7 +613,7 @@ async def converse(cfg: dict, p: dict, out_dir: Path, *, max_turns: int = 12, ma
     transcript = {"kind": mode, "persona": p["key"], "name": p["name"], "asks": p["asks"], "description": p["text"],
                   "values": {k: v for k, v in values.items() if not k.startswith("_")}, "session_id": sim.session_id,
                   "stop": stop, "timeline": timeline, "calls": sim.calls, "errors": sim.errors, "cost": cost,
-                  "checks": code_checks(p, timeline, sim.calls, by_page)}
+                  "checks": code_checks(p, timeline, sim.calls, by_page), "earpiece": ear.looks if ear else None}
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"{mode}-{p['key']}.json").write_text(json.dumps(transcript, indent=1, ensure_ascii=False), encoding="utf-8")
     return transcript
@@ -589,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--grade", action="store_true")
     ap.add_argument("--max-turns", type=int, default=None)
     ap.add_argument("--persona", action="append", help="only this persona (a key in prompts/interviewer_testers.md); repeatable")
+    ap.add_argument("--earpiece", action="store_true", help="debrief: the earpiece mirrored (demo/debrief_earpiece.py)")
+    ap.add_argument("--no-visit", action="store_true", help="debrief: leave the visit brief out (as before 2026-11-22)")
     a = ap.parse_args(argv)
     cfg = load_config()
     try:
@@ -603,9 +696,12 @@ def main(argv: list[str] | None = None) -> int:
         ok = 0
         for i in range(a.runs):
             p = dict(people[i % len(people)])
+            if a.no_visit:
+                p.pop("visit_text", None)
             if i >= len(people):
                 p["key"] = f"{p['key']}-{i // len(people) + 1}"
-            t = asyncio.run(converse(cfg, p, out, max_turns=a.max_turns or (8 if a.what == "intro" else 10)))
+            t = asyncio.run(converse(cfg, p, out, max_turns=a.max_turns or (8 if a.what == "intro" else 10),
+                                     earpiece=a.earpiece))
             g = grade(cfg, out / f"{a.what}-{p['key']}.json") if a.grade else None
             ok += bool(t["checks"]["ok"])
             print(summary(t, g), flush=True)

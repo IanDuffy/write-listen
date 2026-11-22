@@ -323,17 +323,19 @@ def cap_words(note: str, n: int = MAX_WORDS) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def shape(got: dict) -> dict:
+def shape(got: dict, kinds: list | None = None, abouts: list | None = None) -> dict:
     """A look as the page gets it: {read, plan, next, changed, kind, about, note}. A whisper is a note with
-    changed true (kind when_it_fits unless it says now); anything else has no note. Raises ValueError on a value
-    outside the schema."""
+    changed true (kind: the first of `kinds`, when_it_fits for the guide, unless it says another); anything else
+    has no note. Raises ValueError on a value outside the schema. `kinds`/`abouts`: another earpiece's enums
+    (demo/debrief_earpiece.py), the guide's by default."""
+    kinds, abouts = kinds or KINDS, abouts or ABOUT
     plan = []
     for p in got.get("plan") or []:
         if not isinstance(p, dict) or p.get("state") not in STATES or not str(p.get("item") or "").strip():
             raise ValueError(f"bad plan item {p!r}")
         plan.append({"item": str(p["item"]).strip(), "state": p["state"]})
     kind, about = got.get("kind"), got.get("about")
-    if kind not in KINDS + [None] or about not in ABOUT + [None]:
+    if kind not in list(kinds) + [None] or about not in list(abouts) + [None]:
         raise ValueError(f"unknown kind or about {kind!r}, {about!r}")
     # The note goes into the guide's ear inside brackets: nothing of the JSON or markup may come with it (replays
     # saw notes ending in '}' and '```</br>{').
@@ -344,26 +346,29 @@ def shape(got: dict) -> dict:
            "next": str(nxt).strip() if isinstance(nxt, str) and nxt.strip() else None}
     if not (got.get("changed") and note):
         return {**out, **NO_WHISPER}
-    return {**out, "changed": True, "kind": kind or "when_it_fits", "about": about, "note": note}
+    return {**out, "changed": True, "kind": kind or kinds[0], "about": about, "note": note}
 
 
 def parse(text: str) -> dict:
     return shape(json.loads((text or "").strip()))
 
 
-def decide(cfg: dict, log_run, user: str, log_extra: dict | None = None) -> dict:
-    """One look: shape()'s fields with "ms" and "cost_usd", or {"error", ...} with no whisper on any failure."""
+def decide(cfg: dict, log_run, user: str, log_extra: dict | None = None, *, stage: str = STAGE,
+           system: str = "live_director", schema: dict | None = None, parse_fn=None) -> dict:
+    """One look: shape()'s fields with "ms" and "cost_usd", or {"error", ...} with no whisper on any failure.
+    `stage`, `system` (a prompt name), `schema` and `parse_fn`: another earpiece's (demo/debrief_earpiece.py)."""
     t = time.monotonic()
+    parse_fn = parse_fn or parse
     try:
-        res = llm.call(log_run, cfg, STAGE, role="guide", system=load_prompt("live_director"),
-                       messages=[{"role": "user", "content": user}], json_schema=SCHEMA, label=STAGE,
+        res = llm.call(log_run, cfg, stage, role="guide", system=load_prompt(system),
+                       messages=[{"role": "user", "content": user}], json_schema=schema or SCHEMA, label=stage,
                        preapproved=True, log_extra=log_extra)
     except Exception as e:  # never break the conversation: the page falls back to its clocks
         return {**NO_WHISPER, "error": f"{type(e).__name__}: {e}"[:300], "ms": int((time.monotonic() - t) * 1000),
                 "cost_usd": 0.0}
     ms = int((time.monotonic() - t) * 1000)
     try:
-        out = parse(res.text)
+        out = parse_fn(res.text)
     except (ValueError, TypeError, json.JSONDecodeError, AttributeError) as e:
         return {**NO_WHISPER, "error": f"unreadable look: {e}"[:300], "ms": ms, "cost_usd": res.usage.cost_usd}
     return {**out, "ms": ms, "cost_usd": res.usage.cost_usd}

@@ -46,6 +46,12 @@ Also from that run: "We definately need to stop the run of the chapter once the 
 user clicks stop demo." End demo while the piece is still being made now stops it as the debrief starts
 (demo/interviewer.stop_on_end), and `did_stopped` closes the account (also read from a status.json that says
 stopped). Not after the piece had finished, and never at the piece's own end.
+Ian, after testing with friends (2026-11-22): the debrief's questions were "a little generic ... not connecting or
+acting like a real product interview". The debrief now gets {{visit}} (demo/debrief.visit_brief: what they asked for
+and why, their own lines to the voice, the piece's outline with what they heard, their questions mid-piece with the
+voice's answers; `visit_none` when nothing is recorded), and an earpiece (demo/debrief_earpiece.py) whose notes the
+page sends wrapped in `direct_debrief` ({note}: keep it the only placeholder; the Earpiece history recognises a
+whisper by this wrapper).
 ---
 opened_intro: Begin now: say hello warmly and ask their name. Nothing else yet.
 opened_intro_named: Begin now: say hello warmly and check who it is: "Hi, is this {name}?" Nothing else yet.
@@ -56,6 +62,8 @@ hanging_debrief: [You answered them but didn't go on, and the turn is still your
 handover_now: [It's time to hand them over: say "I'll hand you over now." and hand them over.]
 time_up: [You're at time. No more questions: once they've finished their thought, respond in a few words, then say your farewell, word for word, and end.]
 wrap_now: [Time is up. Say your farewell now, word for word, and end.]
+visit_none: (Nothing more is recorded about their visit.)
+direct_debrief: [Earpiece note from Ian, for you only: {note} Use it for your next turn if it fits what they have just said; it never overrides when to end or your farewell. It replaces any earlier earpiece note.]
 farewell: Thank you, {name}. That really helps Ian. That's everything from me.
 farewell_unnamed: Thank you. That really helps Ian. That's everything from me.
 farewell_ian: Thank you, {name}. That really helps. That's everything from me.

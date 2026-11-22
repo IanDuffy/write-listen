@@ -89,7 +89,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from stages import common
 from stages.common import PROMPTS_DIR, ROOT, Run, StageError, load_prompt
@@ -380,7 +380,8 @@ def debrief_values(cfg: dict, listener_dir: Path, stopped: bool = False) -> dict
     act = debrief.activity(listener_dir, cfg, now=time.time())
     if stopped:
         act = {**act, "stopped": True}
-    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg), act)
+    return values_from(name, debrief.chapter_context(listener_dir, cfg), debrief.moments(listener_dir, cfg), act,
+                       visit=debrief.visit_brief(listener_dir, cfg, stopped=stopped))
 
 
 # End demo while the chapter is still being made stops it (Ian's third run, 2026-11-19: "We definately need to
@@ -485,10 +486,11 @@ def recorded_account(study: Path) -> str | None:
     return None
 
 
-def values_from(name: str, ctx: dict, got: list[dict], act: dict | None = None) -> dict:
+def values_from(name: str, ctx: dict, got: list[dict], act: dict | None = None, visit: str = "") -> dict:
     """The debrief's placeholders from a name, a chapter_context, moments and an activity (demo/debrief.py;
     also the simulated checks'). `did` is the account of what they did, one "- " line each; `asking` says how
-    the topic about asking questions may come up, from what they did."""
+    the topic about asking questions may come up, from what they did; `visit` is the visit brief
+    (debrief.visit_brief: their words and the piece's outline; Ian, 2026-11-22)."""
     n = notes()
     bye = farewell(name, n)
     name = name or n["name_unknown"]
@@ -505,6 +507,7 @@ def values_from(name: str, ctx: dict, got: list[dict], act: dict | None = None) 
     return {"person": name, "title": ctx.get("title") or n["title_unknown"],
             "summary": ctx.get("summary") or n["summary_unknown"], "heard": _heard_line(ctx, n), "asking": asking,
             "did": "\n".join("- " + x for x in account(ctx, got, act, n)), "farewell": bye,
+            "visit": visit.strip() or n["visit_none"],
             "_moments": got, "_context": ctx, "_activity": act}
 
 
@@ -552,14 +555,19 @@ def page_notes(mode: str, values: dict) -> dict:
     else:
         name = values.get("person") or ""
         got = {"opened": n["opened_debrief"], "time_up": n["time_up"], "wrap_now": n["wrap_now"],
-               "waiting": n["waiting_debrief"], "hanging": n["hanging_debrief"]}
+               "waiting": n["waiting_debrief"], "hanging": n["hanging_debrief"],
+               "direct": n["direct_debrief"]}  # the earpiece's wrapper: the page puts the note in {note}
     return {k: _fill(v, name=name) for k, v in got.items()}
 
 
 def page_settings(cfg: dict, mode: str) -> dict:
+    from demo import debrief_earpiece
     I = icfg(cfg)
-    return {**I["page"], "mode": mode, "acts": dict(ACTS), "intro_max_minutes": I["intro_max_minutes"],
-            "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
+    out = {**I["page"], "mode": mode, "acts": dict(ACTS), "intro_max_minutes": I["intro_max_minutes"],
+           "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
+    if mode == "debrief":  # the debrief's earpiece (demo/debrief_earpiece.py): the page's knobs
+        out["direct"] = debrief_earpiece.page_settings(cfg)
+    return out
 
 
 # --- the transcript ---------------------------------------------------------------------------------
@@ -878,6 +886,26 @@ class Usage(BaseModel):
     backend: dict | None = None
 
 
+class Direct(BaseModel):
+    """One look by the debrief's earpiece (demo/debrief_earpiece.py)."""
+    sid: str
+    id: int = 0                   # the page's look number (it echoes back; one look in flight at a time)
+    trigger: str = "turn_end"     # opened, hearing or turn_end (debrief_earpiece.TRIGGERS)
+    recent: list[dict] = []       # the page's last few lines ({who: in|out, text}): any the transcript lacks yet are added
+    hearing: str = Field("", max_length=4000)   # their words in progress, when they are still answering
+    page: dict = {}               # {seconds, questions, time_up}
+
+
+class DirectFate(BaseModel):
+    sid: str
+    id: int
+    fate: str                                        # sent, held or dropped (director.FATES)
+    reason: str | None = None                        # why it was dropped (debrief_earpiece.FATE_REASONS)
+    detail: str | None = Field(None, max_length=200)
+    secs: float | None = None                        # the page's clock since the session started
+    held_ms: int | None = None
+
+
 class End(BaseModel):
     sid: str
     how: str = "ended"
@@ -1019,10 +1047,14 @@ def mount(app, cfg: dict, on_debrief=None) -> None:
                   "instructions_sha256": hashlib.sha256(sc["instructions"].encode()).hexdigest()[:16],
                   "tools": list(MODE_TOOLS[req.mode]),
                   **({"moments": values["_moments"], "chapter": values["_context"],
-                      "activity": values.get("_activity"), "did": values.get("did")} if req.mode == "debrief"
+                      "activity": values.get("_activity"), "did": values.get("did"),
+                      "visit": values.get("visit")} if req.mode == "debrief"
                      else {"name_given": values.get("_name")})})
         out = {"sid": sid, "live_id": got["id"], "sdp": got["sdp"], "notes": page_notes(req.mode, values),
                "settings": page_settings(cfg, req.mode)}
+        if req.mode == "debrief":  # the tester's earpiece view (their tester.json): live.js shows the debrief's looks
+            from voice.gpt_live import director as live_director
+            out["earpiece_view"] = live_director.view_on(cfg)
         if req.mode == "intro":  # what the page fetches into memory during the intro, ready for the handover
             I = icfg(cfg)
             out["next"] = {"scripts": list(I["scripts"]), "entry": I["entry"]}
@@ -1097,6 +1129,36 @@ def mount(app, cfg: dict, on_debrief=None) -> None:
         who = WHO.get(req.who)
         if who and req.text.strip():
             write(s, {"who": who, "text": req.text.strip()})
+        return {"ok": True}
+
+    @app.post("/api/interview/direct")
+    def direct(req: Direct) -> dict:
+        """One look by the debrief's earpiece (demo/debrief_earpiece.py): its plan and, when its advice changed, a
+        note the page sends the interviewer for its next turn. The file lock is held only around the transcript's
+        reads and writes, never for the model call."""
+        from demo import debrief_earpiece
+        s = get(req.sid)
+        if s["mode"] != "debrief":
+            raise HTTPException(400, "The earpiece is for the debrief.")
+        recent = [{"who": {"in": "listener", "out": "interviewer"}.get(str(x.get("who")), str(x.get("who"))),
+                   "text": x.get("text")} for x in req.recent[-12:] if isinstance(x, dict)]
+        return debrief_earpiece.ask(cfg, s, {**req.model_dump(), "recent": recent}, write)
+
+    @app.post("/api/interview/direct/fate")
+    def direct_fate(req: DirectFate) -> dict:
+        """What became of an earpiece note on the page (sent, held, dropped and why), for the Earpiece history; a
+        "director_fate" row with no text or note."""
+        from demo import debrief_earpiece
+        from voice.gpt_live import director as live_director
+        if req.fate not in live_director.FATES:
+            raise HTTPException(400, "Unknown fate.")
+        if req.reason is not None and req.reason not in debrief_earpiece.FATE_REASONS:
+            raise HTTPException(400, "Unknown reason.")
+        if req.fate == "dropped" and not req.reason:
+            raise HTTPException(400, "A dropped note needs a reason.")
+        s = get(req.sid)
+        write(s, {"who": "director_fate", "id": req.id, "fate": req.fate, "reason": req.reason, "detail": req.detail,
+                  "page_secs": req.secs, "held_ms": req.held_ms})
         return {"ok": True}
 
     @app.post("/api/interview/usage")

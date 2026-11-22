@@ -40,7 +40,7 @@ import math
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 WORDS_PER_SECOND = 2.5  # live.page.words_per_second (voice/gpt_live/chapter.py WORDS_PER_SECOND)
@@ -420,3 +420,162 @@ def activity(listener_dir: Path, cfg: dict | None = None, now: float | None = No
         parts = parts[:-1] + [[parts[-1][0], started_at]] if parts else []
     out["talk_s"] = round(sum(b - a for a, b in parts), 1) if parts else None
     return out
+
+
+# --- the visit brief (docs/debrief-earpiece-design.md; Ian, 2026-11-22) -------------------------------------------
+#
+# What the debrief's interviewer and its earpiece know of the visit beyond the account of what they did: what they
+# asked for and why, their own lines to the voice, the piece's outline (titles and what each part covers, never the
+# script) with what they heard of it, and their questions mid-piece with the voice's answers. Ian's choice: "their
+# words + outline". Code only: no call, no wait as the debrief starts. In the debrief's own words ("the piece", "the
+# voice"), and at most BRIEF_CHARS.
+
+BRIEF_CHARS = 3500
+LINE_CHARS = 200          # one of their lines, or one answer
+THEIR_LINES_CHARS = 1200  # all their lines to the voice (the oldest go first)
+VISIT_BEFORE_SECONDS = 1800   # conversations up to this long before the piece was begun count as this visit
+_PLACEHOLDERS = {"(not said)", "(nothing)", "(the topic above is in their words)"}
+
+
+def _cut(text: str, n: int = LINE_CHARS) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[: n - 1].rsplit(" ", 1)[0] + "…"
+
+
+def seed_parts(root: Path) -> dict:
+    """00_source/seed.md as {topic, said, why} (prompts/seed_file.md's headings); placeholders left out."""
+    p = root / "00_source" / "seed.md"
+    if not p.exists():
+        return {}
+    parts, key = {}, None
+    names = {"topic": "topic", "what the listener said": "said", "why it matters": "why"}
+    for line in p.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## "):
+            head = line[3:].strip().lower()
+            key = next((v for k, v in names.items() if head.startswith(k)), None)
+            continue
+        if key and line.strip():
+            parts[key] = (parts.get(key, "") + " " + line.strip()).strip()
+    return {k: v for k, v in parts.items() if v and v not in _PLACEHOLDERS}
+
+
+def _when(rec: dict) -> datetime | None:
+    try:
+        t = datetime.fromisoformat(str(rec.get("t") or rec.get("started") or ""))
+    except ValueError:
+        return None
+    return t.replace(tzinfo=None) if t.tzinfo else t
+
+
+def their_lines(listener_dir: Path, since: datetime | None) -> list[str]:
+    """Their own lines to the voice in this visit's conversations (sessions/*.jsonl), oldest first: the
+    conversations begun from `since` on, or only the newest that has a line of theirs when there is no `since`."""
+    convs = []
+    for p in sorted((Path(listener_dir) / "sessions").glob("*.jsonl")):
+        if p.name == "log.jsonl":
+            continue
+        rows = _read_jsonl(p)
+        first = next((t for r in rows if (t := _when(r))), None)
+        said = [str(r.get("text") or "").strip() for r in rows if r.get("who") == "listener"]
+        said = [x for x in said if x]
+        if said:
+            convs.append((first, said))
+    if since is not None:
+        picked = [said for first, said in convs if first is None or first >= since]
+    else:
+        picked = convs[-1:] and [convs[-1][1]]
+    lines = [_cut(x) for said in picked for x in said]
+    while lines and sum(len(x) + 3 for x in lines) > THEIR_LINES_CHARS:
+        lines.pop(0)
+    return lines
+
+
+def _heard_sections(root: Path) -> dict[int, str]:
+    """{section n: "heard" | "partly heard"} from live/reading.jsonl's paragraph ids (s<n>-p<kk>)."""
+    read = {str(r["id"]) for r in _read_jsonl(root / "live" / "reading.jsonl") if r.get("id")}
+    if not read:
+        return {}
+    by_section: dict[int, set] = {}
+    for p in _paragraphs(root):
+        m = re.match(r"s(\d+)-p", str(p.get("id") or ""))
+        if m:
+            by_section.setdefault(int(m.group(1)), set()).add(p["id"])
+    out = {}
+    for pid in read:
+        m = re.match(r"s(\d+)-p", pid)
+        if not m:
+            continue
+        n = int(m.group(1))
+        every = by_section.get(n)
+        out[n] = "heard" if every and every <= read else "partly heard"
+    return out
+
+
+def _asides(root: Path) -> list[tuple[str, str]]:
+    """Each question asked mid-piece: (their first line, the voice's first answer after it)."""
+    out = []
+    for rec in _read_jsonl(root / "12_asks" / "asides.jsonl"):
+        if rec.get("kind") != "ask":
+            continue
+        lines = [(x.get("who"), str(x.get("text") or "").strip()) for x in rec.get("transcript") or []]
+        i = next((k for k, (w, t) in enumerate(lines) if w == "listener" and t), None)
+        if i is None:
+            continue
+        answer = next((t for w, t in lines[i + 1:] if w in ("guide", "assistant", "voice") and t), "")
+        out.append((lines[i][1], answer))
+    return out
+
+
+def visit_brief(listener_dir: Path, cfg: dict | None = None, stopped: bool = False) -> str:
+    """The debrief's {{visit}}: what they asked for, what they said, the piece's outline and what they heard of it,
+    and their questions mid-piece with the voice's answers. "" when there is nothing to tell."""
+    root = latest_chapter(listener_dir)
+    parts: list[str] = []
+    status = _read_json(root / "status.json", {}) if root else {}
+    begun = _when({"t": (status or {}).get("started")}) if root else None
+    since = begun - timedelta(seconds=VISIT_BEFORE_SECONDS) if begun else None
+    rehearsal = bool(root and (_read_json(root / "fast.json", {}) or {}).get("rehearsal"))
+
+    if root:
+        seed = seed_parts(root)
+        asked = [f'They asked for a piece about: {_cut(seed["topic"])}'] if seed.get("topic") else []
+        if seed.get("said"):
+            asked.append(f'In their words: "{_cut(seed["said"])}"')
+        if seed.get("why"):
+            asked.append(f"Why it mattered to them: {_cut(seed['why'])}")
+        if asked:
+            parts.append("WHAT THEY ASKED FOR\n" + "\n".join(f"- {x}" for x in asked))
+
+    lines = their_lines(listener_dir, since)
+    if lines:
+        parts.append("WHAT THEY SAID TO THE VOICE (their own words, oldest first)\n"
+                     + "\n".join(f'- "{x}"' for x in lines))
+
+    if root and rehearsal:
+        parts.append("THE PIECE\n- The piece they heard was a stand-in replayed for this test, not made from what they"
+                     " asked for. Don't ask about its subject as if it were theirs, and don't point out the difference.")
+    elif root:
+        outline = _read_json(root / "05_outline.json", {}) or {}
+        ctx = chapter_context(listener_dir, cfg)
+        heard = _heard_sections(root)
+        piece = [f'Title: "{_cut(ctx.get("title") or outline.get("title") or root.name, 120)}"']
+        sections = [s for s in outline.get("sections") or [] if isinstance(s, dict)]
+        if sections:
+            for s in sections:
+                n = int(s.get("n") or 0)
+                mark = heard.get(n, "not heard")
+                piece.append(f'Part {n}, "{_cut(s.get("title"), 80)}" ({mark}): {_cut(s.get("lands"), 220)}')
+        elif ctx.get("summary"):
+            piece.append(f"What it was to cover (no outline yet): {_cut(ctx['summary'], 300)}")
+        if stopped or (status or {}).get("state") == "stopped":
+            piece.append("It was stopped before it was finished.")
+        parts.append("THE PIECE\n" + "\n".join(f"- {x}" for x in piece))
+
+    if root and not rehearsal:
+        asks = _asides(root)
+        if asks:
+            parts.append("THEIR QUESTIONS WHILE IT WAS READ\n" + "\n".join(
+                f'- They asked: "{_cut(q)}"' + (f' The voice answered: "{_cut(a)}"' if a else "") for q, a in asks))
+
+    text = "\n\n".join(parts)
+    return text if len(text) <= BRIEF_CHARS else text[: BRIEF_CHARS - 1].rsplit("\n", 1)[0] + "\n…"
