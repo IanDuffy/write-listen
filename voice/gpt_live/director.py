@@ -14,7 +14,8 @@ any appended instruction as a task for its very next turn (scratch earpiece/EVID
 the whisper itself (prompts/live_director.md).
 
 - `decide(cfg, log_run, user)`: one Claude call (config stages.director: Sonnet 5.5, effort low) with
-  prompts/live_director.md as the system prompt and prompts/live_director_moment.md as the look; structured
+  prompts/live_director.md as the system prompt (prompts/live_director_signals.md after it with
+  live.director.signals on) and prompts/live_director_moment.md as the look; structured
   output (SCHEMA: read, plan, next, changed, kind, about, note). `shape` cleans it: a whisper is a note with
   changed true; its note loses any markup and is cut to MAX_WORDS at a sentence end (dropped if no sentence end
   fits). Any error comes back as {"error"} with no whisper, never an exception: the page counts failures and
@@ -51,8 +52,9 @@ voice/gpt_live/earpiece_history.py builds the admin's timeline from the transcri
 Listener Signals (Ian's build plan, 2026-11-21: the earpiece reads text, so a flat "yeah, it was good" reads the
 same as a warm one): behind live.director.signals (off), `heard` reads the note on the listener's latest turn from
 the conversation's signals file (signals/live.py writes it with each measured line), the look carries it in a
-<listener_signals> block, and the director row records it as "heard" (null when there was none). Off, looks and
-rows are as they were.
+<listener_signals> block, the system prompt gains prompts/live_director_signals.md (how to weigh it), and the
+director row records it as "heard" (null when there was none). Off, the system prompt, looks and rows are as they
+were.
 """
 
 from __future__ import annotations
@@ -362,7 +364,12 @@ def decide(cfg: dict, log_run, user: str, log_extra: dict | None = None) -> dict
     """One look: shape()'s fields with "ms" and "cost_usd", or {"error", ...} with no whisper on any failure."""
     t = time.monotonic()
     try:
-        res = llm.call(log_run, cfg, STAGE, role="guide", system=load_prompt("live_director"),
+        # How to weigh <listener_signals> goes after the Rules only with the flag on: off, the tuned prompt testers'
+        # looks use is sent exactly as it was, and on, its cached prefix still is.
+        system = load_prompt("live_director")
+        if settings(cfg).get("signals"):
+            system += "\n" + load_prompt("live_director_signals")
+        res = llm.call(log_run, cfg, STAGE, role="guide", system=system,
                        messages=[{"role": "user", "content": user}], json_schema=SCHEMA, label=STAGE,
                        preapproved=True, log_extra=log_extra)
     except Exception as e:  # never break the conversation: the page falls back to its clocks
@@ -390,13 +397,17 @@ def heard(session, req: dict, D: dict) -> str | None:
     """The note on the listener's latest turn (signals.record.note, kept on the turn's record in
     <listener>/signals/<stem>.jsonl by the line route), or None. With the page's `sig_turn` (the turn its look is
     about) it waits up to signals_wait_ms for that turn's record, since the line post and the look leave the page
-    together and either can land first; a record from an earlier turn gives no note. Without it, the newest page
-    record. The folder is the transcript's: the route's cfg is global, and a tester's folder comes from the request."""
+    together and either can land first; a record from an earlier turn gives no note. A `sig_turn` below 1 (turns
+    count from 1) means the page has no measured latest turn, a typed line last or nothing said yet: no note, and no
+    wait. Without it, the newest page record. The folder is the transcript's: the route's cfg is global, and a
+    tester's folder comes from the request."""
     from signals import store
 
     listener, turn = Path(session.transcript).parent.parent, req.get("sig_turn")
     try:
         if isinstance(turn, int) and not isinstance(turn, bool):
+            if turn < 1:  # no measured latest turn: any record is an earlier spoken turn's, not what they last said
+                return None
             rec = store.wait_turn(listener, session.id, turn, max(0.0, float(D.get("signals_wait_ms") or 0)) / 1000)
             rec = rec if rec is not None and rec["turn"] >= turn else None
         else:

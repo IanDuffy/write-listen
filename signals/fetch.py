@@ -196,8 +196,9 @@ def _rel(listener: Path, p: Path) -> str:
 def fetch(listener: Path, cfg: dict, *, client=None, now: datetime | None = None) -> list[dict]:
     """Every target's recording into signals/audio/<live_id>.wav. One result per target:
     {live_id, stem, part, status, detail, bytes}, status "have" (already kept, or reused from a copy on disk, or
-    only the interviewer's mp3 when the WAV is gone), "fetched", "missing" (OpenAI has none: why, in plain
-    words) or "error"."""
+    only the interviewer's mp3 when the WAV is gone), "fetched", "missing" (OpenAI has none, a 404: why, in plain
+    words) or "error" (worth trying again: the key, the network, any other answer). A missing or refused key
+    stops the requests for the rest of the run."""
     listener = Path(listener)
     if not listener.is_dir():
         return []
@@ -251,7 +252,14 @@ def _one(listener: Path, ident: int, cfg: dict, tg: dict, client, now, no_key) -
         except Exception as e:  # noqa: BLE001 (network: this one is an error, the others may not be)
             return fallback(f"{type(e).__name__}: {e}", "error")
         if not got:
-            return fallback(missing_words(why.get("status"), age_days(tg.get("t"), now)), "missing")
+            st = why.get("status")
+            if st in (404, 410):            # OpenAI has none: not stored, not finished, or past its 30 days
+                return fallback(missing_words(st, age_days(tg.get("t"), now)), "missing")
+            if st in (401, 403):            # the key: every download would fail the same way
+                msg = f"OpenAI refused the key (HTTP {st}); check OPENAI_API_KEY and run wl signals fetch again"
+                return {**fallback(msg, "error"), "no_key": msg}
+            # a rate limit, OpenAI's own trouble, an empty answer: it may well be there next time
+            return fallback(f"OpenAI answered HTTP {st} without the recording; run wl signals fetch again", "error")
         if not is_wav(part):
             return fallback(f"OpenAI's answer (HTTP {why.get('status')}) is not a WAV file", "error")
         _place(listener, ident, part, dest, link=False)

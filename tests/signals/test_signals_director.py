@@ -3,8 +3,10 @@ build plan, 2026-11-21: "a flat 'yeah, it was good' reads the same as a warm one
 they were and nothing waits. On, the look carries the listener's latest turn's note (signals.record.note, from the
 conversation's signals file, which signals/live.py writes as the line route does) in a <listener_signals> block, and
 the director row records it as "heard"; a turn's record that lands after the look is waited for (outside the
-conversation lock, which the line post needs), and one from an earlier turn gives no note. Also the persona mirror,
-the earpiece history and the prompts. Offline: llm's client is a fake that answers with the JSON a test gives it."""
+conversation lock, which the line post needs), and one from an earlier turn gives no note, nor does sig_turn 0 (turns
+count from 1, as page/sig.js numbers them: 0 is no measured latest turn, a typed line last). The system prompt gains
+prompts/live_director_signals.md only with the flag on. Also the persona mirror, the earpiece history and the
+prompts. Offline: llm's client is a fake that answers with the JSON a test gives it."""
 
 import asyncio
 import json
@@ -60,7 +62,7 @@ def listener_of(s):
 
 
 def measured(cfg, s, turn, text, gap_ms=600, dur_ms=4000):
-    """The page's record of one listener turn, written as the line route writes it."""
+    """The page's record of one listener turn, written as the line route writes it (turns count from 1)."""
     sig = {"turn": turn, "gap_ms": gap_ms, "dur_ms": dur_ms, "speak_ms": dur_ms, "pauses": 0, "longest_pause_ms": 0,
            "rms_db": -30.0, "start_s": 10.0 + 10 * turn, "end_s": 10.0 + 10 * turn + dur_ms / 1000, "ago_ms": 900}
     return sig_live.record_line(listener_of(s), s.id, part="guide", live_id="live_1", text=text, sig=sig, cfg=cfg)
@@ -70,9 +72,9 @@ def fuller_turns(cfg, s):
     """Three fuller turns: the norm. The fourth, short and slow to come, is the one the earpiece hears about."""
     for i, text in enumerate(["I made a salmon dinner for my wife and me tonight.",
                               "We cooked it on a cedar plank out on the porch grill.",
-                              "My father taught me that one when I was a little kid."]):
+                              "My father taught me that one when I was a little kid."], 1):
         measured(cfg, s, i, text)
-    return measured(cfg, s, 3, "Yeah, fine.", gap_ms=3200, dur_ms=900)
+    return measured(cfg, s, 4, "Yeah, fine.", gap_ms=3200, dur_ms=900)
 
 
 def directed(s, cfg, lock=None, **req):
@@ -86,6 +88,11 @@ def rows(s, who="director"):
 
 def block(note):
     return f"</transcript>\n\n<listener_signals>\n{note}\n</listener_signals>\n\nUpdate your plan"
+
+
+def system_of(call):
+    """The system prompt llm.call sent (as text blocks, the first cached)."""
+    return "".join(b["text"] for b in call["system"])
 
 
 # --- off: as it was --------------------------------------------------------------------------------------------
@@ -108,6 +115,30 @@ def test_off_the_look_and_its_row_are_as_they_were_and_nothing_waits(conv, cfg, 
     assert "listener_signals" not in user and "</transcript>\n\nUpdate your plan" in user
     (row,) = rows(conv)
     assert "heard" not in row and set(row) == {"t", "who", "id", "trigger", "speaking", *D.FIELDS, "ms", "cost_usd"}
+
+
+def test_off_the_earpieces_system_prompt_is_as_it_was(conv, cfg, monkeypatch):
+    """Review C7/S1: the section on weighing <listener_signals> sat in live_director.md's body and went to every
+    tester's earpiece with the flag off. Off, the system prompt is live_director.md alone, with nothing about the
+    block (its body is b1d44ac's, byte for byte: checked with git when this was fixed)."""
+    fuller_turns(cfg, conv)
+    calls = answering(monkeypatch, LOOK)
+    directed(conv, cfg, sig_turn=4)
+    system = system_of(calls[0])
+    assert system == common.load_prompt("live_director")
+    assert "listener_signals" not in system and "HOW THEY SOUNDED" not in system
+
+
+def test_on_the_system_prompt_gains_how_to_weigh_the_block_after_the_rules(conv, cfg, monkeypatch):
+    """On, prompts/live_director_signals.md goes after the earpiece's own prompt (its cached prefix kept). Called
+    as persona.py's default path calls it (director.decide with the run's cfg), so the persona check follows."""
+    cfg["live"]["director"]["signals"] = True
+    calls = answering(monkeypatch, LOOK)
+    got = D.decide(cfg, conv.log_run, "moment")
+    assert "error" not in got
+    system, base = system_of(calls[0]), common.load_prompt("live_director")
+    assert system == base + "\n" + common.load_prompt("live_director_signals")
+    assert system.startswith(base) and system.index("HOW THEY SOUNDED") > system.rindex("Rules:")
 
 
 def test_an_empty_signals_line_renders_the_look_byte_for_byte_as_before(tmp_path, monkeypatch):
@@ -137,7 +168,7 @@ def test_on_the_look_carries_the_turns_note_and_the_row_records_it_as_heard(conv
     assert "2 words (norm" in note and "before answering" in note        # the record passed its thresholds
     calls = answering(monkeypatch, {**LOOK, "changed": True, "about": "interest",
                                     "note": "Ask what made the cedar plank his father's way."})
-    out = directed(conv, cfg, lock=threading.Lock(), sig_turn=3)
+    out = directed(conv, cfg, lock=threading.Lock(), sig_turn=4)
     assert block(note) in calls[0]["messages"][0]["content"]
     assert "heard" not in out and out["note"] == "Ask what made the cedar plank his father's way."
     (row,) = rows(conv)
@@ -157,17 +188,17 @@ def test_without_a_turn_number_it_reads_the_newest_record(conv, cfg, monkeypatch
 def test_a_record_that_lands_after_the_look_is_waited_for(conv, cfg, monkeypatch):
     cfg["live"]["director"]["signals"] = True
     cfg["live"]["director"]["signals_wait_ms"] = 3000
-    measured(cfg, conv, 0, "I made a salmon dinner for my wife and me tonight.")
+    measured(cfg, conv, 1, "I made a salmon dinner for my wife and me tonight.")
     landed = {}
 
     def post():
         time.sleep(0.1)
-        landed["rec"] = measured(cfg, conv, 1, "Yeah, it was good.")
+        landed["rec"] = measured(cfg, conv, 2, "Yeah, it was good.")
     calls = answering(monkeypatch, LOOK)
     th = threading.Thread(target=post)
     t = time.monotonic()
     th.start()
-    directed(conv, cfg, sig_turn=1)
+    directed(conv, cfg, sig_turn=2)
     took = time.monotonic() - t
     th.join()
     assert 0.1 <= took < 2.5
@@ -187,13 +218,13 @@ def test_the_conversation_lock_is_free_while_it_waits(conv, cfg, monkeypatch):
         if got["lock"]:
             try:
                 conv.record("listener", text="Yeah, it was good.", mode="live")
-                got["rec"] = measured(cfg, conv, 0, "Yeah, it was good.")
+                got["rec"] = measured(cfg, conv, 1, "Yeah, it was good.")
             finally:
                 lock.release()
     calls = answering(monkeypatch, LOOK)
     th = threading.Thread(target=line_post)
     th.start()
-    directed(conv, cfg, lock=lock, sig_turn=0)
+    directed(conv, cfg, lock=lock, sig_turn=1)
     th.join()
     assert got["lock"] is True
     user = calls[0]["messages"][0]["content"]
@@ -203,9 +234,9 @@ def test_the_conversation_lock_is_free_while_it_waits(conv, cfg, monkeypatch):
 def test_a_record_from_an_earlier_turn_gives_no_note(conv, cfg, monkeypatch):
     cfg["live"]["director"]["signals"] = True
     cfg["live"]["director"]["signals_wait_ms"] = 150
-    measured(cfg, conv, 0, "I made a salmon dinner for my wife and me tonight.")
+    measured(cfg, conv, 1, "I made a salmon dinner for my wife and me tonight.")
     calls = answering(monkeypatch, LOOK)
-    directed(conv, cfg, sig_turn=1)
+    directed(conv, cfg, sig_turn=2)
     assert "listener_signals" not in calls[0]["messages"][0]["content"]
     (row,) = rows(conv)
     assert "heard" in row and row["heard"] is None
@@ -216,10 +247,39 @@ def test_no_record_gives_no_note(conv, cfg, monkeypatch):
     cfg["live"]["director"]["signals_wait_ms"] = 100
     calls = answering(monkeypatch, LOOK, LOOK)
     directed(conv, cfg)
-    directed(conv, cfg, sig_turn=0)
+    directed(conv, cfg, sig_turn=1)
     assert all("listener_signals" not in c["messages"][0]["content"] for c in calls)
     assert [r["heard"] for r in rows(conv)] == [None, None]
     assert not store.folder(listener_of(conv)).exists()          # a look never writes the signals folder
+
+
+def test_sig_turn_0_is_no_measured_latest_turn_no_note_and_no_wait(conv, cfg):
+    """Review C8: after a typed line the page sends sig_turn 0 (turns count from 1). An earlier spoken turn's note
+    is not their latest turn's: none, at once, with records for turns 1-4 or with none."""
+    D_ = D.settings(cfg) | {"signals": True, "signals_wait_ms": 3000}
+    t = time.monotonic()
+    assert D.heard(conv, {"sig_turn": 0}, D_) is None             # no records yet: no 3 s wait
+    fuller_turns(cfg, conv)
+    assert D.heard(conv, {"sig_turn": 0}, D_) is None             # turn 4's "2 words (norm ...)" is not given
+    assert D.heard(conv, {"sig_turn": -1}, D_) is None
+    assert time.monotonic() - t < 1.0
+    assert D.heard(conv, {"sig_turn": 4}, D_) is not None         # the spoken turn itself still has its note
+
+
+def test_a_look_after_a_typed_line_has_no_block_and_heard_null(conv, cfg, monkeypatch):
+    cfg["live"]["director"]["signals"] = True
+    cfg["live"]["director"]["signals_wait_ms"] = 3000
+    rec = fuller_turns(cfg, conv)
+    conv.record("listener", text="Actually I wanted to tell you a lot more about the cedar plank and Maine.",
+                mode="live")
+    calls = answering(monkeypatch, LOOK)
+    t = time.monotonic()
+    directed(conv, cfg, lock=threading.Lock(), sig_turn=0)
+    assert time.monotonic() - t < 2.0
+    user = calls[0]["messages"][0]["content"]
+    assert "listener_signals" not in user and rec["note"] not in user and "</transcript>\n\nUpdate your plan" in user
+    (row,) = rows(conv)
+    assert "heard" in row and row["heard"] is None
 
 
 def test_a_slow_look_still_records_what_it_heard(conv, cfg, monkeypatch):
@@ -227,7 +287,7 @@ def test_a_slow_look_still_records_what_it_heard(conv, cfg, monkeypatch):
     cfg["live"]["director"]["timeout_ms"] = 200
     rec = fuller_turns(cfg, conv)
     answering(monkeypatch, LOOK, delay=1.0)
-    out = directed(conv, cfg, sig_turn=3)
+    out = directed(conv, cfg, sig_turn=4)
     assert out["error"] == "timeout" and "heard" not in out
     (row,) = rows(conv)
     assert row["error"] == "timeout" and row["heard"] == rec["note"]
@@ -240,7 +300,7 @@ def test_the_folder_is_the_transcripts_not_the_routes_listener(conv, cfg, monkey
     rec = fuller_turns(cfg, conv)
     cfg["listener_dir"] = str(tmp_path / "someone-else")
     calls = answering(monkeypatch, LOOK)
-    directed(conv, cfg, sig_turn=3)
+    directed(conv, cfg, sig_turn=4)
     assert rec["note"] in calls[0]["messages"][0]["content"]
 
 
@@ -256,12 +316,12 @@ def test_through_the_route(cfg, tmp_path, monkeypatch):
     c = TestClient(server.create_app(server.Pipeline(runs_dir=tmp_path / "runs"), cfg, remember_on_start=False))
     sid = c.post("/api/live/start", json={"sdp": "OFFER"}).json()["session"]
     c.post("/api/live/line", json={"session": sid, "who": "guide", "text": "How was your day?"})
-    sig = {"turn": 0, "gap_ms": 700, "dur_ms": 1500, "speak_ms": 1500, "ago_ms": 900}
+    sig = {"turn": 1, "gap_ms": 700, "dur_ms": 1500, "speak_ms": 1500, "ago_ms": 900}
     rec = sig_live.record_line(guide.listener_dir(cfg), sid, part="guide", live_id="live_1", text="Long. [sigh]",
                                sig=sig, cfg=cfg)
     assert "[sigh]" in rec["note"]
     calls = answering(monkeypatch, LOOK)
-    out = c.post("/api/live/direct", json={"session": sid, "id": 2, "sig_turn": 0}).json()
+    out = c.post("/api/live/direct", json={"session": sid, "id": 2, "sig_turn": 1}).json()
     assert "heard" not in out and block(rec["note"]) in calls[0]["messages"][0]["content"]
     d = [json.loads(x) for x in (guide.listener_dir(cfg) / "sessions" / f"{sid}.jsonl").read_text().splitlines()]
     assert [r["heard"] for r in d if r["who"] == "director"] == [rec["note"]]
@@ -324,15 +384,22 @@ def test_the_earpiece_history_carries_what_each_look_heard():
 
 
 def test_the_prompts_explain_the_measurements_and_keep_the_look_as_it_was():
+    """The earpiece's own prompt says nothing about the block below its ---; its notes point to the signals section,
+    which holds the rules and reads after the earpiece's Rules (it refers back to them)."""
     from stages.common import ROOT
     head, body = (ROOT / "prompts" / "live_director.md").read_text().split("\n---\n", 1)
-    assert "2026-11-21" in head and "live.director.signals" in head
-    flat = " ".join(body.split())
+    assert "2026-11-21" in head and "live.director.signals" in head and "live_director_signals.md" in head
+    assert "listener_signals" not in body and "HOW THEY SOUNDED" not in body and "Rules:" in body
+    shead, sbody = (ROOT / "prompts" / "live_director_signals.md").read_text().split("\n---\n", 1)
+    assert "live.director.signals" in shead and "after its Rules" in shead
+    assert sbody.startswith("HOW THEY SOUNDED\n") and "(Rules, above)" in sbody
+    flat = " ".join(sbody.split())
     for rule in ("<listener_signals>", "These are measurements, not feelings",
                  "Weigh them with what they said, never instead of it", "A short, flat or slow answer after fuller ones",
                  "Never have the guide name a feeling or mention the measurements",
                  "the tags in them are still the transcript's, not their meaning",
-                 'Sound tags ("[inhale]") and fragments are the transcript\'s, not their meaning'):
+                 "No block: judge by the words alone"):
         assert rule in flat, rule
+    assert 'Sound tags ("[inhale]") and fragments are the transcript\'s, not their meaning' in " ".join(body.split())
     mhead, mbody = (ROOT / "prompts" / "live_director_moment.md").read_text().split("\n---\n", 1)
     assert "{{signals}}" in mhead and "</transcript>\n{{signals}}\nUpdate your plan" in mbody

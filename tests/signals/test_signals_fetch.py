@@ -20,7 +20,8 @@ def wav_bytes(tmp_path) -> bytes:
 
 
 class Http:
-    """OpenAI's /content: `have` maps live_id to the body it serves (200); anything else is a 404."""
+    """OpenAI's /content: `have` maps live_id to the body it serves (200), an HTTP status (no body), a (status,
+    body) pair or an exception to raise; anything else is a 404."""
 
     def __init__(self, have=None, on_get=None):
         self.have, self.calls, self.on_get = have or {}, [], on_get
@@ -32,8 +33,10 @@ class Http:
             self.on_get(live_id)
         if isinstance(self.have.get(live_id), Exception):
             raise self.have[live_id]
-        body = self.have.get(live_id)
-        return types.SimpleNamespace(status_code=200 if body else 404, content=body or b"")
+        got = self.have.get(live_id)
+        status, body = (got if isinstance(got, tuple) else (got, b"") if isinstance(got, int)
+                        else (200 if got else 404, got or b""))
+        return types.SimpleNamespace(status_code=status, content=body)
 
 
 @pytest.fixture(autouse=True)
@@ -124,6 +127,33 @@ def test_no_key_and_network_errors(tmp_path, monkeypatch):
                                              client=Http({"g2": ConnectionError("reset")}), now=NOW)}
     assert got["g2"]["status"] == "error" and got["g2"]["detail"] == "ConnectionError: reset"
     assert got["g3"]["status"] == "missing"                              # the others still tried
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_a_refused_key_is_an_error_and_stops_asking(tmp_path, status):
+    lst = visit(tmp_path)
+    shutil.rmtree(lst / "chapters")
+    (lst / "study" / "iv1.mp3").unlink()
+    http = Http({k: status for k in ("iv1", "g1", "g2", "g3", "dv1")})
+    got = F.fetch(lst, {"live": {"url": "https://x.test"}}, client=http, now=NOW)
+    assert http.calls == ["iv1"]                                         # one request, then no more
+    assert [r["status"] for r in got] == ["error"] * 5
+    assert all(r["detail"] == f"OpenAI refused the key (HTTP {status}); check OPENAI_API_KEY and run wl signals "
+               "fetch again" for r in got)
+
+
+@pytest.mark.parametrize("answer", [503, 429, (200, b"")])
+def test_a_passing_failure_is_an_error_to_try_again(tmp_path, answer):
+    lst = visit(tmp_path)
+    http = Http({"iv1": answer, "g2": answer, "g3": wav_bytes(tmp_path)})
+    got = {r["live_id"]: r for r in F.fetch(lst, {"live": {"url": "https://x.test"}}, client=http, now=NOW)}
+    words = f"OpenAI answered HTTP {answer[0] if isinstance(answer, tuple) else answer} without the recording; " \
+        "run wl signals fetch again"
+    assert got["g2"]["status"] == "error" and got["g2"]["detail"] == words
+    assert got["iv1"]["status"] == "have" and got["iv1"]["detail"] == f"only study/iv1.mp3 (lossy): {words}"
+    assert got["g3"]["status"] == "fetched"                              # the next one still tried
+    assert got["dv1"]["status"] == "missing" and "HTTP 404" in got["dv1"]["detail"]     # a 404 is still missing
+    assert http.calls == ["iv1", "g2", "g3", "dv1"]
 
 
 def test_a_folder_reset_mid_run_is_never_written_into(tmp_path):
