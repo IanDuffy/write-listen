@@ -27,6 +27,7 @@ STEM = re.compile(r"(?:(?:intro|debrief)-)?\d{8}-\d{6}(?:-\d+)?")
 LIVE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 MARK_MAX = 500          # characters in one mark
 MARKS_MAX = 2000        # marks on one conversation
+SLACK_S = 1.0           # how far apart a page turn and a recording turn can be and still be the same turn
 _LOCKS: dict[str, threading.Lock] = {}
 _LOCKS_LOCK = threading.Lock()
 
@@ -90,10 +91,22 @@ def _ensure(p: Path) -> None:
     p.parent.mkdir(exist_ok=True)
 
 
-def _write(p: Path, recs: list[dict]) -> None:
+def _write(p: Path, recs: list[dict], still=None) -> None:
+    """`still`, if given, says whether the listener folder is still the one the caller started on. It is asked
+    before signals/ is made and again just before the new file goes in place: a reset comes from another process
+    (the server), so the lock here can't hold it off. On a no: FileNotFoundError, and nothing left behind."""
+    if still and not still():
+        raise FileNotFoundError(f"{p.parent.parent} was reset or deleted")
     _ensure(p)
     tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
     tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs), encoding="utf-8")
+    if still and not still():
+        tmp.unlink(missing_ok=True)
+        try:
+            p.parent.rmdir()            # a signals/ this made in the new folder, if nothing else is in it
+        except OSError:
+            pass
+        raise FileNotFoundError(f"{p.parent.parent} was reset or deleted")
     os.replace(tmp, p)
 
 
@@ -116,20 +129,30 @@ def _order(r: dict):
     return (r.get("t") or "", 0 if r.get("source") == "recording" else 1, r.get("turn") or 0)
 
 
+def per_turn(lines: list[dict]) -> dict[tuple, dict]:
+    """The latest line per (source, turn): {(source, turn): record}."""
+    out: dict[tuple, dict] = {}
+    for r in lines:
+        if r.get("source") in record.SOURCES and isinstance(r.get("turn"), int):
+            out[(r["source"], r["turn"])] = r
+    return out
+
+
 def merged(lines: list[dict]) -> list[dict]:
     """The records of one conversation: the latest line per (source, turn); a page record that a recording record
     replaces (its `replaces` lists page turns) dropped; time order."""
-    latest: dict[tuple, dict] = {}
-    for r in lines:
-        if r.get("source") in record.SOURCES and isinstance(r.get("turn"), int):
-            latest[(r["source"], r["turn"])] = r
+    latest = per_turn(lines)
     gone = {t for r in latest.values() if r["source"] == "recording" for t in r.get("replaces") or []}
     keep = [r for (src, turn), r in latest.items() if not (src == "page" and turn in gone)]
     return sorted(keep, key=_order)
 
 
-def records(listener: Path, stem: str) -> list[dict]:
-    return merged(rows(listener, stem))
+def records(listener: Path, stem: str, source: str | None = None) -> list[dict]:
+    """The conversation's records as shown (merged). With a source, that source's alone, picked before the merge:
+    a recording that replaces a page turn hides it from the display, never from the page's own norm (a recording
+    and the page are different instruments, record.place)."""
+    lines = rows(listener, stem)
+    return merged([r for r in lines if r.get("source") == source] if source else lines)
 
 
 def started(stem: str) -> str:
@@ -145,12 +168,19 @@ def stems(listener: Path) -> list[str]:
     return sorted((p.stem for p in d.glob("*.jsonl") if valid_stem(p.stem)), key=lambda s: (started(s), s))
 
 
+def marked(listener: Path) -> list[str]:
+    """The conversations with Ian's marks, oldest first (a mark needs only the transcript, not a records file)."""
+    d = folder(listener)
+    if not d.is_dir():
+        return []
+    got = (p.name[:-len(".marks.jsonl")] for p in d.glob("*.marks.jsonl"))
+    return sorted((s for s in got if valid_stem(s)), key=lambda s: (started(s), s))
+
+
 def visit(listener: Path, source: str | None = None) -> list[dict]:
-    """Every record of the listener, all conversations, in time order (the norm carries across the visit)."""
-    out = [r for s in stems(listener) for r in records(listener, s)]
-    if source:
-        out = [r for r in out if r.get("source") == source]
-    return sorted(out, key=_order)
+    """Every record of the listener, all conversations, in time order (the norm carries across the visit). With a
+    source, that source's records as records(source) reads them."""
+    return sorted((r for s in stems(listener) for r in records(listener, s, source)), key=_order)
 
 
 def recent(listener: Path, source: str, enough: int, min_words: int) -> list[dict]:
@@ -159,7 +189,7 @@ def recent(listener: Path, source: str, enough: int, min_words: int) -> list[dic
     What record.place reads (the norm's latest norm_turns, the trend's last two), without every file each time."""
     out, n, extra = [], 0, False
     for s in reversed(stems(listener)):
-        got = [r for r in records(listener, s) if r.get("source") == source]
+        got = records(listener, s, source)
         out += got
         n += sum(1 for r in got if (r.get("words") or 0) >= min_words)
         if extra:
@@ -170,7 +200,7 @@ def recent(listener: Path, source: str, enough: int, min_words: int) -> list[dic
 
 def latest(listener: Path, stem: str, source: str = "page") -> dict | None:
     """The newest record of one source in a conversation (the highest turn)."""
-    got = [r for r in records(listener, stem) if r.get("source") == source]
+    got = records(listener, stem, source)
     return max(got, key=lambda r: r["turn"]) if got else None
 
 
@@ -188,34 +218,47 @@ def wait_turn(listener: Path, stem: str, turn: int, timeout_s: float, *, sleep=t
         sleep(0.05)
 
 
-def match_page(recs: list[dict], page: list[dict], slack_s: float = 1.0) -> list[dict]:
-    """Recording records with `replaces`: the page turns they cover. Same GPT-Live session and overlapping times
-    (within slack_s), or, when the page had no session clock, the same words. Each page turn goes to one."""
-    taken: set[int] = set()
-    out = []
-    for r in recs:
-        hit = []
-        for p in page:
-            if p["turn"] in taken or p.get("live_id") != r.get("live_id"):
-                continue
-            a, b = p.get("start_s"), p.get("end_s")
-            if a is not None and b is not None and r.get("start_s") is not None and r.get("end_s") is not None:
-                if a <= r["end_s"] + slack_s and b >= r["start_s"] - slack_s:
-                    hit.append(p["turn"])
-            elif record.plain(p.get("text") or "") and record.plain(p.get("text") or "") in record.plain(r.get("text") or ""):
-                hit.append(p["turn"])
-        taken.update(hit)
-        out.append({**r, "replaces": hit})
-    return out
+def match_page(recs: list[dict], page: list[dict], slack_s: float = SLACK_S) -> list[dict]:
+    """Recording records with `replaces`: the page turns they cover. Each page turn goes to one recording turn of
+    its GPT-Live session: with a session clock, the one it overlaps most, else the nearest within slack_s (the
+    earlier on a tie), not the first within slack_s (a cut-in starts within it of the turn before's end);
+    with none, the same words, in order from the previous page turn's match, whole words, exact words first
+    but only there or in the turn after it (a later "Yeah." is not the earlier "Yeah, I went to the park.", and
+    an "Okay." the page split off its turn does not jump to an "Okay." said minutes later). A recording turn can
+    take several page turns: the page split it."""
+    got: list[list[int]] = [[] for _ in recs]
+    last: dict = {}                     # per session, where the previous page turn went
+    for p in sorted(page, key=lambda p: p["turn"]):
+        sess, a, b, best = p.get("live_id"), p.get("start_s"), p.get("end_s"), None
+        if a is not None and b is not None:
+            most = 0.0
+            for i, r in enumerate(recs):
+                c, d = r.get("start_s"), r.get("end_s")
+                if r.get("live_id") != sess or c is None or d is None:
+                    continue
+                over = min(b, d) - max(a, c)            # how long they overlap, or minus the gap between them
+                if over >= -slack_s and (best is None or over > most):
+                    best, most = i, over
+        elif words := record.plain(p.get("text") or ""):
+            later = [i for i in range(last.get(sess, 0), len(recs)) if recs[i].get("live_id") == sess]
+            said = {i: record.plain(recs[i].get("text") or "") for i in later}
+            near = later[:2] if sess in last else later[:1]      # short replies recur: an exact match far on is chance
+            best = next((i for i in near if said[i] == words), None)
+            if best is None:
+                best = next((i for i in later if f" {words} " in f" {said[i]} "), None)
+        if best is not None:
+            got[best].append(p["turn"])
+            last[sess] = best
+    return [{**r, "replaces": hit} for r, hit in zip(recs, got)]
 
 
-def write_recordings(listener: Path, stem: str, recs: list[dict]) -> Path:
+def write_recordings(listener: Path, stem: str, recs: list[dict], still=None) -> Path:
     """The replay's records for one conversation, in place of the replay's earlier ones; page records stay as
-    they were (a recording record that covers a page turn says so in `replaces`)."""
+    they were (a recording record that covers a page turn says so in `replaces`). `still`: as in _write."""
     p = path(listener, stem)
     with _lock(p):
         page = [r for r in _read(p) if r.get("source") != "recording"]
-        _write(p, page + list(recs))
+        _write(p, page + list(recs), still)
     return p
 
 

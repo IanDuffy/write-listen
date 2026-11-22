@@ -8,7 +8,8 @@
                                        <listener>/signals/<stem>.jsonl; one changed in the last 5 minutes may
                                        still be live and waits, unless --force
     wl signals report [lid] [--all]    what the data says: sound tags, bleed into the listener's channel, phone,
-                                       the norm, what was mentioned, Ian's marks
+                                       the norm, what was mentioned, the page against the recording for the
+                                       same turns, Ian's marks
 
 lid: "own" (the default: the active listener) or a tester id (t-...). --all: every tester, and the active
 listener too when demo mode is off. Nothing here runs from the server or calls a model.
@@ -67,6 +68,10 @@ def _fetch(label: str, folder: Path, cfg: dict) -> list[dict]:
 
 def _run(label: str, folder: Path, cfg: dict, force: bool) -> dict:
     got = measure.run(folder, cfg, force=force)
+    if got.get("gone"):     # a tester reset or deleted from /admin while it measured: what it found is not theirs
+        print(f"  {label} ({folder}): the folder was {got['gone']} while measuring; stopped"
+              + (", nothing written into the new one" if got["gone"] == "reset" else ""))
+        return got
     print(f"  {label} ({folder}): {got['records']} turn records in {len(got['written'])} conversations")
     for c in got["conversations"]:
         head = f"    {c['stem']:<26} {c['part']:<8}"

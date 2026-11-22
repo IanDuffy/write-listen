@@ -563,7 +563,7 @@ def page_settings(cfg: dict, mode: str) -> dict:
            "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
     sig = common.sig_settings(cfg)
     if sig is not None:  # Listener Signals (page/sig.js): only while the page measures; absent, nothing of it runs
-        out["signals"] = sig
+        out["signals"] = {**sig, "line_quiet_ms": I["page"]["line_quiet_ms"]}  # this page's lines end on its own quiet
     return out
 
 

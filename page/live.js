@@ -128,7 +128,9 @@
   // listener's goes with how its turn has sounded so far. Without S.signals none of this runs and the posts are as before.
   L.sig = S.signals && window.Sig ? new Sig.Meter(S.signals) : null;
   if (L.sig) {
-    L.sigTurn = 0;  // the latest turn measured (Sig.Turns: countLine's turns, a number for each with a spoken line)
+    // The latest turn measured (Sig.Turns: countLine's turns, a number from 1 for each with a spoken line); 0 while
+    // the latest has no measures (none yet, or a typed line last).
+    L.sigTurn = 0;
     // The mic counts only while a session hears it: muted, held for the handover or with no session (resting), what
     // is said there is in no line.
     setInterval(() => L.sig.tick(now(), L.muted || !!L.hold || !L.pc || !L.mic || !L.mic.enabled), S.signals.tick_ms || 20);
@@ -218,7 +220,11 @@
     // back up, the reading goes on from that sentence rather than its paragraph's start.
     const stoppedAt = !resume && L.dropAt && L.run ? { run: L.run, ...L.dropAt } : null;
     if (!resume) newConversation();
-    else dirForget("new session: " + resume);
+    else {
+      dirForget("new session: " + resume);
+      // The last session closed (every resume opens a new one): this one's turns are measured as its recording is.
+      if (L.sig) L.sig.session(now());
+    }
     L.phase = "connecting";
     render();
     const sayOnly = resume === "ready";  // only to say the chapter is ready: no mic, never on (Ian asked for it off)
@@ -2786,7 +2792,9 @@
     L.heardAt = L.inAt = L.lastListenerAt = L.lineEndAt = now();  // typed counts as said for every cue
     L.turnEnd = 0;  // a typed line is its own turn: never merged on timing
     const same = countLine(text);
-    if (L.sig) L.sig.line(0, 0, same, false);  // typed: nothing to measure, but it ends the turn before it
+    // Typed: nothing to measure, but it ends the turn before it, so the latest turn has no measures: sig_turn 0
+    // tells the earpiece so (turns count from 1), rather than the spoken turn before it.
+    if (L.sig) { L.sig.line(0, 0, same, false); L.sigTurn = 0; }
     remember("listener", text);
     directorLine(true);
     dirEmit("line", { who: "listener", text, typed: true, began: now() });

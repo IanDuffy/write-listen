@@ -354,15 +354,18 @@ SIG_JS = ROOT / "page" / "sig.js"
 
 
 def sig_settings(cfg: dict | None) -> dict | None:
-    """page/sig.js's settings (Listener Signals): config.yaml signals.page, with signals.pause_ms and the page's turn
-    rule (live.page.engaged_merge_ms); None unless the page measures (signals.record.live_on: signals.live, or the
-    earpiece's live.director.signals)."""
+    """page/sig.js's settings (Listener Signals): config.yaml signals.page, with signals.pause_ms, the page's turn
+    rule (live.page.engaged_merge_ms) and what places a line's speech as the replay does (signals/measure.py
+    assign): the guide's page's line_quiet_ms (the interviewer's page puts its own) and signals.recording.lag_s in ms.
+    None unless the page measures (signals.record.live_on: signals.live, or the earpiece's live.director.signals)."""
     from signals import record
     if not record.live_on(cfg):
         return None
     S = record.settings(cfg)
-    merge = (((cfg or {}).get("live") or {}).get("page") or {}).get("engaged_merge_ms", 1500)
-    return {**(S.get("page") or {}), "pause_ms": S["pause_ms"], "merge_ms": merge}
+    page = ((cfg or {}).get("live") or {}).get("page") or {}
+    lag_s = (S.get("recording") or {}).get("lag_s", 2.5)
+    return {**(S.get("page") or {}), "pause_ms": S["pause_ms"], "merge_ms": page.get("engaged_merge_ms", 1500),
+            "line_quiet_ms": page.get("line_quiet_ms", 900), "lag_ms": round(1000 * float(lag_s))}
 
 
 def with_sig(js: str, cfg: dict | None = None) -> str:

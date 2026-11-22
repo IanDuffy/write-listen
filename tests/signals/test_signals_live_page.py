@@ -343,3 +343,79 @@ def test_the_page_settings_carry_signals_only_while_measuring(cfg):
     got = live_routes.page_settings(cfg)["signals"]
     assert got["tick_ms"] == cfg["signals"]["page"]["tick_ms"] and got["pause_ms"] == cfg["signals"]["pause_ms"]
     assert got["merge_ms"] == cfg["live"]["page"]["engaged_merge_ms"] and got["bleed_tail_ms"] == 150
+    # What places a line's speech, as the replay does: this page's line timing and the transcript's lag, from config.
+    cfg["live"]["page"]["line_quiet_ms"] = 1100
+    cfg["signals"]["recording"] = {**cfg["signals"]["recording"], "lag_s": 3.25}
+    got = live_routes.page_settings(cfg)["signals"]
+    assert got["line_quiet_ms"] == 1100 and got["lag_ms"] == 3250
+
+
+def test_after_a_typed_line_a_look_carries_no_measured_turn(on, tmp_path):
+    """Regression: a typed line left L.sigTurn at the spoken turn before it, so the next look waited for that turn's
+    record and the earpiece read it as their latest turn. sig_turn 0: the latest turn has no measures."""
+    open_page, base, cfg = on
+    p = open_page()
+    connect(p)
+    asked = []
+
+    def handle(route):
+        body = json.loads(route.request.post_data or "{}")
+        asked.append(body)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(
+            {"id": body["id"], "read": "", "plan": [], "next": "", "changed": False, "kind": None, "about": None,
+             "note": None}))
+    p.page.route("**/api/live/direct", handle)
+    p.js("""() => { window.Live.S.director = { enabled: true, every_secs: 1000, company_every_secs: 1000,
+      every_words: 1000, every_lines: 1, silence_secs: [], timeout_ms: 1500, min_gap_secs: 0,
+      fallback: { pitch_nudge_secs: [1000, 1000] } }; }""")
+    p.say("Hi there!")
+    p.wait("L.lastGuideAt")
+    p.hear("Fine.")
+
+    def looks(n):
+        deadline = time.monotonic() + 6
+        while len(asked) < n and time.monotonic() < deadline:
+            p.page.wait_for_timeout(50)
+        assert len(asked) >= n, asked
+        return asked[n - 1]
+    assert looks(1)["sig_turn"] == 1 and p.L("L.sigTurn") == 1
+    p.say("What are you up to this evening?")
+    p.wait("L.lastGuideAt > L.turnEnd", timeout=4000)
+    p.page.click("#type")
+    p.page.fill("#say", "I'm restoring an old boat with my daughter, sanding the hull and arguing about paint colours")
+    p.page.click("#send")
+    look = looks(2)
+    assert look["trigger"] == "turn_end" and look["sig_turn"] == 0 and p.L("L.sigTurn") == 0
+    assert not p.errors
+
+
+def test_after_a_rest_the_new_sessions_first_turn_has_no_gap(on, tmp_path):
+    """Regression: the meter kept the guide's voice from the session a rest closed, so the first turn in the next
+    session got the whole rest as its pause before answering. A resume opens a new session (Meter.session); its
+    first turn has no gap until the guide speaks in it, as the replay measures that session's recording."""
+    open_page, base, cfg = on
+    p = open_page()
+    connect(p)
+    sounds(p)
+    play(p, [("guide", 0.3, 0), ("guide", 0, 0.6), ("voice", 0.4, 1.1), ("voice", 0, 1.9)])
+    p.say("Hi there, how was your day?")
+    p.page.wait_for_timeout(2400)
+    p.hear("It was good, thanks.")
+    first = p.wait_lines(1)[0]["sig"]
+    assert first["turn"] == 1 and 250 <= first["gap_ms"] <= 1200, first
+    play(p, [("guide", 0.3, 0), ("guide", 0, 0.6)])
+    p.say("Talk soon then.")
+    p.wait("L.lastGuideAt > L.turnEnd", timeout=4000)
+    p.page.click("#orb")  # talk -> resting: the session closed
+    p.wait("L.phase === 'resting' && !L.pc && !L.closing")
+    p.page.wait_for_timeout(1500)
+    p.page.click("#orb")  # a tap: a new session
+    p.wait("L.started && L.phase === 'talk' && L.liveId === 'live_2' && !L.muted && L.mic.enabled", timeout=8000)
+    play(p, [("voice", 0.4, 0.1), ("voice", 0, 0.8)])
+    p.page.wait_for_timeout(1100)
+    p.hear("I'm back.")
+    body = p.wait_lines(2)[1]
+    sig = body["sig"]
+    assert body["live_id"] == "live_2" and sig["turn"] == 2, body
+    assert sig["gap_ms"] is None and sig["cut_in"] is None and 450 <= sig["dur_ms"] <= 1050, sig
+    assert not p.errors

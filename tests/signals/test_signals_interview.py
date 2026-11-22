@@ -82,6 +82,18 @@ def test_a_testers_lines_become_turn_records_while_measuring(cfg, monkeypatch, o
     assert c.post("/api/interview/line", json={"sid": sid, "who": "in", "text": "late", "sig": SIG}).status_code == 409
 
 
+def test_the_page_measures_with_its_own_line_timing(cfg, monkeypatch, own_listeners):
+    """Its lines end on demo.interviewer.page.line_quiet_ms, not the guide's page's: page/sig.js places a line's speech
+    from that, and from the transcript's lag (signals.recording.lag_s), as the replay does."""
+    cfg["demo"] = {**cfg["demo"], "interviewer": {**cfg["demo"]["interviewer"],
+                                                  "page": {**cfg["demo"]["interviewer"]["page"], "line_quiet_ms": 1300}}}
+    cfg["live"]["page"]["line_quiet_ms"] = 900
+    c, home = app_for(cfg, monkeypatch, own_listeners, True)
+    got = c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"}).json()["settings"]
+    assert got["line_quiet_ms"] == 1300 and got["signals"]["line_quiet_ms"] == 1300
+    assert got["signals"]["lag_ms"] == round(1000 * cfg["signals"]["recording"]["lag_s"])
+
+
 def test_off_nothing_is_recorded_and_the_script_is_as_before(cfg, monkeypatch, own_listeners):
     c, home = app_for(cfg, monkeypatch, own_listeners, False)
     got = c.post("/api/interview/start", json={"mode": "intro", "sdp": "OFFER"}).json()

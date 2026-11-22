@@ -12,6 +12,9 @@
 //   of pause_ms or more inside a turn is a pause; rms_db is the level of the voiced frames, in dBFS.
 // A line's transcript comes seconds after the voice, so a line takes the runs from lead_ms before its first words
 // to its last; ticks further apart than max_tick_gap_ms (a tab in the background) leave its timing unknown (null).
+// A turn whose speech goes on from their own, within merge_ms with the other voice silent between, had no pause
+// before answering (the replay makes them one turn), and a new voice session (Meter.session) is measured on its
+// own, as its recording is: its first turn has no gap until the other voice speaks in it.
 // Times are on the page's clock; Clock maps them to the voice session's own (its recording's), from the times
 // the incoming transcript carries.
 //
@@ -26,7 +29,7 @@
 
   const DEFAULTS = { tick_ms: 20, min_rms: 0.01, floor_x: 4, out_rms: 0.005, bleed_x: 3, bleed_tail_ms: 150,
                      fill_ms: 150, min_run_ms: 80, max_tick_gap_ms: 250, lead_ms: 4000, pause_ms: 700,
-                     merge_ms: 1500 };
+                     merge_ms: 1500, line_quiet_ms: 900, lag_ms: 2500 };
   const SILENT = 1e-6;          // a reading this low is digital silence (a track just enabled), not the room
   const FLOOR_RISE_MS = 20000;  // the room's level moves up toward a louder reading over about this long
   const KEEP_MS = 300000;       // frames kept: a line longer than this is measured from its last five minutes
@@ -49,6 +52,7 @@
     this.lastT = null; this.outAt = null; this.floor = null;
     this.under = []; this.underN = 0; this.bleed = 0;
     this.used = -Infinity;                      // runs up to here belong to a line already measured
+    this.sessionAt = -Infinity;                 // when the voice session open now began (Meter.session)
   };
 
   // t: page ms; mic: the mic's RMS (0-1), or null when it sends nothing (muted, none); out: the voice coming in.
@@ -114,18 +118,42 @@
   };
 
   // One line, from its first words to its last (page ms, when the transcript brought them): the raw part of the
-  // turn it adds. Its runs: those not yet measured, from lead_ms before its first words to its last; and of those,
-  // only the ones after the other voice last spoke between them (a sound under the other voice, an "mm" or a
-  // cough, is not this line: the replay splits a turn wherever the other voice spoke between two runs).
+  // turn it adds. Its runs: those not yet measured, from lead_ms before its first words to its last, split wherever
+  // the other voice spoke between two of them (the replay splits a turn there). A part the other voice talked
+  // straight through is a sound under it, not this line: an "mm", a laugh or an echo burst before the answer, or one
+  // under its reply after the answer, which the late transcript often takes in too. If every part is, it is a cut-in
+  // it talked over. Of the rest, the one the replay gives the line (signals/measure.py _align), not the longest: an
+  // earlier sound no line took (a laugh, a cough, words never captioned) or their next words can outlast a short
+  // answer. The line is posted line_quiet_ms after its last words and its row stands lag_ms after the speech, so the
+  // speech ended about e: the part nearest e, plus a tenth of the distance from its end as heard so far (the replay's
+  // turn ends where the speech does, never sooner: speech still going counts), the earlier part on a tie (the replay
+  // takes the earlier turn, and the later one's end can only move away). A part after the one kept is left for the
+  // next line: their next words, begun before this line's transcript was done.
   Tracker.prototype.take = function (start, end) {
-    const o = this.o, others = this.others();
-    const from = Math.max(start - o.lead_ms, this.used);
+    const o = this.o;
+    // Words that came in the session open now are that session's alone: nothing from before it, neither their
+    // speech nor the other voice's (the session it closed), as in its own recording.
+    const since = start >= this.sessionAt ? this.sessionAt : -Infinity;
+    const others = this.others().filter((x) => x.s >= since);
+    const from = Math.max(start - o.lead_ms, this.used, since);
     let rs = this.runs(from).filter((r) => r.s <= end);
-    for (let k = rs.length - 1; k > 0; k--) {
-      const a = rs[k - 1], b = rs[k];
-      if (others.some((x) => x.s < b.s && x.e > a.e)) { rs = rs.slice(k); break; }
-    }
-    this.used = Math.max(this.used, end, rs.length ? rs[rs.length - 1].e : -Infinity);
+    const parts = [[]];
+    rs.forEach((r, k) => {
+      if (k && others.some((x) => x.s < r.s && x.e > rs[k - 1].e)) parts.push([]);
+      parts[parts.length - 1].push(r);
+    });
+    const under = (p) => p.every((r) => others.some((x) => x.s < r.s && x.e > r.e));  // each run inside one of its
+    const heard = parts.filter((p) => p.length && !under(p));
+    const e = end + o.line_quiet_ms - o.lag_ms;
+    const cost = (p) => {
+      if (!p.length) return Infinity;
+      const pe = p[p.length - 1].e;
+      return Math.max(p[0].s - e, e - pe, 0) + 0.1 * Math.abs(e - pe);
+    };
+    rs = (heard.length ? heard : parts).reduce((best, p) => (cost(p) < cost(best) ? p : best));
+    // Measured up to the line's end, or only to the part kept when a later part is left for the next line.
+    const last = rs.length ? rs[rs.length - 1].e : -Infinity;
+    this.used = Math.max(this.used, rs === parts[parts.length - 1] ? end : last, last);
     const part = { runs: rs.map((r) => ({ s: r.s, e: r.e })), sumsq: 0, n: 0, gap_ms: null, cut_in: null, broken: false };
     if (!rs.length) return part;
     let k = 0;
@@ -137,7 +165,12 @@
     const first = rs[0].s;
     let prev = null;
     for (const x of others) { if (x.s < first) prev = x; else break; }  // the other voice's last run begun before
-    if (prev) { part.gap_ms = Math.round(first - prev.e); part.cut_in = prev.e > first; }
+    // Their own voice, taken by an earlier line or not, ending under merge_ms before this run: the replay's turn goes
+    // on through it (the other voice is silent between: none of its runs begins between prev and this run), so this
+    // run had no pause before it. The transcript can bring one utterance as lines seconds apart (two turns here).
+    const mine = prev ? this.runs(prev.e).filter((r) => r.s < first) : [];
+    const goesOn = mine.length > 0 && first - mine[mine.length - 1].e < o.merge_ms;
+    if (prev && !goesOn) { part.gap_ms = Math.round(first - prev.e); part.cut_in = prev.e > first; }
     const lo = Math.min(from, prev ? prev.e : from);
     part.broken = this.breaks.some((b) => b[1] > lo && b[0] < end);
     return part;
@@ -219,6 +252,10 @@
     this.mic = null; this.out = null; this.ctx = null;
   }
   Meter.prototype.reset = function () { this.tracker.reset(); this.clock = new Clock(); this.turns.reset(); };
+  // A new voice session opened at t (the last one closed: a rest, a drop, a new session mid-reading). Its turns are
+  // measured as its recording is, so the other voice's last words in the closed one are no pause before answering.
+  // The turns go on counting (records are keyed by turn within the conversation) and the clock is per session.
+  Meter.prototype.session = function (t) { if (typeof t === "number" && isFinite(t)) this.tracker.sessionAt = t; };
   // Analysers of their own (float levels, about a tick long), never connected to the speakers: the voices stay on
   // media elements, the path the echo canceller covers.
   Meter.prototype.analyser = function (stream, ctx) {

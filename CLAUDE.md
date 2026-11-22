@@ -797,8 +797,11 @@ the cloud checkout, OpenAI blocked there). Both flags are off.
   prepended to `/live.js` and `/interview.js` only while on (`common.with_sig`); off, both are served byte for byte as
   before and the line post is `{session, who, text}`. Its own analysers (not `dirAudio`'s 600 ms meters), the replay's
   rules (bleed, fill, min run; the replay's turn rule for a gap: no pause before answering when the listener's own
-  speech ran up to the turn; a session boundary on resume; the longest segment of a line, not a burst under the
-  reply). A spoken listener line posts `live_id` and `sig`; the line routes call `signals.live.record_line`, which
+  speech ran up to the turn; a session boundary on resume, `Meter.session`). Of a line's voiced parts (split where
+  the other voice spoke between them; one the other voice talked straight through dropped) it keeps the one nearest
+  the speech end the line implies, `end + line_quiet_ms - lag_ms`, with `measure._align`'s cost and tie-break (earlier
+  wins); `line_quiet_ms` is each page's own (live.page, demo.interviewer.page), `lag_ms` from
+  `signals.recording.lag_s`. If `_align` changes, `Tracker.take` and `common.sig_settings` change with it. A spoken listener line posts `live_id` and `sig`; the line routes call `signals.live.record_line`, which
   never fails the line. Typed lines carry none.
 - **The earpiece's note** (`live.director.signals`, off): the page sends `sig_turn` (0: no measured latest turn, e.g.
   after a typed line); `director.heard` waits up to `signals_wait_ms` (400) for that turn's record outside the lock,

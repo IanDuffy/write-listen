@@ -25,7 +25,9 @@ GUIDE_STEM, INTRO_STEM, DEBRIEF_STEM = "20261120-212539", "intro-20261120-212519
 # Ian's guide conversation with one more line in its first GPT-Live session (live_g1; live_g2 opens at 21:29:50).
 WATER = {"t": "2026-11-20T21:27:05", "who": "listener", "text": "I sat by the water for an hour and watched the birds.",
          "mode": "live"}
-GUIDE2 = GUIDE[:8] + [WATER] + GUIDE[8:]
+# The earpiece's look was given a listener signals note ("heard" on its director row; escaped on the page).
+HEARD = "Their last turn: 2 words <i>flat</i>; trailed off."
+GUIDE2 = GUIDE[:4] + [{**GUIDE[4], "heard": HEARD}] + GUIDE[5:8] + [WATER] + GUIDE[8:]
 ANCHOR = {"live_i": datetime(2026, 11, 20, 21, 25, 19), "live_g1": datetime(2026, 11, 20, 21, 25, 40),
           "live_g2": datetime(2026, 11, 20, 21, 29, 50), "live_d": datetime(2026, 11, 20, 21, 32, 57)}
 READING = [{"t": "2026-11-20T21:30:40", "id": "s1-p01", "sentence": 0, "cut": False, "heard": "x", "live_id": "live_g2",
@@ -216,9 +218,10 @@ def test_one_conversation_across_two_gpt_live_sessions(dcfg, tmp_path, no_admin_
     assert lines["Yeah, sure."]["rec"] == 2 and lines["Wait, I didn't ask about herons"]["rec"] == 3
     assert [got["items"][i]["text"] for i in recs[2]["lines"]] == ["Yeah, sure."]
     assert all("rec" not in x for x in got["items"] if x["kind"] == "line" and x["who"] == "guide")
-    # The earpiece's look on the same axis, with its fate; no look in the transcript items
-    assert [(L["id"], L["secs"], L["asked_secs"], L["note"], L["fate"]["fate"], L["fate"]["secs"]) for L in got["looks"]] \
-        == [(1, 21.0, 18.0, "Ask about the park.", "sent", 22.0)]
+    # The earpiece's look on the same axis, with its fate and the listener signals note it had; no look in the
+    # transcript items
+    assert [(L["id"], L["secs"], L["asked_secs"], L["note"], L["fate"]["fate"], L["fate"]["secs"], L["heard"])
+            for L in got["looks"]] == [(1, 21.0, 18.0, "Ask about the park.", "sent", 22.0, HEARD)]
     assert not any(x["kind"] == "look" for x in got["items"])
     assert got["marks"] == [{"t": "2026-11-21T09:00:00", "secs": 100.0, "text": "lost them here"}]
     assert got["audio"] == {"live_g1": True, "live_g2": True}
@@ -272,8 +275,8 @@ def test_the_whole_visit_on_one_axis(dcfg, tmp_path, no_admin_env):
     # Marks of every conversation, on the visit's axis; the earpiece's look too
     assert [(m["stem"], m["secs"], m["conv_secs"], m["text"]) for m in got["marks"]] == [
         (GUIDE_STEM, 120.0, 100.0, "lost them here")]
-    assert [(L["stem"], L["secs"], L["fate"]["fate"], L["fate"]["secs"]) for L in got["looks"]] == [
-        (GUIDE_STEM, 41.0, "sent", 42.0)]
+    assert [(L["stem"], L["secs"], L["fate"]["fate"], L["fate"]["secs"], L["heard"]) for L in got["looks"]] == [
+        (GUIDE_STEM, 41.0, "sent", 42.0, HEARD)]
     assert {s["live_id"]: s["secs"] for s in got["sessions"]} == {"live_i": 0.0, "live_g1": 21.0, "live_g2": 271.0,
                                                                    "live_d": 458.0}
     assert got["audio"]["live_g1"] and got["audio"]["live_i"] and not got["audio"]["live_d"]
@@ -404,6 +407,12 @@ def test_the_timeline_points_lines_and_marks(dcfg, site):
     assert "×0.33" in det and "Note for the earpiece: Their last turn:" in det
     assert page.get_attribute("#detail tr[data-m='words']", "class") == "hit"
 
+    # The earpiece's look shows the listener signals note it had, as text
+    page.dispatch_event("#chart .wh", "click")
+    det = page.inner_text("#detail")
+    assert "Look 1" in det and f"The note it had: {HEARD}" in det and "Ask about the park." in det
+    assert page.eval_on_selector_all("#detail i", "(es) => es.length") == 0
+
     # A mark: an empty moment on the chart, typed inline, saved, shown as a flag and in the transcript
     box = page.query_selector("#chart").bounding_box()
     page.locator("#chart").click(position={"x": box["width"] * 0.5, "y": box["height"] - 4})
@@ -499,3 +508,290 @@ def test_a_tester_with_nothing_yet(dcfg, tmp_path, no_admin_env):
     assert c.get(f"/api/admin/signals/{lid}").json()["conversations"] == []
     v = c.get(f"/api/admin/signals/{lid}/visit").json()
     assert (v["started"], v["records"], v["parts"], v["chapters"], v["duration"]) == (None, [], [], [], 0.0)
+
+
+def test_lines_with_no_record_never_stop_later_turns_linking(tmp_path):
+    """A GPT-Live session whose recording was never fetched leaves ten listener lines with no record; the next
+    session's turns still find their lines (a turn's first line was looked for only within eight lines of the last
+    turn's, which a run of unrecorded lines filled)."""
+    from signals.routes import conversation, link
+    stem, t0 = "20261120-210000", datetime(2026, 11, 20, 21, 0, 0)
+    rows = [{"t": t0.isoformat(), "who": "session", "names": ["Hanne"], "returning": False},
+            {"t": (t0 + timedelta(seconds=1)).isoformat(), "who": "session", "live_id": "g1"}]
+    s = 5
+    for k in range(10):                      # live g1: no recording, so no records
+        rows.append({"t": (t0 + timedelta(seconds=s)).isoformat(), "who": "guide", "text": f"Question {k}?"})
+        rows.append({"t": (t0 + timedelta(seconds=s + 5)).isoformat(), "who": "listener",
+                     "text": f"My answer {k} is this."})
+        s += 10
+    g2 = t0 + timedelta(seconds=s + 30)
+    rows += [{"t": g2.isoformat(), "who": "session", "live_id": "g2"},
+             {"t": (g2 + timedelta(seconds=5)).isoformat(), "who": "guide", "text": "Welcome back."},
+             {"t": (g2 + timedelta(seconds=12)).isoformat(), "who": "listener", "text": "I went down to the river."},
+             {"t": (g2 + timedelta(seconds=20)).isoformat(), "who": "guide", "text": "And?"},
+             {"t": (g2 + timedelta(seconds=28)).isoformat(), "who": "listener", "text": "The herons were out."}]
+    jsonl(tmp_path / "sessions" / f"{stem}.jsonl", rows)
+    S = record.settings({})
+
+    def turn(k, text, start_s, dur_s):
+        return record.build({"start_s": start_s, "end_s": start_s + dur_s, "dur_ms": dur_s * 1000}, text, stem=stem,
+                            part="guide", source="recording", turn=k, live_id="g2",
+                            t=(g2 + timedelta(seconds=start_s)).isoformat(timespec="milliseconds"), S=S)
+    store.write_recordings(tmp_path, stem, [turn(0, "I went down to the river.", 9.0, 2.5),
+                                            turn(1, "The herons were out.", 25.0, 2.0)])
+    got = conversation(tmp_path, "own", stem, S)
+    items = got["items"]
+    assert [[items[i]["text"] for i in r["lines"]] for r in got["records"]] == [
+        ["I went down to the river."], ["The herons were out."]]
+    assert [x["text"] for x in items if "rec" in x] == ["I went down to the river.", "The herons were out."]
+
+    # link() alone, with more than eight unrecorded lines first
+    items = [{"i": i, "kind": "line", "who": who, "text": text, "secs": secs} for i, (who, text, secs) in enumerate(
+        [("listener", f"My answer {k} is this.", 5 * k) for k in range(12)]
+        + [("guide", "Welcome back.", 100), ("listener", "I went down to the river.", 112), ("guide", "And?", 120),
+           ("listener", "The herons were out.", 128)])]
+    recs = [{"text": "I went down to the river.", "secs": 109.0, "end_secs": 111.5, "dur_ms": 2500, "lines": []},
+            {"text": "The herons were out.", "secs": 125.0, "end_secs": 127.0, "dur_ms": 2000, "lines": []}]
+    link(recs, items)
+    assert [r["lines"] for r in recs] == [[13], [15]]
+
+
+def test_a_later_line_is_not_taken_by_an_earlier_turn():
+    """A line with no record of its own (a quiet "Yeah" the replay matched to no sound, a typed line) is not
+    another turn's because its words are in that turn's text: not a minute after the turn ended, and not by a
+    substring ("no" in "know"). A turn's own last line, written 6.5 s after its end, and a tag split mid-word still
+    link."""
+    from signals.routes import link
+    items = [{"i": i, "kind": "line", "who": who, "text": text, "secs": secs} for i, (who, text, secs) in enumerate([
+        ("guide", "How was the walk?", 2), ("listener", "Yeah, it was lovely, the herons were out.", 10),
+        ("guide", "Herons stand so still.", 22), ("listener", "Yeah.", 70),              # unheard: no record
+        ("guide", "Did you stay long?", 75), ("listener", "I don't know, it was fine.", 84),
+        ("listener", "no", 88),                                                           # typed: no record
+        ("guide", "What did you do there?", 95), ("listener", "We walked along the shore", 103),
+        ("listener", "and then sat down.", 110.5),                                        # 6.5 s after its turn
+        ("guide", "Sounds peaceful.", 115), ("listener", "[ton", 122), ("listener", "gue click]Yeah, fair.", 123)])]
+
+    def turn(text, secs, end):
+        return {"text": text, "secs": secs, "end_secs": end, "dur_ms": (end - secs) * 1000, "lines": []}
+    recs = [turn("Yeah, it was lovely, the herons were out.", 4.0, 7.5),
+            turn("I don't know, it was fine.", 80.0, 82.0),
+            turn("We walked along the shore and then sat down.", 100.0, 104.0),
+            turn(record.join(["[ton", "gue click]Yeah, fair."]), 120.0, 121.5)]
+    link(recs, items)
+    assert [r["lines"] for r in recs] == [[1], [5], [8, 9], [11, 12]]
+    assert items[3].get("rec") is None and items[6].get("rec") is None
+
+    # A tag over three lines, or one never closed, leaves pieces whose words are all inside it: every piece links
+    for frags in (["[tongue", "click", "]so yes"], ["Well [laughs", "honestly", "]no idea"],
+                  ["I think [inhale", "so, yes."]):
+        got = [{"i": 0, "kind": "line", "who": "guide", "text": "How was it?", "secs": 0}] + [
+            {"i": k + 1, "kind": "line", "who": "listener", "text": f, "secs": 6 + k} for k, f in enumerate(frags)]
+        rec = turn(record.join(frags), 3.0, 5.0)
+        link([rec], got)
+        assert rec["lines"] == list(range(1, len(frags) + 1)), frags
+    # ... but a piece is found only where a piece can start and end: not inside a word, a tag's or another
+    from signals.routes import _belongs
+    assert not _belongs("no", "[noise]Yes, I know.") and _belongs("click", "[tongue click]so yes")
+
+
+def test_a_visit_over_days_zooms_to_a_readable_scale(dcfg, site):
+    """A folder spanning days (the chapter records six days before): the zoom goes to at least 2 pixels a second
+    (64x left the visit's turns a pixel or two apart), the chart holds only the stretch scrolled to, and scrolling
+    or a line in the transcript draws its turn there. A window narrowed there draws the axis's end at once."""
+    base, browser = site
+    lid = seed(dcfg)
+    old = testers.folder(lid) / "chapters" / "herons-20261114"
+    write(old / "status.json", {"state": "ready", "started": "2026-11-14T00:11:46", "updated": "2026-11-14T01:00:05",
+                                "title": "Herons", "run": old.name})
+    jsonl(old / "fast_timeline.jsonl", [{"ts": "2026-11-14T00:23:17", "event": "ready"}])
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(base + f"/admin/signals?lid={lid}&session=visit")
+    page.wait_for_selector("#chart circle.pt")
+    assert page.evaluate("D.duration") > 500000
+    clicks = 0
+    while not page.is_disabled("#zoom-in") and clicks < 30:
+        page.click("#zoom-in")
+        clicks += 1
+    assert page.is_disabled("#zoom-in") and page.evaluate("pps") >= 2
+    size = page.evaluate("""() => ({axis: document.getElementById('space').scrollWidth,
+        view: document.getElementById('wrap').clientWidth,
+        svg: +document.getElementById('chart').getAttribute('width'),
+        nodes: document.querySelectorAll('#chart *').length})""")
+    assert size["axis"] > 1_000_000 and size["svg"] <= 3 * size["view"] + 1 and size["nodes"] < 1500, size
+    assert page.evaluate("(() => { const t = performance.now(); for (let k = 0; k < 5; k++) draw(); "
+                         "return performance.now() - t; })()") < 1500
+
+    # Scrolled to the guide's first turn, its points are drawn, a turn's worth apart from the next
+    page.evaluate("document.getElementById('wrap').scrollLeft = PAD_L + D.records[2].secs * pps - 200")
+    page.wait_for_selector("#chart circle[data-rec='2'][data-m='words']")
+    xs = page.evaluate("[2, 3].map((i) => +document.querySelector(`#chart circle[data-rec='${i}'][data-m='words']`)"
+                       ".getAttribute('cx'))")
+    assert xs[1] - xs[0] > 50
+    # A line in the transcript scrolls to its turn, far off, and draws it selected
+    page.click("#transcript li:has-text('The director was effective.')")
+    page.wait_for_function("document.querySelectorAll('#chart circle.sel[data-rec=\"6\"]').length === 5")
+    assert "Debrief" in page.inner_text("#detail")
+    # An empty moment there still marks the right second
+    sel = page.evaluate("(() => { const c = document.querySelector('#chart circle.sel'); "
+                        "const b = c.getBoundingClientRect(); return b.left + b.width / 2; })()")
+    page.evaluate(f"openMark(secsAt({sel}))")
+    assert abs(page.evaluate("pending") - page.evaluate("D.records[6].secs")) < 1
+
+    # The window narrows while scrolled near the axis's end: the scroll is past the new end until the browser
+    # catches up, and the stretch drawn from it had a negative width (and nothing on it). Every draw is watched.
+    errs = []
+    page.on("console", lambda m: errs.append(m.text) if m.type == "error" else None)
+    page.keyboard.press("Escape")
+    wide = page.evaluate("""() => { window.draws = []; const d0 = draw;
+        draw = () => { d0(); draws.push({...drawn, w: +document.getElementById('chart').getAttribute('width'),
+                                         left: wrap.scrollLeft, view: wrap.clientWidth}); };
+        return drawn.W; }""")
+    page.set_viewport_size({"width": 700, "height": 900})
+    page.wait_for_function(f"drawn.W < {wide} - 1000")
+    page.wait_for_timeout(300)
+    draws = page.evaluate("draws")
+    assert draws and not errs, (errs, draws)
+    for d in draws:
+        assert d["w"] > 0 and d["x0"] <= d["left"] and d["left"] + d["view"] <= d["x1"] <= d["W"], d
+
+
+def test_a_visit_over_months_keeps_its_newest_turn_in_reach(dcfg, site):
+    """An axis of four months (Ian's folder after a season of overnight chapters): at the top zoom the axis stays
+    narrower than browsers allow a box (Chromium clamps one near 33.5 million pixels, and the visit's newest turns,
+    at the right end, could not be scrolled to), and a line of the newest turn still draws it."""
+    base, browser = site
+    lid = seed(dcfg)
+    old = testers.folder(lid) / "chapters" / "herons-20260720"
+    write(old / "status.json", {"state": "ready", "started": "2026-07-20T00:11:46", "updated": "2026-07-20T01:00:05",
+                                "title": "Herons", "run": old.name})
+    jsonl(old / "fast_timeline.jsonl", [{"ts": "2026-07-20T00:23:17", "event": "ready"}])
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    page.goto(base + f"/admin/signals?lid={lid}&session=visit")
+    page.wait_for_selector("#chart circle.pt")
+    assert page.evaluate("D.duration") > 100 * 86400
+    clicks = 0
+    while not page.is_disabled("#zoom-in") and clicks < 40:
+        page.click("#zoom-in")
+        clicks += 1
+    assert page.is_disabled("#zoom-in") and page.evaluate("pps") > 1
+    page.click("#transcript li:has-text('The director was effective.')")
+    page.wait_for_function("document.querySelectorAll('#chart circle.sel[data-rec=\"6\"]').length === 5")
+    got = page.evaluate("""() => ({W: drawn.W, space: document.getElementById('space').getBoundingClientRect().width,
+        cx: +document.querySelector('#chart circle.sel').getAttribute('cx') + drawn.x0,
+        left: document.getElementById('wrap').scrollLeft, view: document.getElementById('wrap').clientWidth})""")
+    assert got["W"] <= 16e6 and abs(got["space"] - got["W"]) < 2, got
+    assert got["left"] <= got["cx"] <= got["left"] + got["view"], got     # in view, not only in the SVG
+
+
+def held_whisper(lid):
+    """The guide conversation with its whisper held 18 s while the listener spoke (held at 21:26:01, sent at
+    21:26:19): its fate's dot sits 18 s after its look's tick."""
+    rows = []
+    for r in GUIDE2:
+        if r.get("who") == "director_fate":
+            rows += [{**r, "t": "2026-11-20T21:26:01", "fate": "held", "page_secs": 21.0},
+                     {**r, "t": "2026-11-20T21:26:19", "fate": "sent", "page_secs": 39.0, "held_ms": 18000}]
+        else:
+            rows.append(r)
+    jsonl(testers.folder(lid) / "sessions" / f"{GUIDE_STEM}.jsonl", rows)
+
+
+def test_a_held_whispers_dot_is_drawn_zoomed_in_without_its_tick(dcfg, site):
+    """Zoomed in with the dot in view and its look's tick more than a screen before it (off the drawn stretch), the
+    dot is still drawn at its own second (the windowed draw skipped the whole look, dot and all), and the tick
+    is not drawn there."""
+    base, browser = site
+    lid = seed(dcfg)
+    held_whisper(lid)
+    page = browser.new_page(viewport={"width": 1000, "height": 900})
+    page.goto(base + f"/admin/signals?lid={lid}&session={GUIDE_STEM}")
+    page.wait_for_selector("#chart circle.pt")
+    assert page.evaluate("[D.looks[0].secs, D.looks[0].fate.secs, D.looks[0].fate.fate]") == [21.0, 40.0, "sent"]
+    assert page.eval_on_selector_all("#chart circle.fd", "(es) => es.length") == 1     # the whole axis: both drawn
+    while not page.is_disabled("#zoom-in"):
+        page.click("#zoom-in")
+    page.evaluate("wrap.scrollLeft = PAD_L + 40 * pps - wrap.clientWidth / 2")      # the dot mid-view
+    page.wait_for_function("drawn.x0 <= wrap.scrollLeft && wrap.scrollLeft + wrap.clientWidth <= drawn.x1")
+    assert page.evaluate("drawn.x0 > PAD_L + 23 * pps")                              # the tick off the stretch
+    got = page.evaluate("""() => ({x0: drawn.x0, pps, left: wrap.scrollLeft, view: wrap.clientWidth,
+        dots: [...document.querySelectorAll('#chart circle.fd')].map((c) => +c.getAttribute('cx')),
+        ticks: document.querySelectorAll('#chart .wh, #chart .lk').length})""")
+    assert got["ticks"] == 0 and len(got["dots"]) == 1, got
+    at = got["x0"] + got["dots"][0]                    # coordinates are from the drawn stretch's left edge
+    assert abs(at - (8 + 40 * got["pps"])) < 0.2 and got["left"] <= at <= got["left"] + got["view"], got
+    # The dot still selects its look
+    page.dispatch_event("#chart circle.fd", "click")
+    det = page.inner_text("#detail")
+    assert "Look 1" in det and "Held 18" in det and "sent at 0:40" in det, det
+
+
+def test_a_label_from_before_the_stretch_still_reaches_into_view(dcfg, site):
+    """A turn's tags and a mark's text run right of their moment: on a small phone (half a screen is about 140
+    pixels), zoomed in, a long label whose moment is just before the drawn stretch still shows its end in the view
+    (only labels starting in the stretch were drawn)."""
+    base, browser = site
+    lid = seed(dcfg)
+    d = testers.folder(lid)
+    tags = "[inhale] [laughs] [tongue click] [inhale] [sighs] [laughs] "
+    store.write_recordings(d, GUIDE_STEM, [
+        rec(GUIDE_STEM, 0, "live_g1", tags + "I was in Crandon Park today.", 30.0, 2.0, gap_ms=900, rms_db=-29.0),
+        rec(GUIDE_STEM, 1, "live_g1", WATER["text"], 80.0, 4.0, gap_ms=1000, rms_db=-31.0)])
+    store.add_mark(d, GUIDE_STEM, 31.0, "NB: LOST THEM HERE, THEY WENT QUIET", t="2026-11-21T09:01:00")
+    page = browser.new_page(viewport={"width": 320, "height": 700})
+    page.goto(base + f"/admin/signals?lid={lid}&session={GUIDE_STEM}")
+    page.wait_for_selector("#chart circle.pt")
+    for _ in range(2):
+        page.click("#zoom-in")
+    # The stretch drawn with its left edge just past the turn's second and its one-second margin, then the view
+    # scrolled back to just inside half a screen of that edge: no redraw, as when scrolling left by hand.
+    got = page.evaluate("""async () => {
+        const ri = D.records.findIndex((r) => (r.tags || []).length > 4), mi = D.marks.findIndex((m) => m.secs === 31);
+        if (ri < 0 || D.records[ri].secs !== 31) return {ri: -1};   // the mark at the turn's second
+        const at = PAD_L + D.records[ri].secs * pps;
+        wrap.scrollLeft = at + pps + 4 + wrap.clientWidth;
+        draw();
+        const x0 = drawn.x0;
+        wrap.scrollLeft = x0 + wrap.clientWidth / 2 + 2;
+        await new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+        const left = wrap.getBoundingClientRect().left + wrap.clientLeft;
+        const reach = (sel) => {
+            const e = document.querySelector(sel);
+            return e ? e.getBoundingClientRect().right - left : null; };
+        return {ri, x0, redrawn: drawn.x0 !== x0, off: drawn.x0 > at + pps, view: wrap.clientWidth,
+                tags: reach(`#chart text.ev[data-rec="${ri}"]`), mark: reach(`#chart text.flagtext[data-mark="${mi}"]`)};
+    }""")
+    assert got["ri"] >= 0 and not got["redrawn"] and got["off"] and got["view"] < 300, got
+    assert got["tags"] is not None and got["tags"] > 5, got       # the tags' end, in the view
+    assert got["mark"] is not None and got["mark"] > 5, got
+
+
+def test_a_page_turn_shows_the_norm_it_had_after_a_replay(tmp_path):
+    """The live page norm keeps the page turns a replay replaced (store.recent); the timeline must show the same note
+    the earpiece was given, not a norm rebuilt without them."""
+    ten = " ".join(["word"] * 10) + "."
+    A, B = "20261121-101500", "20261121-110000"
+
+    def sig(k, start):
+        return {"turn": k, "gap_ms": 600, "dur_ms": 4200, "speak_ms": 4000, "pauses": 0, "longest_pause_ms": 0,
+                "rms_db": -30.0, "ago_ms": 4500, "start_s": start, "end_s": start + 4.2}
+
+    for k in range(1, 5):
+        live.record_line(tmp_path, A, part="guide", live_id="sA", text=ten, sig=sig(k, 10.0 * k), cfg={},
+                         now=datetime(2026, 11, 21, 10, 15, 10 * k))
+    S = record.settings({})
+    page = store.records(tmp_path, A)
+    recs = [record.build({"start_s": p["start_s"], "end_s": p["end_s"], "gap_ms": 650, "dur_ms": 4100,
+                          "speak_ms": 3900}, ten, stem=A, part="guide", source="recording", turn=i, live_id="sA",
+                         t=p["t"], S=S) for i, p in enumerate(page)]
+    store.write_recordings(tmp_path, A, store.match_page(recs, page))
+    assert all(r["source"] == "recording" for r in store.records(tmp_path, A))      # shown: the replay's
+    told = live.record_line(tmp_path, B, part="guide", live_id="sB", text="Fine, I suppose.", sig=sig(1, 5.0),
+                            cfg={}, now=datetime(2026, 11, 21, 11, 0, 10))
+    assert told["norm_turns"] == 4 and told["norm"]["words"] == 10
+    shown = [r for r in placed_records(tmp_path, S) if r["stem"] == B]
+    assert len(shown) == 1 and shown[0]["note"] == told["note"] and shown[0]["norm_turns"] == 4
+
+
+def placed_records(folder, S):
+    from signals import routes
+    return routes.annotated(folder, S)

@@ -670,6 +670,8 @@ signals:
     min_run_ms: 80
     max_tick_gap_ms: 250      # samples further apart than this (a background tab): the turn's timing is not taken
     lead_ms: 4000             # speech up to this long before a line's first words counts as that line's
+    # ... and of that, the part nearest the speech end the line implies, as the replay assigns rows: the page's own
+    # line_quiet_ms (live.page; demo.interviewer.page) and recording.lag_s above (stages/common.sig_settings)
 
 # Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys.
 demo:

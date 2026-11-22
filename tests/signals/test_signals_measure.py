@@ -1,5 +1,6 @@
 """signals/measure.py: the replay measurer on synthetic two-channel recordings (package 3)."""
 import os
+import shutil
 import time
 
 import numpy as np
@@ -225,3 +226,63 @@ def test_records_kept_when_the_audio_is_gone(tmp_path):
     store.audio_path(lst, "live_g1").unlink()
     M.run(lst, {})
     assert store.records(lst, "20261121-101500") == before
+
+
+# --- a tester reset or deleted while the replay runs ----------------------------------------------------------
+
+def reset_like(lst, cleared):
+    """What demo.testers.reset does on disk: the folder moved aside, a fresh one made at the same path."""
+    cleared.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(lst), str(cleared))
+    lst.mkdir()
+    (lst / "tester.json").write_text("{}")
+
+
+def test_a_folder_reset_while_measuring_gets_nothing(tmp_path, monkeypatch):
+    lst = listener_with_visit(tmp_path)
+    cleared = tmp_path / "_cleared_x" / "t-pooja"
+    real, seen = M.measure_session, []
+
+    def measure_session(*a):                 # the reset lands after the first recording (the long part)
+        out = real(*a)
+        if not seen:
+            reset_like(lst, cleared)
+        seen.append(1)
+        return out
+    monkeypatch.setattr(M, "measure_session", measure_session)
+    got = M.run(lst, {})
+    assert got["gone"] == "reset" and got["written"] == [] and got["records"] == 0
+    assert sorted(p.name for p in lst.iterdir()) == ["tester.json"]
+    assert not list((cleared / "signals").glob("*.jsonl"))
+    assert len(seen) == 1                    # nothing more measured from the new folder either
+
+
+def test_a_folder_reset_between_writes_keeps_the_new_folder_clean(tmp_path, monkeypatch):
+    lst = listener_with_visit(tmp_path)
+    cleared = tmp_path / "_cleared_x" / "t-pooja"
+    real, calls = store.match_page, []
+
+    def match_page(*a, **k):                 # after the intro is written, before the guide conversation
+        if len(calls) == 1:
+            reset_like(lst, cleared)
+        calls.append(1)
+        return real(*a, **k)
+    monkeypatch.setattr(store, "match_page", match_page)
+    got = M.run(lst, {})
+    assert got["gone"] == "reset" and got["written"] == ["intro-20261121-101000"] and got["records"] == 2
+    assert sorted(p.name for p in lst.iterdir()) == ["tester.json"]
+    assert len(store.records(cleared, "intro-20261121-101000")) == 2     # went with the old folder
+    assert not store.path(cleared, syn.GUIDE).exists()
+
+
+def test_a_folder_deleted_as_it_is_written_stops_quietly(tmp_path, monkeypatch):
+    lst = listener_with_visit(tmp_path)
+    real = store.write_recordings
+
+    def write_recordings(listener, stem, recs, **kw):     # the delete lands after the run's own check
+        shutil.rmtree(lst)
+        return real(listener, stem, recs, **kw)
+    monkeypatch.setattr(store, "write_recordings", write_recordings)
+    got = M.run(lst, {})
+    assert got["gone"] == "deleted" and got["written"] == [] and got["records"] == 0
+    assert not lst.exists()

@@ -7,6 +7,8 @@
   page's audio_route records (study/events.jsonl).
 - The norm: how many turns had one, and where it first appeared (does the intro count toward it).
 - How often each measure was mentioned.
+- Page against recording (package 5's check): each recording record beside the page turns it replaced, from the
+  raw lines (the merged records hide those page turns), and the page turns it matched none of, with why.
 - Ian's marks: the turns within MARK_SECS of each, and what they mentioned.
 """
 from __future__ import annotations
@@ -24,6 +26,8 @@ from . import fetch, measure, record, store
 
 MARK_SECS = 15
 SPEAKERS = ("guide", "interviewer")
+COMPARED = (("start_ms", "start"), ("end_ms", "end"), ("gap_ms", "gap"), ("dur_ms", "dur"), ("words", "words"))
+WITHIN_MS = 300         # a page time this close to the recording's agrees
 
 
 def _when(t) -> datetime | None:
@@ -144,9 +148,114 @@ def _zero(listener: Path, stem: str) -> datetime | None:
     return next((t for t in (_when(r.get("t")) for r in fetch.jsonl(p)) if t), None)
 
 
+def _ms(secs) -> float | None:
+    return secs * 1000 if isinstance(secs, (int, float)) else None
+
+
+def _total(vals) -> float | None:
+    vals = list(vals)
+    return sum(vals) if vals and None not in vals else None
+
+
+def _span(page: list[dict]) -> float | None:
+    """The page's length for these turns. Both sources measure a turn as first sound to last, pauses included, so
+    turns the page split at a pause span the first's start to the last's end; adding their lengths would leave the
+    pauses out. With no session clock there is no span for several turns."""
+    if len(page) == 1:
+        return page[0].get("dur_ms")
+    a, b = page[0].get("start_s"), page[-1].get("end_s")
+    return (b - a) * 1000 if a is not None and b is not None else None
+
+
+def _diff(rec: dict, page: list[dict]) -> dict:
+    """Recording minus page, for each measure both have. Several page turns count as one: the first's start and
+    gap, the last's end, the span between them, their words added."""
+    first, last = page[0], page[-1]
+    p = {"start_ms": _ms(first.get("start_s")), "end_ms": _ms(last.get("end_s")), "gap_ms": first.get("gap_ms"),
+         "dur_ms": _span(page), "words": _total(x.get("words") for x in page)}
+    r = {"start_ms": _ms(rec.get("start_s")), "end_ms": _ms(rec.get("end_s")), "gap_ms": rec.get("gap_ms"),
+         "dur_ms": rec.get("dur_ms"), "words": rec.get("words")}
+    return {k: round(r[k] - p[k]) for k in p if r[k] is not None and p[k] is not None}
+
+
+def _apart(page: dict, rec: dict) -> float:
+    """Seconds between a page turn and a recording turn on the session's clock (0 when they overlap)."""
+    a, b, c, d = page.get("start_s"), page.get("end_s"), rec.get("start_s"), rec.get("end_s")
+    return float("inf") if None in (a, b, c, d) else max(c - b, a - d, 0.0)
+
+
+def _audio(listener: Path, live_id) -> Path | None:
+    """The session's recording on disk, as the replay would measure it."""
+    return fetch.audio_for(listener, live_id) if store.LIVE_ID.fullmatch(str(live_id or "")) else None
+
+
+def _unheard(listener: Path, stem: str, live_id) -> str:
+    """Why a page turn's GPT-Live session has no recording record: no recording, one the replay hasn't seen yet,
+    or one the replay measured and heard none of the listener in (a quiet mic)."""
+    audio = _audio(listener, live_id)
+    if audio is None:
+        return "no recording of its GPT-Live session"
+    try:
+        got, replayed = audio.stat(), store.path(listener, stem).stat().st_mtime
+    except OSError:
+        return "no recording of its GPT-Live session"
+    # a reused recording is hard-linked in (fetch._place): its mtime is the original's, the link sets its ctime
+    if max(got.st_mtime, got.st_ctime) > replayed:
+        return "its recording was fetched after the last replay (wl signals run)"
+    return ("its recording was measured, but the replay heard no turn of theirs in that session "
+            "(signals.recording min_rms/floor_x may be too high for this mic)")
+
+
+def _why(listener: Path, stem: str, page: dict, recs: list[dict]) -> str:
+    """Why store.match_page gave this page turn to no recording record."""
+    same = [r for r in recs if r.get("live_id") == page.get("live_id")]
+    if not same:
+        return _unheard(listener, stem, page.get("live_id"))
+    if page.get("start_s") is None or page.get("end_s") is None:
+        return "no session clock and no text match"
+    near = min(same, key=lambda r: _apart(page, r))
+    apart = _apart(page, near)
+    if apart <= store.SLACK_S:      # it would match now: the page wrote it (or its last line) after the replay
+        return f"near recording turn {near['turn']}, but newer than the replay (wl signals run again)"
+    return f"outside the {store.SLACK_S:g} s slack (nearest: recording turn {near['turn']}, {apart:.1f} s away)"
+
+
+def compare(listener: Path) -> dict:
+    """Package 5's check: does the page's timing agree with the replay's for the same turns? From the raw lines,
+    the latest per turn, since store.merged drops a page turn a recording record replaces."""
+    pairs, unmatched, unreplayed = [], [], []
+    for stem in store.stems(listener):
+        by = store.per_turn(store.rows(listener, stem))
+        page = {t: r for (src, t), r in by.items() if src == "page"}
+        recs = sorted((r for (src, _), r in by.items() if src == "recording"), key=lambda r: r["turn"])
+        if not page:
+            continue
+        # no replay record at all is "no replay" only with no recording to replay: a replay that heard nothing
+        # (a quiet mic) is the very disagreement this check is for
+        if not recs and not any(_audio(listener, x) for x in {p.get("live_id") for p in page.values()}):
+            unreplayed.append(stem)
+            continue
+        taken: set[int] = set()
+        for r in recs:
+            got = sorted({t for t in r.get("replaces") or [] if t in page})
+            if got:
+                taken.update(got)
+                pairs.append({"stem": stem, "turn": r["turn"], "page": got, "diff": _diff(r, [page[t] for t in got])})
+        unmatched += [{"stem": stem, "turn": t, "why": _why(listener, stem, page[t], recs)}
+                      for t in sorted(set(page) - taken)]
+    summary = {}
+    for k, _ in COMPARED:
+        vals = [abs(p["diff"][k]) for p in pairs if k in p["diff"]]
+        if vals:
+            summary[k] = {"n": len(vals), "median": round(float(np.median(vals))), "largest": max(vals)}
+            if k != "words":
+                summary[k]["within"] = sum(1 for v in vals if v <= WITHIN_MS)
+    return {"pairs": pairs, "summary": summary, "unmatched": unmatched, "unreplayed": unreplayed}
+
+
 def marks(listener: Path) -> list[dict]:
     out = []
-    for stem in store.stems(listener):
+    for stem in store.marked(listener):     # a conversation can have marks and no records file
         got = store.marks(listener, stem)
         if not got:
             continue
@@ -164,7 +273,7 @@ def marks(listener: Path) -> list[dict]:
                     near.append({"turn": r["turn"], "source": r["source"], "part": r["part"], "secs": round(a, 1),
                                  "mention": r.get("mention") or [], "text": r.get("text") or ""})
             out.append({"stem": stem, "secs": m["secs"], "text": m["text"], "placed": zero is not None,
-                        "turns": near})
+                        "records": store.path(listener, stem).exists(), "turns": near})
     return out
 
 
@@ -172,7 +281,7 @@ def build(listener: Path, cfg: dict, label: str | None = None) -> dict:
     listener = Path(listener)
     out = {"listener": label or listener.name, "folder": str(listener), "tags": sound_tags(listener),
            "phone": phone(listener), "recordings": recordings(listener, cfg),
-           "sources": norm_and_mentions(listener, cfg), "marks": marks(listener)}
+           "sources": norm_and_mentions(listener, cfg), "compare": compare(listener), "marks": marks(listener)}
     out["text"] = text(out)
     return out
 
@@ -230,10 +339,28 @@ def text(rep: dict) -> str:
             L.append(f"  Mentioned ({src}): {said} ({s['mentioned_turns']} of {s['turns']} turns)")
         else:
             L.append(f"  Mentioned ({src}): nothing")
+    c = rep["compare"]
+    if c["pairs"] or c["unmatched"] or c["unreplayed"]:
+        L.append("  Page against recording (recording minus page, the same turns):")
+    for p in c["pairs"]:
+        bits = ", ".join(f"{name} {p['diff'][k]:+d}" + (" ms" if k != "words" else "")
+                         for k, name in COMPARED if k in p["diff"])
+        L.append(f"    {p['stem']} turn {p['turn']} (page {', '.join(map(str, p['page']))}): {bits}")
+    for k, name in COMPARED:
+        if s := c["summary"].get(k):
+            unit = " ms" if k != "words" else ""
+            within = f", {s['within']} of {s['n']} within {WITHIN_MS} ms" if "within" in s else ""
+            L.append(f"    {name}: median {s['median']}{unit}, largest {s['largest']}{unit}{within}")
+    for u in c["unmatched"]:
+        L.append(f"    page turn {u['turn']} of {u['stem']} matched no recording: {u['why']}")
+    if c["unreplayed"]:
+        L.append(f"    page records but no replay: {', '.join(c['unreplayed'])} (wl signals fetch, then run)")
     for m in rep["marks"]:
         L.append(f"  Mark {m['stem']} at {_mss(m['secs'])}: \"{_clip(m['text'], 60)}\"")
         if not m["placed"]:
             L.append("    no transcript to place it on")
+        elif not m["records"]:
+            L.append("    no records for this conversation: wl signals fetch, then run")
         elif not m["turns"]:
             L.append(f"    no turn within {MARK_SECS} s")
         for t in m["turns"]:

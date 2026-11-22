@@ -157,6 +157,10 @@ const MEASURES = [
 ];
 const RATIO_LIMIT = 2, DB_LIMIT = 12;
 const PAD_L = 8, PAD_R = 14;
+const CHAR_PX = 11;       // the chart's font size (#chart): no letter is wider, so a label runs at most this a character
+// The widest the axis may be: browsers clamp a box past about 33.5 million pixels (Chromium; Firefox less), and the
+// end of an axis wider than that could not be scrolled to.
+const MAX_W = 16e6;
 const ROW = { band: 18, marks: 18, events: 20, ear: 18, strip: 58, gap: 6, axis: 22 };
 const STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 86400];
 const PARTS = { intro: "Intro", guide: "Guide", debrief: "Debrief", library: "Library", records: "Records", chapter: "Chapter" };
@@ -172,6 +176,8 @@ const REASONS = {
 
 let D = null;             // the conversation or the visit, as the API gave it
 let zoom = 1, pps = 1;    // pixels per second: the chart's width fitted, times the zoom
+let drawn = null;         // the stretch of the axis the chart holds, in pixels: {x0, x1, W}
+let frame = 0;            // a redraw waiting for the next frame (scrolling)
 let sel = null;           // {kind: "rec" | "look" | "mark", i}
 let pending = null;       // the moment a mark is being typed for (seconds on this axis)
 
@@ -220,13 +226,41 @@ function fateText(f) {
 
 // --- the chart ----------------------------------------------------------------------------------
 
-function draw() {
-  const wrap = $("wrap"), svg = $("chart");
+// The scale and the axis's width. The zoom goes to 4 pixels a second: a visit over days (Ian's own folder) needs
+// thousands of times the fitted width, where 64x left a turn a pixel. Past about 46 days of axis MAX_W holds it
+// lower (about 1.5 pixels a second at 120 days).
+function layout() {
+  const wrap = $("wrap");
   const dur = Math.max(D.duration || 0, 10) * 1.02;
   const avail = Math.max(wrap.clientWidth, 240) - PAD_L - PAD_R;
+  const cap = Math.min(Math.max(64, Math.ceil(dur * 4 / avail)),
+                       Math.max(1, Math.floor((MAX_W - PAD_L - PAD_R) / avail)));
+  zoom = Math.max(1, Math.min(cap, zoom));
   pps = avail / dur * zoom;
   const W = Math.max(wrap.clientWidth, Math.ceil(PAD_L + dur * pps + PAD_R));
-  const X = (s) => (PAD_L + s * pps).toFixed(1);
+  $("space").style.width = W + "px";
+  $("zoom-out").disabled = zoom <= 1;
+  $("zoom-in").disabled = zoom >= cap;
+  return { dur, W };
+}
+
+function draw() {
+  const wrap = $("wrap"), svg = $("chart");
+  const { dur, W } = layout();
+  // Only the stretch scrolled to is drawn, a screen either side, and scrolling redraws: zoomed in on a visit over
+  // days the axis is millions of pixels wide, too many for one SVG. Coordinates are from the stretch's left edge.
+  const view = wrap.clientWidth;
+  // The old stretch still holds the scroll where it was: after the window narrows it can be past the new axis's end.
+  const sl = Math.min(wrap.scrollLeft, Math.max(0, W - view));
+  if (sl !== wrap.scrollLeft) wrap.scrollLeft = sl;
+  const x0 = Math.max(0, Math.floor(sl - view)), x1 = Math.min(W, Math.ceil(sl + 2 * view));
+  const w = x1 - x0;
+  drawn = { x0, x1, W };
+  const s0 = (x0 - PAD_L) / pps, s1 = (x1 - PAD_L) / pps;
+  // A label runs right of its moment: one starting up to `reach` pixels before the stretch can still show in it.
+  const here = (s, reach = 0) => s != null && s >= s0 - 1 - reach / pps && s <= s1 + 1;
+  const px = (s) => PAD_L + s * pps - x0;
+  const X = (s) => px(s).toFixed(1);
   const Y = {};
   let y = 0;
   if (D.visit) { Y.band = y; y += ROW.band + 2; }
@@ -236,23 +270,24 @@ function draw() {
   Y.strips = y; y += MEASURES.length * (ROW.strip + ROW.gap);
   Y.axis = y; y += ROW.axis;
   const H = y;
-  let out = `<rect class="bg" x="0" y="0" width="${W}" height="${H}"/>`;
+  let out = `<rect class="bg" x="0" y="0" width="${w}" height="${H}"/>`;
 
   // The visit's parts and the chapter read aloud: a band on top, shading behind the strips.
   if (D.visit) {
     const span = (cls, a, b, label, title) => {
-      const x = PAD_L + a * pps, w = Math.max(2, (b - a) * pps);
-      out += `<rect class="band shade ${cls}" x="${x.toFixed(1)}" y="${Y.strips}" width="${w.toFixed(1)}" height="${Y.axis - Y.strips}"/>`
-        + `<rect class="band ${cls}" x="${x.toFixed(1)}" y="${Y.band}" width="${w.toFixed(1)}" height="${ROW.band}"><title>${esc(title)}</title></rect>`
-        + (w > 44 ? `<text class="bandtext" x="${(x + 4).toFixed(1)}" y="${Y.band + 13}">${esc(label)}</text>` : "");
+      if (b < s0 || a > s1) return;
+      const ca = Math.max(a, s0), x = px(ca), bw = Math.max(2, (Math.min(b, s1) - ca) * pps);
+      out += `<rect class="band shade ${cls}" x="${x.toFixed(1)}" y="${Y.strips}" width="${bw.toFixed(1)}" height="${Y.axis - Y.strips}"/>`
+        + `<rect class="band ${cls}" x="${x.toFixed(1)}" y="${Y.band}" width="${bw.toFixed(1)}" height="${ROW.band}"><title>${esc(title)}</title></rect>`
+        + (a >= s0 && (b - a) * pps > 44 ? `<text class="bandtext" x="${(x + 4).toFixed(1)}" y="${Y.band + 13}">${esc(label)}</text>` : "");
     };
     for (const p of D.parts) span(p.part, p.secs || 0, p.end_secs || p.secs || 0, PARTS[p.part] || p.part, `${p.label || ""} (${mss(p.secs)} to ${mss(p.end_secs)})`);
     for (const ch of D.chapters || []) {
       for (const s of ch.spans) span("chapter", s.secs, s.end_secs, "Chapter", `Read aloud: ${ch.title || ch.run} (${mss(s.secs)} to ${mss(s.end_secs)})`);
     }
     for (const x of D.items) {
-      if (x.kind === "event" && x.type === "chapter" && x.secs != null) {
-        const cx = PAD_L + x.secs * pps, cy = Y.band + ROW.band / 2;
+      if (x.kind === "event" && x.type === "chapter" && here(x.secs)) {
+        const cx = px(x.secs), cy = Y.band + ROW.band / 2;
         out += `<path class="chev" d="M${cx.toFixed(1)} ${cy - 5}l4 5-4 5-4-5z"><title>${esc(mss(x.secs) + " " + x.text)}</title></path>`;
       }
     }
@@ -260,21 +295,21 @@ function draw() {
 
   // The GPT-Live sessions: where each recording starts.
   for (const s of D.sessions || []) {
-    if (s.secs == null) continue;
+    if (!here(s.secs)) continue;
     out += `<line class="sess" x1="${X(s.secs)}" x2="${X(s.secs)}" y1="${Y.ear}" y2="${Y.axis}"><title>Voice session ${esc(s.live_id)} begins${D.audio[s.live_id] ? " (recording on disk)" : ""}</title></line>`;
   }
 
   // One strip per measure.
   MEASURES.forEach((m, k) => {
     const top = Y.strips + k * (ROW.strip + ROW.gap), mid = top + ROW.strip / 2, half = ROW.strip / 2 - 6;
-    out += (D.visit ? "" : `<rect class="strip" x="0" y="${top}" width="${W}" height="${ROW.strip}"/>`)
-      + `<line class="grid" x1="0" x2="${W}" y1="${(mid - half / 2).toFixed(1)}" y2="${(mid - half / 2).toFixed(1)}"/>`
-      + `<line class="grid" x1="0" x2="${W}" y1="${(mid + half / 2).toFixed(1)}" y2="${(mid + half / 2).toFixed(1)}"/>`
-      + `<line class="norm" x1="0" x2="${W}" y1="${mid}" y2="${mid}"/>`
-      + `<text class="lab" x="${PAD_L + 2}" y="${top + 11}">${esc(m.label)} ${m.ratio ? "(×¼ to ×4 of norm)" : "(±12 dB of norm)"}</text>`;
+    out += (D.visit ? "" : `<rect class="strip" x="0" y="${top}" width="${w}" height="${ROW.strip}"/>`)
+      + `<line class="grid" x1="0" x2="${w}" y1="${(mid - half / 2).toFixed(1)}" y2="${(mid - half / 2).toFixed(1)}"/>`
+      + `<line class="grid" x1="0" x2="${w}" y1="${(mid + half / 2).toFixed(1)}" y2="${(mid + half / 2).toFixed(1)}"/>`
+      + `<line class="norm" x1="0" x2="${w}" y1="${mid}" y2="${mid}"/>`
+      + `<text class="lab" x="${(px(0) + 2).toFixed(1)}" y="${top + 11}">${esc(m.label)} ${m.ratio ? "(×¼ to ×4 of norm)" : "(±12 dB of norm)"}</text>`;
     D.records.forEach((r, ri) => {
       const v = r[m.key];
-      if (v == null || r.secs == null) return;
+      if (v == null || !here(r.secs)) return;
       const c = r.change ? r.change[m.key] : null;
       let cy = mid, cls = "pt hollow";
       if (c != null) {
@@ -292,21 +327,22 @@ function draw() {
   // Tags, cut-ins and trailing off on the top edge.
   D.records.forEach((r, ri) => {
     const t = events(r);
-    if (!t || r.secs == null) return;
+    if (!t || !here(r.secs, t.length * CHAR_PX)) return;
     out += `<text class="ev" data-rec="${ri}" x="${X(r.secs)}" y="${Y.events + 14}">${esc(t)}<title>${esc(mss(r.secs) + " " + t)}</title></text>`;
   });
 
   // The earpiece: a tick per look, a taller one per whisper in its fate's color, a dot when the fate came later.
   (D.looks || []).forEach((L, li) => {
-    if (L.secs == null) return;
+    // A held whisper's dot can be in the stretch while its look's tick is a screen or more before it: each is drawn
+    // on its own moment.
+    const dot = L.note && L.fate && L.fate.secs != null && L.fate.secs - L.secs >= 2 && here(L.fate.secs);
+    if (!here(L.secs) && !dot) return;
     const f = L.fate ? L.fate.fate : "";
     const tip = `${mss(L.secs)} look ${L.id} (${L.trigger || "?"})` + (L.error ? `: failed (${L.error})` : "")
       + (L.note ? `: “${L.note}” ${fateText(L.fate)}` : "");
     if (L.note) {
-      out += `<line class="wh" data-look="${li}" data-fate="${esc(f)}" x1="${X(L.secs)}" x2="${X(L.secs)}" y1="${Y.ear + 1}" y2="${Y.ear + ROW.ear}"><title>${esc(tip)}</title></line>`;
-      if (L.fate && L.fate.secs != null && L.fate.secs - L.secs >= 2) {
-        out += `<circle class="fd" data-look="${li}" data-fate="${esc(f)}" cx="${X(L.fate.secs)}" cy="${Y.ear + ROW.ear / 2}" r="2.5"><title>${esc(tip)}</title></circle>`;
-      }
+      if (here(L.secs)) out += `<line class="wh" data-look="${li}" data-fate="${esc(f)}" x1="${X(L.secs)}" x2="${X(L.secs)}" y1="${Y.ear + 1}" y2="${Y.ear + ROW.ear}"><title>${esc(tip)}</title></line>`;
+      if (dot) out += `<circle class="fd" data-look="${li}" data-fate="${esc(f)}" cx="${X(L.fate.secs)}" cy="${Y.ear + ROW.ear / 2}" r="2.5"><title>${esc(tip)}</title></circle>`;
     } else {
       out += `<line class="lk${L.error ? " err" : ""}" data-look="${li}" x1="${X(L.secs)}" x2="${X(L.secs)}" y1="${Y.ear + 6}" y2="${Y.ear + ROW.ear}"><title>${esc(tip)}</title></line>`;
     }
@@ -314,39 +350,51 @@ function draw() {
 
   // Ian's marks as flags, with the line down through the strips.
   D.marks.forEach((mk, i) => {
-    if (mk.secs == null) return;
-    const x = PAD_L + mk.secs * pps;
+    const label = clip(mk.text, 24);
+    if (!here(mk.secs, 11 + label.length * CHAR_PX)) return;
+    const x = px(mk.secs);
     out += `<line class="flagline" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${Y.marks + 2}" y2="${Y.axis}"/>`
       + `<path class="flag" data-mark="${i}" d="M${x.toFixed(1)} ${Y.marks + 2}h9l-3 4 3 4h-9z"><title>${esc(mss(mk.secs) + " " + mk.text)}</title></path>`
-      + `<text class="flagtext" data-mark="${i}" x="${(x + 11).toFixed(1)}" y="${Y.marks + 11}">${esc(clip(mk.text, 24))}</text>`;
+      + `<text class="flagtext" data-mark="${i}" x="${(x + 11).toFixed(1)}" y="${Y.marks + 11}">${esc(label)}</text>`;
   });
   if (pending != null) out += `<line class="pending" x1="${X(pending)}" x2="${X(pending)}" y1="${Y.marks}" y2="${Y.axis}"/>`;
 
   // The time axis: m:ss since the start.
   const step = STEPS.find((s) => s * pps >= 64) || 86400;
-  out += `<line class="axis" x1="0" x2="${W}" y1="${Y.axis}" y2="${Y.axis}"/>`;
-  for (let s = 0; s <= dur; s += step) {
+  out += `<line class="axis" x1="0" x2="${w}" y1="${Y.axis}" y2="${Y.axis}"/>`;
+  for (let s = Math.max(0, Math.ceil(s0 / step) * step); s <= Math.min(dur, s1); s += step) {
     out += `<line class="axis" x1="${X(s)}" x2="${X(s)}" y1="${Y.axis}" y2="${Y.axis + 4}"/><text class="tick" x="${X(s)}" y="${Y.axis + 15}" text-anchor="${s ? "middle" : "start"}">${mss(s)}</text>`;
   }
 
-  svg.setAttribute("width", W);
+  svg.setAttribute("width", w);
   svg.setAttribute("height", H);
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("viewBox", `0 0 ${w} ${H}`);
+  svg.style.marginLeft = x0 + "px";
   svg.innerHTML = out;
   paintSel();
 }
 
+// Scrolling within half a screen of the drawn stretch's edge draws the stretch around the new view.
+function scrolled() {
+  const wrap = $("wrap");
+  if (!drawn || frame) return;
+  const v0 = wrap.scrollLeft, v1 = v0 + wrap.clientWidth, m = wrap.clientWidth / 2;
+  if ((drawn.x0 > 0 && v0 < drawn.x0 + m) || (drawn.x1 < drawn.W && v1 > drawn.x1 - m)) {
+    frame = requestAnimationFrame(() => { frame = 0; draw(); });
+  }
+}
+
 function secsAt(clientX) {
-  return Math.max(0, (clientX - $("chart").getBoundingClientRect().left - PAD_L) / pps);
+  return Math.max(0, (clientX - $("space").getBoundingClientRect().left - PAD_L) / pps);
 }
 
 function setZoom(z) {
   const wrap = $("wrap");
   const centre = (wrap.scrollLeft + wrap.clientWidth / 2 - PAD_L) / pps;
-  zoom = Math.max(1, Math.min(64, z));
-  draw();
+  zoom = z;
+  layout();
   wrap.scrollLeft = Math.max(0, PAD_L + centre * pps - wrap.clientWidth / 2);
-  $("zoom-out").disabled = zoom <= 1;
+  draw();
 }
 
 // --- selection: a point and its line, a look, a mark ---------------------------------------------
@@ -415,6 +463,7 @@ function recHtml(r) {
 
 function lookHtml(L) {
   let out = `<div><b>Look ${esc(L.id)}</b> <span class="sub">· ${mss(L.secs)} · ${esc(L.trigger || "")} · ${esc(L.speaking || "none")} speaking${L.stem && D.visit ? " · " + esc(L.stem) : ""}</span></div>`;
+  if (L.heard) out += `<div class="sub">The note it had: ${esc(L.heard)}</div>`;   // the listener signals line it was given
   if (L.error) return out + `<div class="said">Failed: ${esc(L.error)}</div>`;
   if (L.read) out += `<div class="sub">${esc(L.read)}</div>`;
   if (L.next) out += `<div class="sub">Next: ${esc(L.next)}</div>`;
@@ -573,13 +622,14 @@ async function timeline() {
   $("content").innerHTML = `<div class="bar"><span class="legend"><i class="hit">●</i> past a threshold · <i>●</i> within · <i>○</i> before a norm · `
     + `ticks: earpiece looks, whispers by fate${shades ? " ·" + shades : ""}</span>`
     + `<span><button id="zoom-out" type="button" aria-label="Zoom out" disabled>−</button> <button id="zoom-in" type="button" aria-label="Zoom in">+</button></span></div>`
-    + `<div class="chart-wrap" id="wrap"><svg id="chart" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Signals timeline"></svg></div>`
+    + `<div class="chart-wrap" id="wrap"><div id="space"><svg id="chart" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Signals timeline"></svg></div></div>`
     + `<form id="markbox" hidden autocomplete="off"><span>Mark at <b id="mark-at"></b></span>`
     + `<input id="mark-text" maxlength="500" placeholder="What you heard (e.g. lost them here)" aria-label="Mark">`
     + `<button>Save</button><button type="button" id="mark-cancel">Cancel</button><div id="mark-msg"></div></form>`
     + `<div id="detail" hidden></div><audio id="player" controls preload="none" hidden></audio><ol id="transcript"></ol>`;
   $("zoom-in").onclick = () => setZoom(zoom * 2);
   $("zoom-out").onclick = () => setZoom(zoom / 2);
+  $("wrap").addEventListener("scroll", scrolled, { passive: true });
   $("markbox").addEventListener("submit", saveMark);
   $("mark-cancel").onclick = closeMark;
   $("mark-text").addEventListener("keydown", (e) => { if (e.key === "Escape") closeMark(); });

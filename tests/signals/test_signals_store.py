@@ -103,6 +103,65 @@ def test_match_by_words_when_the_page_had_no_session_clock(tmp_path):
     assert store.match_page([other], page)[0]["replaces"] == []
 
 
+def turns(source, spans, live_id="s1", first=0):
+    """Bare records for match_page: (start_s, end_s, text) each."""
+    return [{"source": source, "turn": first + k, "live_id": live_id, "start_s": a, "end_s": b, "text": text}
+            for k, (a, b, text) in enumerate(spans)]
+
+
+def test_a_page_turn_goes_to_the_recording_turn_it_overlaps_not_the_first_within_slack():
+    """Both sources start a turn when the other voice sounds between two runs of the listener's, so a cut-in 0.6 s
+    after their last word (or a short "mm" from the guide) is two turns on each side, the second starting within
+    the slack of the first's end: it goes to the recording turn it overlaps."""
+    cut_in = [(10.0, 12.0, "I think it was the second one, the"), (12.6, 14.0, "no wait, the first one.")]
+    page = turns("page", [(a + 0.1, b + 0.1, t) for a, b, t in cut_in], first=1)     # the page's clock 0.1 s off
+    assert [m["replaces"] for m in store.match_page(turns("recording", cut_in), page)] == [[1], [2]]
+    mm = [(10.0, 11.5, "I went to the park."), (12.1, 13.5, "And it was quiet.")]
+    assert [m["replaces"] for m in store.match_page(turns("recording", mm), turns("page", mm, first=1))] == [[1], [2]]
+    # one recording turn the page split at a pause still takes both pieces, though the next starts 0.5 s after
+    recs = turns("recording", [(10.2, 13.5, "Yeah, it was good, kind of quiet."), (14.0, 15.0, "Mm, yes.")])
+    split = turns("page", [(10.2, 11.2, "Yeah, it was good,"), (12.0, 13.5, "kind of quiet.")], first=1)
+    assert [m["replaces"] for m in store.match_page(recs, split)] == [[1, 2], []]
+    # none overlapping: the nearer within slack, the earlier on a tie; another session's never
+    near = turns("page", [(11.9, 12.0, "Hm.")])                     # 0.4 s after turn 0, 0.1 s before turn 1
+    assert [m["replaces"] for m in store.match_page(turns("recording", mm), near)] == [[], [0]]
+    halves = turns("recording", [(10.0, 11.5, "One."), (12.5, 13.5, "Two.")])
+    tie = turns("page", [(12.0, 12.0, "Hm.")])                       # 0.5 s from each
+    assert [m["replaces"] for m in store.match_page(halves, tie)] == [[0], []]
+    other = turns("recording", mm, live_id="s2")
+    assert [m["replaces"] for m in store.match_page(other, turns("page", mm, first=1))] == [[], []]
+
+
+def test_with_no_session_clock_words_match_in_order_whole_and_exact_first():
+    texts = ["Yeah, I went to the park today.", "Yeah."]
+    recs = turns("recording", [(10.0 + 10 * k, 11.5 + 9 * k, t) for k, t in enumerate(texts)])
+    page = turns("page", [(None, None, t) for t in texts], first=1)
+    assert [m["replaces"] for m in store.match_page(recs, page)] == [[1], [2]]          # "Yeah." is turn 1's
+    # never back before the previous page turn's match: a later "Sure." is not the earlier "Sure, I went."
+    recs = turns("recording", [(10.0, 11.0, "Sure, I went."), (20.0, 21.0, "Okay, sure.")])
+    page = turns("page", [(None, None, "Okay, sure."), (None, None, "Sure.")], first=1)
+    assert [m["replaces"] for m in store.match_page(recs, page)] == [[], [1, 2]]
+    # whole words: "Art." is not in "a party"
+    recs = turns("recording", [(10.0, 11.0, "We went to a party.")])
+    assert store.match_page(recs, turns("page", [(None, None, "Art.")]))[0]["replaces"] == []
+
+
+# The replay kept "Okay. So what were we talking about?" as one turn; the page split "Okay." off it (no session clock
+# yet: said before the guide's first transcript delta). Minutes later the listener says "Okay." alone.
+SPLIT_RECS = [(2.0, 5.5, "Okay. So what were we talking about?"), (9.0, 11.0, "Right, the herons."),
+              (30.0, 30.4, "Okay.")]
+
+
+def test_a_split_off_reply_stays_with_its_own_turn_not_a_later_identical_one():
+    recs = turns("recording", SPLIT_RECS)
+    page = [(None, None, "Okay."), (None, None, "So what were we talking about?"), (None, None, "Right, the herons."),
+            (30.05, 30.45, "Okay.")]
+    # an exact "Okay." far on is chance; and once the first jumped there, the two between were searched after it: lost
+    assert [m["replaces"] for m in store.match_page(recs, turns("page", page, first=1))] == [[1, 2], [3], [4]]
+    page[1] = (3.6, 5.5, "So what were we talking about?")       # the guide's quiet "Mm." split it on the page only
+    assert [m["replaces"] for m in store.match_page(recs, turns("page", page, first=1))] == [[1, 2], [3], [4]]
+
+
 def test_wait_turn_waits_for_the_line_to_land(tmp_path):
     clock = {"t": 0.0}
 
@@ -122,6 +181,8 @@ def test_marks(tmp_path):
     assert m == {"t": "2026-11-21T12:00:00", "secs": 64.25, "text": "lost them here"}
     assert store.marks(tmp_path, STEM) == [m]
     assert store.stems(tmp_path) == []                           # a marks file is not a conversation
+    store.add_mark(tmp_path, "intro-20261121-101000", 3, "early")
+    assert store.marked(tmp_path) == ["intro-20261121-101000", STEM]
     for bad in ("", "   "):
         with pytest.raises(ValueError):
             store.add_mark(tmp_path, STEM, 1, bad)
@@ -157,7 +218,8 @@ def test_the_norm_reads_only_the_newest_conversations_it_needs(tmp_path, monkeyp
                              now=datetime(2026, 11, 1 + k, 10, 0, 10 + j * 10))
     read = []
     real = store.records
-    monkeypatch.setattr(store, "records", lambda listener, stem: read.append(stem) or real(listener, stem))
+    monkeypatch.setattr(store, "records",
+                        lambda listener, stem, source=None: read.append(stem) or real(listener, stem, source))
     got = store.recent(tmp_path, "page", 4, 3)
     assert read == ["20261104-100000", "20261103-100000", "20261102-100000"]     # 3 + 3 >= 4, then one more
     assert [r["live_id"] for r in got] == ["s1"] * 3 + ["s2"] * 3 + ["s3"] * 3
@@ -165,3 +227,51 @@ def test_the_norm_reads_only_the_newest_conversations_it_needs(tmp_path, monkeyp
     r = live.record_line(tmp_path, "20261105-100000", part="guide", live_id="s4", text="Fine thanks then.",
                          sig=page_sig(0), cfg=cfg, now=datetime(2026, 11, 5, 10, 0, 10))
     assert r["norm_turns"] == 4 and r["norm"]["words"] == 10
+
+
+def test_a_replay_never_takes_page_turns_from_the_page_norm(tmp_path):
+    ten = " ".join(["word"] * 10) + "."
+    for k in range(4):
+        live.record_line(tmp_path, STEM, part="guide", live_id="s1", text=ten, sig=page_sig(k), cfg={},
+                         now=at(10 + k * 10))
+    S = record.settings({})
+    recs = [record.build({"start_s": 10.1 + k * 10, "end_s": 12.9 + k * 10, "gap_ms": 650}, ten, stem=STEM,
+                         part="guide", source="recording", turn=k, live_id="s1",
+                         t=f"2026-11-21T10:15:{10 + k * 10}.100", S=S) for k in range(4)]
+    matched = store.match_page(recs, store.records(tmp_path, STEM))
+    assert [m["replaces"] for m in matched] == [[0], [1], [2], [3]]
+    store.write_recordings(tmp_path, STEM, matched)
+    assert {r["source"] for r in store.records(tmp_path, STEM)} == {"recording"}    # shown: the recording
+    assert store.latest(tmp_path, STEM)["turn"] == 3                    # the page's own last turn (wait_turn)
+    later = "20261121-110000"
+    r = live.record_line(tmp_path, later, part="guide", live_id="s2", text="Fine.", sig=page_sig(0, speak_ms=260),
+                         cfg={}, now=datetime(2026, 11, 21, 11, 0, 5))
+    assert r["norm_turns"] == 4 and r["norm"]["words"] == 10 and "words" in r["mention"]
+    assert [x["stem"] for x in store.visit(tmp_path, "page")] == [STEM] * 4 + [later]    # the report's page norm
+    assert len(store.visit(tmp_path)) == 5                       # 4 recording records and the later page turn
+
+
+def test_a_replay_write_into_a_replaced_folder_leaves_nothing(tmp_path):
+    lst = tmp_path / "t-x"
+    lst.mkdir()
+    rec = {"source": "recording", "turn": 0, "t": "2026-11-21T10:15:01"}
+    asked = []
+
+    def replaced_once_written():            # the folder is replaced after the new file is written
+        asked.append(1)
+        return len(asked) < 2
+    with pytest.raises(FileNotFoundError):
+        store.write_recordings(lst, STEM, [rec], still=replaced_once_written)
+    assert len(asked) == 2 and list(lst.iterdir()) == []         # no file, no .tmp, no empty signals/
+    with pytest.raises(FileNotFoundError):                       # replaced before: nothing made at all
+        store.write_recordings(lst, STEM, [rec], still=lambda: False)
+    assert list(lst.iterdir()) == []
+    store.append(lst, STEM, {"source": "page", "turn": 0})
+    before = store.path(lst, STEM).read_text()
+    asked.clear()
+    with pytest.raises(FileNotFoundError):
+        store.write_recordings(lst, STEM, [rec], still=replaced_once_written)
+    assert store.path(lst, STEM).read_text() == before and [p.name for p in store.folder(lst).iterdir()] == \
+        [f"{STEM}.jsonl"]
+    store.write_recordings(lst, STEM, [rec], still=lambda: True)
+    assert [r["source"] for r in store.rows(lst, STEM)] == ["page", "recording"]

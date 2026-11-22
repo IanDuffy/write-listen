@@ -98,7 +98,10 @@ threshold: "Their last turn: nothing outside their norm." Thresholds are the pla
   split into two lines by the transcript's timing) gets no pause before answering, as the replay would give it; a
   resume after a rest starts a new session, so its first turn is not timed from the guide's last words before the
   rest; and a sound under the guide (a laugh, an "mm", an echo of the guide on a loudspeaker) never stands in for the
-  answer or reads as a cut-in.
+  answer or reads as a cut-in. Of a line's voiced parts the page keeps the one the replay would give the line's text
+  to (nearest the speech end the line implies, the replay's cost), so the two agree on which sound is the answer.
+  The page decides one line at a time at the nominal 2.5 s lag, where the replay fits each session's lag, so turns
+  whose transcript runs far from that lag can still differ; the report's "Page against recording" shows where.
 - **A replay hides page records only from view.** Where a recording record replaces page turns, the timeline shows
   the recording's; the page norm still counts the page turns, so a later page turn keeps the norm (and the note)
   the earpiece was given, and the timeline shows that note.
@@ -166,9 +169,17 @@ pairs were the same bug), all fixed with regression tests, each fix checked agai
 - On the timeline: lines with no record stopped later turns linking to theirs; a later line could be linked to an
   earlier turn.
 
-Before committing, `tests/live`, `tests/demo` and `tests/signals` were run together; two page tests that failed
-once under load (other work sharing the four CPUs) pass alone, three times running, and never reach signals code
-with the flags off.
+Two more rounds checked the fixes themselves, each finding again confirmed by a skeptic before it was fixed: the
+page's choice of which sound is the answer (first "the most voiced", which let a laugh beat a short "yeah"; now the
+replay's own rule, checked against the replay in 41 scenarios and a sweep of transcript timings), a whisper's fate
+mark lost when zoomed in, two turns under a second apart paired wrongly in the page-against-recording comparison, and
+that comparison calling a measured recording "missing" when the replay heard no turn in it (now it says the mic may
+be too quiet for `signals.recording.min_rms`).
+
+`tests/live`, `tests/demo`, `tests/signals` and the server tests were run together twice (943 tests). Each time
+one or two page tests that wait on timers failed under load (review agents were sharing the four CPUs); each passes
+alone three times running, and with the flags off none of them reaches signals code. The known root-container
+failure in `tests/demo/test_hosting.py` is unrelated.
 
 ## Tests
 

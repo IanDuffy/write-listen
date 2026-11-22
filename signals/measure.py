@@ -403,14 +403,29 @@ def run(listener: Path, cfg: dict, *, force: bool = False, now: float | None = N
     together in time order (the norm carries across the visit), then matched to that conversation's page records
     (store.match_page). A conversation whose transcript changed in the last five minutes is left alone unless
     force: it may still be live, and the page may be appending to its records. Returns
-    {conversations: [info...], written: [stems], records: n}."""
+    {conversations: [info...], written: [stems], records: n}, and gone: "reset" or "deleted" when the folder was
+    replaced or removed mid-run (a tester's reset or delete from /admin): it stops there and writes nothing more,
+    so the old visit's records never land in the new folder."""
     listener = Path(listener)
     S, R = record.settings(cfg), settings(cfg)
     now = time.time() if now is None else now
     pool: dict[str, list[dict]] = {}
     write: list[str] = []
     infos = []
+    out = {"listener": str(listener), "conversations": infos, "written": [], "records": 0}
+
+    def gone() -> dict:
+        return {**out, "gone": "reset" if listener.is_dir() else "deleted"}
+    try:
+        ident = fetch._ident(listener)
+    except fetch.Gone:
+        return gone()
+
+    def still() -> bool:
+        return fetch._still(listener, ident)
     for conv in fetch.conversations(listener):
+        if not still():                          # measuring takes minutes: nothing more from a new folder
+            return gone()
         stem = conv["stem"]
         try:
             recent = now - conv["path"].stat().st_mtime < RECENT_SECS
@@ -433,12 +448,15 @@ def run(listener: Path, cfg: dict, *, force: bool = False, now: float | None = N
     by: dict[str, list[dict]] = {}
     for r in placed:
         by.setdefault(r["stem"], []).append(r)
-    n = 0
     for stem in write:
-        page = store.merged([r for r in store.rows(listener, stem) if r.get("source") == "page"])
+        if not still():
+            return gone()
+        page = store.records(listener, stem, "page")
         recs = store.match_page(sorted(by.get(stem, []), key=lambda r: r["turn"]), page)
-        if not listener.is_dir():                 # a tester reset meanwhile: write nothing
-            break
-        store.write_recordings(listener, stem, recs)
-        n += len(recs)
-    return {"listener": str(listener), "conversations": infos, "written": write, "records": n}
+        try:
+            store.write_recordings(listener, stem, recs, still=still)
+        except FileNotFoundError:                 # reset or deleted as it wrote
+            return gone()
+        out["written"].append(stem)
+        out["records"] += len(recs)
+    return out

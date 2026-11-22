@@ -13,8 +13,9 @@
 
 Guarded like every admin route: demo/routes.py's guard, called inline first (as a Depends it would run in a copied
 context, and "own" could resolve to the folder of a tester whose cookie Ian's browser carries). Every record is
-placed against the whole visit (record.annotate over store.visit), so the norm carries from the intro into the
-guide and the debrief. A record sits on an axis at its GPT-Live session's start (the transcript's session row for
+placed against the whole visit (annotated(): record.annotate over each source's records), so the norm carries from the
+intro into the guide and the debrief, and a page record shows the norm it was given live even after a replay hid
+the page turns it was built from. A record sits on an axis at its GPT-Live session's start (the transcript's session row for
 its live_id: 1 s resolution, written as OpenAI answers, a moment before the media connects) plus its start_s, or
 at its own wall time when it has no session clock.
 """
@@ -38,8 +39,12 @@ from . import record, store
 PAGE = ROOT / "page" / "admin_signals.html"
 AUDIO_TYPES = {".wav": "audio/wav", ".mp3": "audio/mpeg"}
 READING_GAP_S = 30      # paragraphs read closer together than this are one stretch of the chapter
-LINK_SKIP = 8           # a turn's first line is at most this many listener lines past the last turn's
+LINK_SKIP = 8           # a turn's first line is at most this many listener lines past the earliest it could be
 LINK_EARLY_S = 5        # a line is written when it ends: never this long before its turn began
+# ... and at most this long after its turn ended: the replay gives a turn rows up to lag_s + lag_search's top +
+# max_off_s after it (signals.recording: 2.5 + 4 + 6 s), and a record's session zero is a whole second, written a
+# moment before the recording starts. A page turn's rows come a few seconds after it.
+LINK_LATE_S = 15
 
 
 class Mark(BaseModel):
@@ -171,13 +176,28 @@ def _placed(recs: list[dict], anchors: dict, t0: datetime | None) -> list[dict]:
     return out
 
 
+def _piece(line: str, text: str) -> bool:
+    """Is `line` one of the pieces record.join made `text` from? Found where a piece starts (the text's start, after
+    a space, or a piece opening with a tag's close) and ends (the text's end, a space, or the next piece's "]")."""
+    i = text.find(line)
+    while i >= 0:
+        e = i + len(line)
+        if (i == 0 or text[i - 1].isspace() or line.startswith("]")) \
+                and (e == len(text) or text[e].isspace() or text[e] == "]"):
+            return True
+        i = text.find(line, i + 1)
+    return False
+
+
 def _belongs(line: str, text: str) -> bool:
-    """Is this transcript line part of the turn whose joined text is `text`? Its words in order, or the line itself
-    (a tag split across lines, "[inhale" then "]Yeah", has no words of its own)."""
+    """Is this transcript line part of the turn whose joined text is `text`? Its words in order, as whole words ("no"
+    is not in "know"), or the line itself as one of the text's pieces: a tag split across lines ("[inhale" then
+    "]Yeah", "[tongue" "click" "]so") leaves pieces with no words outside the tag."""
     line = (line or "").strip()
     if not line:
         return False
-    if line in (text or ""):
+    text = text or ""
+    if _piece(line, text):
         return True
     p = record.plain(line)
     return bool(p) and f" {p} " in f" {record.plain(text)} "
@@ -188,14 +208,26 @@ def link(recs: list[dict], items: list[dict]) -> None:
     time order: a turn's lines are the rows the page posted for it, so their words are in the record's text."""
     lines = [x for x in items if x.get("kind") == "line" and x.get("who") == "listener"]
 
+    def early(r: dict, x: dict) -> bool:
+        return r.get("secs") is not None and x.get("secs") is not None and x["secs"] < r["secs"] - LINK_EARLY_S
+
     def fits(r: dict, x: dict) -> bool:
-        if r.get("secs") is not None and x.get("secs") is not None and x["secs"] < r["secs"] - LINK_EARLY_S:
+        if early(r, x):
+            return False
+        # A later line with the same words is another turn's, one with no record of its own (typed, or a quiet
+        # "Yeah" the replay matched to no sound). Only a record that knows its length has an end to count from.
+        if r.get("end_secs") is not None and _num(r.get("dur_ms")) and x.get("secs") is not None \
+                and x["secs"] > r["end_secs"] + LINK_LATE_S:
             return False
         return _belongs(x.get("text"), r.get("text") or "")
 
     k = 0
     for ri, r in enumerate(recs):
         nxt = recs[ri + 1] if ri + 1 < len(recs) else None
+        # Lines too early for this turn are too early for every later one: step past them, or a run of lines with
+        # no record (a GPT-Live session with no recording) would fill the window and stop every later turn linking.
+        while k < len(lines) and early(r, lines[k]):
+            k += 1
         j = next((j for j in range(k, min(len(lines), k + LINK_SKIP)) if fits(r, lines[j])), None)
         if j is None:
             continue
@@ -217,7 +249,7 @@ def _look(x: dict, to_secs) -> dict:
     return {"id": x.get("id"), "secs": at, "asked_secs": None if at is None else at - round((x.get("ms") or 0) / 1000),
             "trigger": x.get("trigger"),
             "speaking": x.get("speaking"), "error": x.get("error"), "read": x.get("read"), "next": x.get("next"),
-            "note": x.get("note"), "note_kind": x.get("note_kind"), "about": x.get("about"),
+            "note": x.get("note"), "note_kind": x.get("note_kind"), "about": x.get("about"), "heard": x.get("heard"),
             "fate": None if not f else {"fate": f.get("fate"), "reason": f.get("reason"), "detail": f.get("detail"),
                                         "held_secs": f.get("held_secs"), "inferred": f.get("inferred"),
                                         "secs": to_secs(f.get("t"))},
@@ -261,12 +293,21 @@ def conversations(folder: Path) -> list[dict]:
     return sorted(out, key=lambda c: (c["started"] or "", c["stem"]), reverse=True)
 
 
+def annotated(folder: Path, S: dict) -> list[dict]:
+    """Every record as shown (a replay's recording record in place of the page turns it covers, store.merged), each
+    placed against the earlier records of its own source with none hidden: the page norm counts the page turns a
+    replay replaced, as signals/live.py did when it told the earpiece, so the note shown is the note it had."""
+    by = {(r.get("stem"), src, r.get("turn")): r
+          for src in record.SOURCES for r in record.annotate(store.visit(folder, src), S)}
+    return [by.get((r.get("stem"), r.get("source"), r.get("turn")), r) for r in store.visit(folder)]
+
+
 def conversation(folder: Path, lid: str, stem: str, S: dict) -> dict:
     """One conversation on its own axis. Raises FileNotFoundError when it has neither a transcript nor records."""
     rows = _rows(transcript_path(folder, stem))
     if not rows and not store.path(folder, stem).is_file():
         raise FileNotFoundError(stem)
-    every = record.annotate(store.visit(folder), S)
+    every = annotated(folder, S)
     mine = [r for r in every if r.get("stem") == stem]
     t0 = _zero(rows, mine)
     to_secs = _axis(t0)
@@ -325,7 +366,7 @@ def _reading(folder: Path, anchors: dict, t0: datetime) -> list[dict]:
 def whole_visit(folder: Path, lid: str, name: str | None, S: dict) -> dict:
     """The visit (demo/visit.py's parts, lines and events) with every record, mark and look on one axis."""
     v = visit.read(folder, name)
-    every = record.annotate(store.visit(folder), S)
+    every = annotated(folder, S)
     convs = _conversation_rows(folder)
     for p in EH._files(folder):          # the library's sessions are parts of the visit too (no records)
         convs.setdefault(p.stem, EH._rows(p))
