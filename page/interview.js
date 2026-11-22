@@ -27,6 +27,7 @@
   // page/speaker.js: on Android a headset connected after the Speakerphone switch puts a new mic track in the
   // stream (the one the tap opened); it is sent in the old one's place.
   if (window.Speaker && Speaker.follow) Speaker.follow((from, to, stream) => {
+    if (I.sig && I.stream === stream) I.sig.input(stream, I.ctx);  // measured from the new track
     if (!I.pc || I.stream !== stream || !I.pc.getSenders) return;
     for (const sd of I.pc.getSenders()) if (sd.track === from && sd.replaceTrack) sd.replaceTrack(to).catch(() => {});
   });
@@ -105,6 +106,26 @@
     return Math.sqrt(s / I.buf.length);
   }
 
+  // How their turns sounded (page/sig.js, served above this file only when the settings carry `signals`): the mic and
+  // the voice sampled every tick_ms, and each of their lines posted with its turn's measures so far. A turn: their
+  // lines within merge_ms of each other with no line of the voice between. Without `signals` none of this runs.
+  function measure() {
+    if (I.sigTimer) { clearInterval(I.sigTimer); I.sigTimer = null; }
+    I.sig = I.S.signals && window.Sig ? new Sig.Meter(I.S.signals) : null;
+    if (!I.sig) return;
+    I.sig.input(I.stream, I.ctx);
+    if (I.remote) I.sig.output(I.remote, I.ctx);
+    I.sigTimer = setInterval(() => {
+      const t = I.stream && I.stream.getAudioTracks()[0];
+      I.sig.tick(now(), !t || !t.enabled || t.readyState === "ended");
+    }, I.S.signals.tick_ms || 20);
+  }
+  function sigLine(body, start, end) {
+    if (!I.sig) return body;
+    const same = I.sig.turns.rule(start, end);
+    return { ...body, live_id: I.liveId, sig: I.sig.line(start, end, same, true, I.liveId, now()) };
+  }
+
   // --- start ---------------------------------------------------------------------------------------------
   function fresh(mode, opts) {
     Object.assign(I, { mode, opts, stream: opts.stream || null, connecting: true, started: false, startedAt: 0,
@@ -112,6 +133,8 @@
       backend: { model: null, input: 0, output: 0, cached: 0 }, calls: new Set(), pending: null, name: null,
       act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, farewellAt: 0, said: 0,
       graceAt: 0, graceAct: null, stateNow: null, hang: null, noteAt: 0, noteKind: null, handHeld: false });
+    if (I.sigTimer) { clearInterval(I.sigTimer); I.sigTimer = null; }
+    I.sig = null; I.remote = null;
   }
 
   async function start(mode, opts = {}) {
@@ -128,6 +151,8 @@
       const p = voice.play();
       if (p && p.then) p.then(() => Speaker.playing(e.streams[0]), () => {});  // page/speaker.js
       meter(e.streams[0]);
+      I.remote = e.streams[0];
+      if (I.sig) I.sig.output(I.remote, I.ctx);
     };
     const track = I.stream && Speaker.hold(I.stream.getAudioTracks()[0]);  // page/speaker.js (served above this file)
     if (track) { track.enabled = true; pc.addTrack(track, I.stream); }
@@ -144,6 +169,7 @@
       sid = got.sid;
       if (gone()) throw new Error(GONE);
       Object.assign(I, { sid, liveId: got.live_id, notes: got.notes || {}, S: got.settings || {}, next: got.next || null });
+      measure();
       await pc.setRemoteDescription({ type: "answer", sdp: got.sdp });
       const ok = await until(() => I.started || gone(), I.S.start_timeout_ms || 10000);
       if (gone()) throw new Error(GONE);
@@ -152,6 +178,7 @@
       try { pc.close(); } catch (e) { /* closed */ }
       if (sid) quiet("/api/interview/end", { sid, how: gone() ? "abandoned" : "failed" });
       if (gone()) return false;  // a newer start or end owns the state now
+      if (I.sigTimer) { clearInterval(I.sigTimer); I.sigTimer = null; }
       I.pc = null; I.dc = null; I.sid = null; I.connecting = false;
       state("closed");
       if (opts.onDone) opts.onDone({ ok: false, how: "failed", error: err.message });
@@ -175,6 +202,7 @@
         const d = (m.delta || "").replace(/\[[^\]]*\]\s*/g, "");
         I.spokeAt = now(); I.spoken = true;
         I.out += d; I.outAt = now();
+        if (I.sig) I.sig.heard(I.liveId, I.outAt, m.end_ms);  // the session's clock, which its recording runs on
         // The handover's words, as they are said: the page calls the tool itself at once (the voice rarely
         // does), so the next part is being got ready while the sentence ends. Waiting for the line to end and
         // then for a tool call that never came was 4.4 s of silence (Ian's run).
@@ -184,7 +212,9 @@
         }
         break;
       }
-      case "session.input_transcript.delta": I.inp += m.delta || ""; I.inAt = I.heardAt = now(); break;
+      case "session.input_transcript.delta":
+        if (I.sig && !I.inp) I.inStart = now();
+        I.inp += m.delta || ""; I.inAt = I.heardAt = now(); break;
       case "response.event": backend(m.event || {}); break;
       case "session.usage.updated": if (m.usage && m.usage.seconds != null) I.seconds = m.usage.seconds; break;
       case "session.closed":
@@ -305,11 +335,11 @@
     const t = now(), S = I.S, lineQuiet = S.line_quiet_ms || 900;
     if (I.inp && t - I.inAt > lineQuiet) {
       const text = I.inp.trim(); I.inp = "";
-      if (text) { I.lastThemAt = t; quiet("/api/interview/line", { sid: I.sid, who: "in", text }); }
+      if (text) { I.lastThemAt = t; quiet("/api/interview/line", sigLine({ sid: I.sid, who: "in", text }, I.inStart || I.inAt, I.inAt)); }
     }
     if (I.out && t - I.outAt > lineQuiet) {
       const text = I.out.trim(); I.out = "";
-      if (text) { quiet("/api/interview/line", { sid: I.sid, who: "out", text }); lineSaid(text, t); }
+      if (text) { quiet("/api/interview/line", { sid: I.sid, who: "out", text }); lineSaid(text, t); if (I.sig) I.sig.turns.other(t); }
     }
     const lv = level();
     const speaking = lv > (S.speaking_level || 0.02) || t - I.spokeAt < 500;
@@ -395,6 +425,7 @@
   async function close(how) {
     if (!I.sid || I.closing) return;
     I.closing = true; I.pending = null;
+    if (I.sigTimer) { clearInterval(I.sigTimer); I.sigTimer = null; }
     send("session.close");
     const sid = I.sid, pc = I.pc, usage = usageBody(sid), held = heldLines();
     I.pc = null; I.dc = null; I.sid = null;

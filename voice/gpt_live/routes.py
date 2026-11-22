@@ -11,9 +11,13 @@
     POST /api/live/resume    {"session", "sdp"}: the same conversation in a new GPT-Live session (the old
                               one dropped, rested too long, or neared its time limit), told the conversation so far
     POST /api/live/tool       {"session", "name", "args"}: a tool the backend called, run in the conversation
-    POST /api/live/line       {"session", "who", "text", ...}: a line for the transcript
+    POST /api/live/line       {"session", "who", "text", "live_id"?, "sig"?}: a line for the transcript. `sig`: how a
+                              spoken listener line sounded (page/sig.js), sent only while the page measures
+                              (signals.record.live_on); kept as a turn record in signals/<session>.jsonl
+                              (signals/live.py), never in the transcript
     POST /api/live/usage      {"session", "live_id", "seconds", "backend"}: a session's cost, when it ends
-    POST /api/live/direct     {"session", "id", "trigger", "speaking", "silence_ms", "last_who", "recent", "page"}:
+    POST /api/live/direct     {"session", "id", "trigger", "speaking", "silence_ms", "last_who", "recent", "page",
+                              "sig_turn"?}:
                               one look by the earpiece (voice/gpt_live/director.py; Ian, 2026-11-19): {"id", "read",
                               "plan", "next", "changed", "kind", "about", "note", "ms", "cost_usd"}; on any failure
                               no whisper (changed false, note and kind null) and an "error"
@@ -52,6 +56,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from faststart import base as fast_base
+from signals import live as signals_live
+from signals import record as signals_record
 from stages import common, guide
 from stages.common import ROOT, Run, StageError
 
@@ -88,6 +94,7 @@ class Line(BaseModel):
     who: str
     text: str = ""
     live_id: str | None = None
+    sig: dict | None = None       # Listener Signals: the page's measures of a spoken listener line (page/sig.js)
 
 
 class Direct(BaseModel):
@@ -99,6 +106,7 @@ class Direct(BaseModel):
     last_who: str | None = None   # whose line ended last: guide or listener
     recent: list[dict] = []       # the page's last few lines ({who, text}): any the transcript lacks yet are added
     page: dict = {}               # {seconds, explained, started, turns}: what the page knows of the conversation
+    sig_turn: int | None = None   # the listener's latest turn the page measured (Listener Signals), while it measures
 
 
 class Fate(BaseModel):
@@ -155,16 +163,21 @@ class Read(At):
 
 
 LINE_WHO = ("listener", "guide", "page", "event")
+SIGNALS_LOCK = threading.Lock()
 
 
 def page_settings(cfg: dict) -> dict:
-    return {**cfg["live"]["page"], "notes": live_session.notes(), "restart_bands_secs": cfg["live"]["restart_bands_secs"],
-            "opening": str(cfg["live"].get("opening") or "").strip(),
-            # the earpiece's page side (live.director): off, today's cues. Never the panel's flag ("view"): the page
-            # learns that per listener from /api/live/start, so a friend's page never sees it
-            "director": {k: v for k, v in live_director.settings(cfg).items() if k != "view"},
-            # the local listener's settings (page/wake.js): voice.wake, with live.page.wake over them
-            "wake": {**((cfg.get("voice") or {}).get("wake") or {}), **(cfg["live"]["page"].get("wake") or {})}}
+    out = {**cfg["live"]["page"], "notes": live_session.notes(), "restart_bands_secs": cfg["live"]["restart_bands_secs"],
+           "opening": str(cfg["live"].get("opening") or "").strip(),
+           # the earpiece's page side (live.director): off, today's cues. Never the panel's flag ("view"): the page
+           # learns that per listener from /api/live/start, so a friend's page never sees it
+           "director": {k: v for k, v in live_director.settings(cfg).items() if k != "view"},
+           # the local listener's settings (page/wake.js): voice.wake, with live.page.wake over them
+           "wake": {**((cfg.get("voice") or {}).get("wake") or {}), **(cfg["live"]["page"].get("wake") or {})}}
+    sig = common.sig_settings(cfg)
+    if sig is not None:  # Listener Signals (page/sig.js): only while the page measures; absent, nothing of it runs
+        out["signals"] = sig
+    return out
 
 
 def continuing(cfg: dict, pipe) -> dict | None:
@@ -290,6 +303,7 @@ def mount(app, cfg: dict, pipe, chat) -> None:
     @app.get("/live.js")
     def live_js() -> Response:
         text = LIVE_JS.read_text(encoding="utf-8").replace("__LIVE_SETTINGS__", json.dumps(page_settings(cfg)))
+        text = common.with_sig(text, cfg)  # page/sig.js, only while the page measures (Listener Signals)
         text = common.with_speaker(text, cfg)  # page/speaker.js: the voice on a phone's loudspeaker
         return Response(text, media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
@@ -410,6 +424,16 @@ def mount(app, cfg: dict, pipe, chat) -> None:
             session = chat.current(req.session)
             if req.text.strip() and req.who in LINE_WHO:
                 session.record(req.who, text=req.text.strip(), mode="live")
+        if req.who == "listener" and req.sig and req.text.strip() and signals_record.live_on(cfg):
+            # How the line sounded, as a turn record beside the transcript (never in it); a failure here never
+            # costs the line. The session pins its listener's folder (the thread may serve anyone next).
+            live_id = req.live_id or (session.__dict__.get("live_ids") or [None])[-1]
+            try:
+                with SIGNALS_LOCK:  # a turn's lines join their text: one at a time
+                    signals_live.record_line(common.listener_dir(session.cfg), session.id, part="guide",
+                                             live_id=live_id, text=req.text, sig=req.sig, cfg=cfg)
+            except Exception as e:  # noqa: BLE001
+                print(f"  signals: the line's record failed: {type(e).__name__}: {e}")
         return {"ok": True}
 
     @app.post("/api/live/direct")

@@ -9,9 +9,12 @@ ends), {{last_who}} and {{silence_secs}} (whose line ended last, "listener" or "
 listener), {{started}} (yes once start_chapter returned a chapter), {{profile}} (guide.Session.values identity and
 profile), {{plan}} (its plan from its last look, one numbered line per item with its state, or a first-look line),
 {{last_read}} (its read from its last look), {{notes}} (its whispers so far with times and kinds, and the app's
-clear at the start), {{transcript}} (guide, listener, app notes and tools, timestamped m:ss) and {{longest}} (the
-listener's longest line so far, in words; director.look). Every one must be supplied. Ian, 2026-11-19, and the blind
-judge of the v3 replay: see prompts/live_director.md.
+clear at the start), {{transcript}} (guide, listener, app notes and tools, timestamped m:ss), {{longest}} (the
+listener's longest line so far, in words; director.look) and {{signals}} (behind live.director.signals: a
+<listener_signals> block with one line of measurements of the listener's latest turn against their own norm,
+signals.record.note, between blank lines; an empty string otherwise, so the look is as it was). Every one must be
+supplied. Ian, 2026-11-19, and the blind judge of the v3 replay: see prompts/live_director.md. Listener Signals:
+Ian's build plan, 2026-11-21.
 ---
 <state>
 Elapsed: {{elapsed}}. You are looking because: {{trigger}}.
@@ -41,5 +44,5 @@ The listener's longest line so far: {{longest}} words.
 <transcript>
 {{transcript}}
 </transcript>
-
+{{signals}}
 Update your plan, then decide whether to whisper.

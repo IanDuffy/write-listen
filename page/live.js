@@ -123,6 +123,24 @@
   const now = () => Date.now();
   function mark(kind, detail) { L.log.push([now(), kind, detail || null]); }
 
+  // Listener Signals (page/sig.js, signals/live.py): while the page measures (S.signals: signals.live, or the earpiece's
+  // live.director.signals) it samples the mic and the guide's voice every tick_ms, and each spoken line of the
+  // listener's goes with how its turn has sounded so far. Without S.signals none of this runs and the posts are as before.
+  L.sig = S.signals && window.Sig ? new Sig.Meter(S.signals) : null;
+  if (L.sig) {
+    L.sigTurn = 0;  // the latest turn measured (Sig.Turns: countLine's turns, a number for each with a spoken line)
+    // The mic counts only while a session hears it: muted, held for the handover or with no session (resting), what
+    // is said there is in no line.
+    setInterval(() => L.sig.tick(now(), L.muted || !!L.hold || !L.pc || !L.mic || !L.mic.enabled), S.signals.tick_ms || 20);
+  }
+  // A spoken line's post, while the page measures: the session it was said in, and its turn's measures so far.
+  function sigLine(body, same, start, end) {
+    if (!L.sig) return body;
+    const sig = L.sig.line(start, end, same, true, L.liveId, now());
+    L.sigTurn = L.sig.turns.n;
+    return { ...body, live_id: L.liveId, sig };
+  }
+
   function note(text, kind = "stage") {
     if (!text) return;
     const p = document.createElement("p");
@@ -413,6 +431,7 @@
     L.dir = { fails: 0, down: false, ctl: null, id: 0, next: null, lines: 0, askedAt: 0, event: null, queued: null,
               turnOpen: false, silenceIx: 0, sentAt: 0, offered: false, offerLook: false };
     L.recent = [];
+    if (L.sig) { L.sig.reset(); L.sigTurn = 0; }
     W.sounds = 0; W.total = 0; W.off = false;
     renderMarkers();
   }
@@ -547,6 +566,7 @@
   function heardGuide(delta, startMs, endMs) {
     const t = now();
     L.spokeAt = t;
+    if (L.sig) L.sig.heard(L.liveId, t, endMs);  // the session's clock, which its recording runs on
     if (L.phase === "reading" && L.feed.cur) return reading(delta, startMs, endMs);
     if (!L.out) L.outFirst = L.outFirst || t;
     L.sessionWord = L.sessionWord || t;  // this session's first word
@@ -613,12 +633,13 @@
       if (text) {
         note("You: " + text, "you");
         L.lastListenerAt = t; L.lineEndAt = Math.max(L.lineEndAt || 0, L.inAt || t);
-        countLine(text, L.inStart || L.inAt, L.inAt);
+        const same = countLine(text, L.inStart || L.inAt, L.inAt);
         remember("listener", text);
         directorLine(true);
         dirEmit("line", { who: "listener", text, began: L.inStart || L.inAt });
         listenerSaid(text, t);
-        if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
+        const body = sigLine({ session: L.session, who: "listener", text }, same, L.inStart || L.inAt, L.inAt);
+        if (L.session) quietPost("/api/live/line", body);
         if (L.aside || L.wait) (L.aside || L.wait).lines.push({ who: "listener", text });
         if (L.aside) L.aside.lastListener = t;
         if (L.wait) L.wait.lastListener = t;
@@ -944,6 +965,7 @@
       recent: L.recent.slice(-8),
       page: { seconds: Math.round((t - (L.convAt || t)) / 1000), explained: !!L.explainedAt,
               started: !!(L.own || L.startCalled), turns: turns().length },
+      ...(L.sig ? { sig_turn: L.sigTurn } : {}),  // the earpiece waits for this turn's record (Listener Signals)
     };
     mark("direct-ask", trigger);
     dirEmit("ask", { id, trigger, speaking: body.speaking, silence_ms: body.silence_ms, last_who: body.last_who, page: body.page });
@@ -1098,6 +1120,7 @@
     if (same) L.turnWords[last] += n;
     else L.turnWords = L.turnWords.concat([n]).slice(-50);
     L.turnEnd = end;
+    return same;  // the same turn (Listener Signals numbers turns by this too)
   }
   function turns() { return L.turnWords.filter((n) => n > 0); }
 
@@ -2519,8 +2542,8 @@
         return a;
       } catch (e) { return null; }
     },
-    input(stream) { this.inp = this.analyser(stream); },
-    output(stream) { this.out = this.analyser(stream); },
+    input(stream) { this.inp = this.analyser(stream); if (L.sig) L.sig.input(stream, this.ctx); },
+    output(stream) { this.out = this.analyser(stream); if (L.sig) L.sig.output(stream, this.ctx); },
     level(a) {
       if (!a) return 0;
       const d = new Uint8Array(a.fftSize);
@@ -2762,7 +2785,8 @@
     if (L.session) quietPost("/api/live/line", { session: L.session, who: "listener", text });
     L.heardAt = L.inAt = L.lastListenerAt = L.lineEndAt = now();  // typed counts as said for every cue
     L.turnEnd = 0;  // a typed line is its own turn: never merged on timing
-    countLine(text);
+    const same = countLine(text);
+    if (L.sig) L.sig.line(0, 0, same, false);  // typed: nothing to measure, but it ends the turn before it
     remember("listener", text);
     directorLine(true);
     dirEmit("line", { who: "listener", text, typed: true, began: now() });

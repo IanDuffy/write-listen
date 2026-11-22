@@ -84,8 +84,14 @@ def _read(p: Path) -> list[dict]:
     return out
 
 
+def _ensure(p: Path) -> None:
+    """signals/ inside the listener folder, never the listener folder itself: a tester reset or deleted while a
+    line or a replay is in flight must stay gone (FileNotFoundError, which the callers catch)."""
+    p.parent.mkdir(exist_ok=True)
+
+
 def _write(p: Path, recs: list[dict]) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _ensure(p)
     tmp = p.with_name(f".{p.name}.{os.getpid()}.tmp")
     tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs), encoding="utf-8")
     os.replace(tmp, p)
@@ -94,7 +100,7 @@ def _write(p: Path, recs: list[dict]) -> None:
 def append(listener: Path, stem: str, rec: dict) -> None:
     p = path(listener, stem)
     with _lock(p):
-        p.parent.mkdir(parents=True, exist_ok=True)
+        _ensure(p)
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -126,12 +132,17 @@ def records(listener: Path, stem: str) -> list[dict]:
     return merged(rows(listener, stem))
 
 
+def started(stem: str) -> str:
+    """The stem's start time, for ordering: intro-, debrief- and guide stems sort together by when they began."""
+    return stem.split("-", 1)[1] if stem.startswith(("intro-", "debrief-")) else stem
+
+
 def stems(listener: Path) -> list[str]:
     """The conversations with a records file, oldest first."""
     d = folder(listener)
     if not d.is_dir():
         return []
-    return sorted(p.stem for p in d.glob("*.jsonl") if valid_stem(p.stem))
+    return sorted((p.stem for p in d.glob("*.jsonl") if valid_stem(p.stem)), key=lambda s: (started(s), s))
 
 
 def visit(listener: Path, source: str | None = None) -> list[dict]:
@@ -139,6 +150,21 @@ def visit(listener: Path, source: str | None = None) -> list[dict]:
     out = [r for s in stems(listener) for r in records(listener, s)]
     if source:
         out = [r for r in out if r.get("source") == source]
+    return sorted(out, key=_order)
+
+
+def recent(listener: Path, source: str, enough: int, min_words: int) -> list[dict]:
+    """The newest records of one source, in time order: conversations read newest first until `enough` turns of
+    min_words or more are in, then one more conversation (a conversation can run past the next one's start).
+    What record.place reads (the norm's latest norm_turns, the trend's last two), without every file each time."""
+    out, n, extra = [], 0, False
+    for s in reversed(stems(listener)):
+        got = [r for r in records(listener, s) if r.get("source") == source]
+        out += got
+        n += sum(1 for r in got if (r.get("words") or 0) >= min_words)
+        if extra:
+            break
+        extra = n >= enough
     return sorted(out, key=_order)
 
 
@@ -212,7 +238,7 @@ def add_mark(listener: Path, stem: str, secs: float, text: str, t: str | None = 
     with _lock(p):
         if len(_read(p)) >= MARKS_MAX:
             raise ValueError("too many marks")
-        p.parent.mkdir(parents=True, exist_ok=True)
+        _ensure(p)
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps(mark, ensure_ascii=False) + "\n")
     return mark

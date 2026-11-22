@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Signals</title>
+<!--
+  Listener Signals (Ian's build plan, 2026-11-21, "Admin view"), served at /admin/signals by signals/routes.py and
+  guarded there like /admin. ?lid=<tester id or own> lists that listener's conversations; &session=<stem> shows one
+  as a timeline, &session=visit the whole visit (intro, guide, chapter read aloud, debrief) on one axis.
+  One strip per measure, each turn a point drawn as its change from this listener's own norm (the center line;
+  ratios on a log scale, loudness in dB, clipped); hollow on the line before there is a norm. Tags, cut-ins and
+  trailing off on the top edge; the earpiece's looks and whispers (with their fates) on the same axis; Ian's marks
+  as flags (click an empty moment to add one). The transcript underneath: a point and its line select each other.
+  Data: /api/admin/signals/<lid>[/visit|/<stem>]; marks POST /api/admin/signals/<lid>/<stem>/mark; recordings
+  /api/admin/signals/<lid>/audio/<live_id>.
+-->
+<style>
+  :root { --accent: #d9822b; --bg: #fafaf8; --fg: #1d1d1b; --muted: #77756f; --line: #e4e2dc; --warn: #b3412e; --soft: #f1efe9;
+          --intro: #e4ecf4; --guide: #f3eee4; --chapter: #f5dcc2; --debrief: #e3eee1; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151514; --fg: #ecebe6; --muted: #9a988f; --line: #2c2b28; --warn: #e07a66; --soft: #1f1e1c;
+            --intro: #1e2833; --guide: #27231c; --chapter: #3e2b1a; --debrief: #1e2a1e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  a { color: var(--accent); }
+  button, input { font: inherit; color: inherit; }
+  button { padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; }
+  .sub { color: var(--muted); font-size: 13px; }
+  #msg { min-height: 1.4em; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; justify-content: space-between; margin: 8px 0 6px; }
+  .legend { font-size: 12px; color: var(--muted); }
+  .legend i { font-style: normal; color: var(--fg); }
+  .legend i.hit { color: var(--accent); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin: 0 2px 0 6px; }
+  .chart-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; }
+  #chart { display: block; font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; user-select: none; }
+  #chart .bg { fill: transparent; }
+  #chart .strip { fill: var(--soft); fill-opacity: .55; }
+  #chart .norm { stroke: var(--muted); stroke-width: 1; }
+  #chart .grid { stroke: var(--line); stroke-dasharray: 2 3; }
+  #chart .lab { fill: var(--muted); }
+  #chart .pt { fill: var(--fg); cursor: pointer; }
+  #chart .pt.mention { fill: var(--accent); }
+  #chart .pt.hollow { fill: var(--bg); stroke: var(--muted); stroke-width: 1.5; }
+  #chart .pt.sel { stroke: var(--warn); stroke-width: 2.5; }
+  #chart .ev { fill: var(--fg); cursor: pointer; }
+  #chart .ev.sel { fill: var(--warn); font-weight: 600; }
+  #chart .lk { stroke: var(--muted); stroke-width: 2; cursor: pointer; }
+  #chart .lk.err { stroke: var(--warn); stroke-dasharray: 2 2; }
+  #chart .wh { stroke-width: 4; cursor: pointer; stroke: var(--line); }
+  #chart .wh[data-fate=sent], #chart .fd[data-fate=sent] { stroke: var(--accent); fill: var(--accent); }
+  #chart .wh[data-fate=held], #chart .fd[data-fate=held] { stroke: var(--muted); fill: var(--muted); }
+  #chart .wh[data-fate=dropped], #chart .fd[data-fate=dropped] { stroke: var(--warn); fill: var(--warn); }
+  #chart .lk.sel, #chart .wh.sel { stroke: var(--fg); }
+  #chart .flag { fill: var(--warn); cursor: pointer; }
+  #chart .flag.sel { fill: var(--fg); }
+  #chart .flagline { stroke: var(--warn); stroke-dasharray: 3 3; }
+  #chart .flagtext { fill: var(--warn); cursor: pointer; }
+  #chart .pending { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 2; }
+  #chart .sess { stroke: var(--muted); stroke-dasharray: 1 3; }
+  #chart .axis { stroke: var(--line); }
+  #chart .tick { fill: var(--muted); }
+  #chart .band { stroke: none; }
+  #chart .intro { fill: var(--intro); } #chart .guide { fill: var(--guide); } #chart .chapter { fill: var(--chapter); }
+  #chart .debrief { fill: var(--debrief); } #chart .library, #chart .records { fill: var(--soft); }
+  #chart .shade { fill-opacity: .55; }
+  #chart .bandtext { fill: var(--fg); }
+  #chart .chev { fill: var(--accent); }
+  .s-intro { background: var(--intro); } .s-guide { background: var(--guide); } .s-chapter { background: var(--chapter); } .s-debrief { background: var(--debrief); }
+  #markbox { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; }
+  #markbox[hidden] { display: none; }
+  #markbox input { flex: 1 1 180px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: transparent; }
+  #mark-msg { flex: 1 0 100%; color: var(--warn); font-size: 13px; }
+  #mark-msg:empty { display: none; }
+  #detail { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 10px 0; background: var(--soft); overflow-wrap: anywhere; }
+  #detail[hidden] { display: none; }
+  #detail table { font-size: 13px; margin: 6px 0; }
+  #detail th, #detail td { padding: 3px 6px; }
+  #detail tr.hit td { color: var(--accent); font-weight: 600; }
+  #detail .said { margin: 4px 0; }
+  #detail .note { margin: 6px 0 2px; }
+  #player { width: 100%; margin: 6px 0; }
+  #player[hidden] { display: none; }
+  ol#transcript { list-style: none; margin: 12px 0 0; padding: 0; }
+  #transcript > li { display: grid; grid-template-columns: 62px 1fr; gap: 2px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .when { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); }
+  .when b { color: var(--fg); font-weight: 600; display: block; }
+  .body { min-width: 0; overflow-wrap: anywhere; }
+  .who { font-weight: 600; margin-right: 4px; }
+  li.line.guide .who { color: var(--accent); }
+  li.line.interviewer .who { color: var(--muted); }
+  li.has-rec { cursor: pointer; }
+  li.has-rec .badge { color: var(--muted); margin-left: 4px; }
+  li.has-rec .badge.hit { color: var(--accent); }
+  #transcript > li.sel { background: var(--soft); box-shadow: inset 3px 0 var(--accent); }
+  li.event .body { color: var(--muted); font-size: 13px; }
+  li.event .when b { font-weight: 400; color: var(--muted); }
+  li.part { border-bottom: 2px solid var(--accent) !important; margin-top: 14px; }
+  li.part .body { font-weight: 600; }
+  li.mark { cursor: pointer; }
+  li.mark .body { color: var(--warn); }
+  @media (max-width: 600px) {
+    #transcript > li { grid-template-columns: 52px 1fr; }
+    thead { display: none; }
+    tr { display: block; border: 1px solid var(--line); border-radius: 10px; margin: 0 0 10px; padding: 4px 0; }
+    td { display: flex; gap: 10px; border: 0; padding: 3px 10px; }
+    td::before { content: attr(data-label); flex: 0 0 84px; color: var(--muted); font-size: 13px; }
+    #detail thead { display: table-header-group; }
+    #detail tr { display: table-row; border: 0; margin: 0; padding: 0; }
+    #detail td, #detail th { display: table-cell; padding: 3px 4px; }
+    #detail td::before { content: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="sub"><a href="/admin">Testers</a> <span id="crumb"></span></p>
+  <h1 id="title">Signals</h1>
+  <p id="summary" class="sub"></p>
+  <div id="msg" aria-live="polite">Loading…</div>
+  <div id="content"></div>
+</main>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length <= n ? t : t.slice(0, n - 1).trimEnd() + "…"; };
+const q = new URLSearchParams(location.search);
+const lid = q.get("lid") || "own", session = q.get("session");
+const mss = (s) => {
+  if (s == null || isNaN(s)) return "?";
+  const neg = s < 0, a = Math.floor(Math.abs(s)), h = Math.floor(a / 3600), m = Math.floor(a % 3600 / 60), ss = String(a % 60).padStart(2, "0");
+  return (neg ? "-" : "") + (h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`);
+};
+const when = (iso) => {
+  if (!iso) return "–";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+};
+const enc = encodeURIComponent;
+
+// The strips, top to bottom. Ratios: a quarter to four times the norm on a log scale; loudness: 12 dB either way.
+const MEASURES = [
+  { key: "gap_ms", label: "Pause before answering", ratio: true },
+  { key: "words", label: "Words", ratio: true },
+  { key: "wps", label: "Rate", ratio: true },
+  { key: "pitch_sd_st", label: "Pitch spread", ratio: true },
+  { key: "rms_db", label: "Loudness", ratio: false },
+];
+const RATIO_LIMIT = 2, DB_LIMIT = 12;
+const PAD_L = 8, PAD_R = 14;
+const ROW = { band: 18, marks: 18, events: 20, ear: 18, strip: 58, gap: 6, axis: 22 };
+const STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 86400];
+const PARTS = { intro: "Intro", guide: "Guide", debrief: "Debrief", library: "Library", records: "Records", chapter: "Chapter" };
+const TITLES = { intro: "Intro with the interviewer", guide: "Conversation with the guide", debrief: "Debrief with the interviewer" };
+const WHO = { listener: "Listener", guide: "Guide", interviewer: "Interviewer" };
+const REASONS = {
+  not_here: "the page wasn't in a state to send", stale_after_start: "the chapter had started",
+  explained: "the guide had already said what it does", listener_spoke: "the listener spoke after the look was asked",
+  gap: "too soon after the last whisper", replaced: "a newer note replaced it",
+  moved_on: "the guide had asked something since the look was asked",
+  forgotten: "a rest, a wake or a new session cleared it", down: "the earpiece went down", ended: "the conversation ended",
+};
+
+let D = null;             // the conversation or the visit, as the API gave it
+let zoom = 1, pps = 1;    // pixels per second: the chart's width fitted, times the zoom
+let sel = null;           // {kind: "rec" | "look" | "mark", i}
+let pending = null;       // the moment a mark is being typed for (seconds on this axis)
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const d = (await r.json().catch(() => ({}))).detail;
+    throw new Error(typeof d === "string" ? d : r.statusText);
+  }
+  return r.json();
+}
+
+function stamp(x) { return `<div class="when"><b>${mss(x.secs)}</b>${esc(x.clock || "")}</div>`; }
+
+function fmt(key, v) {
+  if (v == null) return "–";
+  if (/_ms$/.test(key)) return (v / 1000).toFixed(1) + " s";
+  if (key === "wps") return v.toFixed(1) + " a second";
+  if (key === "pitch_sd_st") return v.toFixed(1) + " semitones";
+  if (key === "rms_db") return v.toFixed(1) + " dB";
+  return String(v);
+}
+function fmtChange(m, c) {
+  if (c == null) return "–";
+  return m.ratio ? "×" + c.toFixed(2) : (c > 0 ? "+" : "") + c.toFixed(1) + " dB";
+}
+// -1..1 within the strip: the change from the norm, clipped.
+function level(m, c) {
+  const v = m.ratio ? Math.log2(Math.max(c, 1e-6)) : c;
+  return Math.max(-1, Math.min(1, v / (m.ratio ? RATIO_LIMIT : DB_LIMIT)));
+}
+function events(r) {
+  const out = (r.tags || []).map((t) => `[${t}]`);
+  if (r.cut_in) out.push("cut in");
+  if (r.trailed) out.push("…");
+  return out.join(" ");
+}
+function fateText(f) {
+  if (!f) return "No fate recorded";
+  if (f.fate === "sent") return f.inferred ? `Sent at ${mss(f.secs)} (from the note in the transcript)`
+    : f.held_secs ? `Held ${f.held_secs} s, sent at ${mss(f.secs)}` : `Sent to the guide at ${mss(f.secs)}`;
+  if (f.fate === "held") return `Held at ${mss(f.secs)}, no later fate recorded`;
+  return `Dropped at ${mss(f.secs)}: ${REASONS[f.reason] || f.reason || ""}${f.detail ? ` (${f.detail})` : ""}`;
+}
+
+// --- the chart ----------------------------------------------------------------------------------
+
+function draw() {
+  const wrap = $("wrap"), svg = $("chart");
+  const dur = Math.max(D.duration || 0, 10) * 1.02;
+  const avail = Math.max(wrap.clientWidth, 240) - PAD_L - PAD_R;
+  pps = avail / dur * zoom;
+  const W = Math.max(wrap.clientWidth, Math.ceil(PAD_L + dur * pps + PAD_R));
+  const X = (s) => (PAD_L + s * pps).toFixed(1);
+  const Y = {};
+  let y = 0;
+  if (D.visit) { Y.band = y; y += ROW.band + 2; }
+  Y.marks = y; y += ROW.marks;
+  Y.events = y; y += ROW.events;
+  Y.ear = y; y += ROW.ear + 4;
+  Y.strips = y; y += MEASURES.length * (ROW.strip + ROW.gap);
+  Y.axis = y; y += ROW.axis;
+  const H = y;
+  let out = `<rect class="bg" x="0" y="0" width="${W}" height="${H}"/>`;
+
+  // The visit's parts and the chapter read aloud: a band on top, shading behind the strips.
+  if (D.visit) {
+    const span = (cls, a, b, label, title) => {
+      const x = PAD_L + a * pps, w = Math.max(2, (b - a) * pps);
+      out += `<rect class="band shade ${cls}" x="${x.toFixed(1)}" y="${Y.strips}" width="${w.toFixed(1)}" height="${Y.axis - Y.strips}"/>`
+        + `<rect class="band ${cls}" x="${x.toFixed(1)}" y="${Y.band}" width="${w.toFixed(1)}" height="${ROW.band}"><title>${esc(title)}</title></rect>`
+        + (w > 44 ? `<text class="bandtext" x="${(x + 4).toFixed(1)}" y="${Y.band + 13}">${esc(label)}</text>` : "");
+    };
+    for (const p of D.parts) span(p.part, p.secs || 0, p.end_secs || p.secs || 0, PARTS[p.part] || p.part, `${p.label || ""} (${mss(p.secs)} to ${mss(p.end_secs)})`);
+    for (const ch of D.chapters || []) {
+      for (const s of ch.spans) span("chapter", s.secs, s.end_secs, "Chapter", `Read aloud: ${ch.title || ch.run} (${mss(s.secs)} to ${mss(s.end_secs)})`);
+    }
+    for (const x of D.items) {
+      if (x.kind === "event" && x.type === "chapter" && x.secs != null) {
+        const cx = PAD_L + x.secs * pps, cy = Y.band + ROW.band / 2;
+        out += `<path class="chev" d="M${cx.toFixed(1)} ${cy - 5}l4 5-4 5-4-5z"><title>${esc(mss(x.secs) + " " + x.text)}</title></path>`;
+      }
+    }
+  }
+
+  // The GPT-Live sessions: where each recording starts.
+  for (const s of D.sessions || []) {
+    if (s.secs == null) continue;
+    out += `<line class="sess" x1="${X(s.secs)}" x2="${X(s.secs)}" y1="${Y.ear}" y2="${Y.axis}"><title>Voice session ${esc(s.live_id)} begins${D.audio[s.live_id] ? " (recording on disk)" : ""}</title></line>`;
+  }
+
+  // One strip per measure.
+  MEASURES.forEach((m, k) => {
+    const top = Y.strips + k * (ROW.strip + ROW.gap), mid = top + ROW.strip / 2, half = ROW.strip / 2 - 6;
+    out += (D.visit ? "" : `<rect class="strip" x="0" y="${top}" width="${W}" height="${ROW.strip}"/>`)
+      + `<line class="grid" x1="0" x2="${W}" y1="${(mid - half / 2).toFixed(1)}" y2="${(mid - half / 2).toFixed(1)}"/>`
+      + `<line class="grid" x1="0" x2="${W}" y1="${(mid + half / 2).toFixed(1)}" y2="${(mid + half / 2).toFixed(1)}"/>`
+      + `<line class="norm" x1="0" x2="${W}" y1="${mid}" y2="${mid}"/>`
+      + `<text class="lab" x="${PAD_L + 2}" y="${top + 11}">${esc(m.label)} ${m.ratio ? "(×¼ to ×4 of norm)" : "(±12 dB of norm)"}</text>`;
+    D.records.forEach((r, ri) => {
+      const v = r[m.key];
+      if (v == null || r.secs == null) return;
+      const c = r.change ? r.change[m.key] : null;
+      let cy = mid, cls = "pt hollow";
+      if (c != null) {
+        cy = mid - level(m, c) * half;
+        cls = (r.mention || []).includes(m.key) ? "pt mention" : "pt";
+      } else if (m.key === "gap_ms" && v < 0) {
+        return;   // a cut-in: on the top edge
+      }
+      const tip = `${mss(r.secs)} turn ${r.turn}: ${m.label.toLowerCase()} ${fmt(m.key, v)}`
+        + (r.norm && r.norm[m.key] != null ? ` (norm ${fmt(m.key, r.norm[m.key])}, ${fmtChange(m, c)})` : " (no norm yet)");
+      out += `<circle class="${cls}" data-rec="${ri}" data-m="${m.key}" cx="${X(r.secs)}" cy="${cy.toFixed(1)}" r="4"><title>${esc(tip)}</title></circle>`;
+    });
+  });
+
+  // Tags, cut-ins and trailing off on the top edge.
+  D.records.forEach((r, ri) => {
+    const t = events(r);
+    if (!t || r.secs == null) return;
+    out += `<text class="ev" data-rec="${ri}" x="${X(r.secs)}" y="${Y.events + 14}">${esc(t)}<title>${esc(mss(r.secs) + " " + t)}</title></text>`;
+  });
+
+  // The earpiece: a tick per look, a taller one per whisper in its fate's color, a dot when the fate came later.
+  (D.looks || []).forEach((L, li) => {
+    if (L.secs == null) return;
+    const f = L.fate ? L.fate.fate : "";
+    const tip = `${mss(L.secs)} look ${L.id} (${L.trigger || "?"})` + (L.error ? `: failed (${L.error})` : "")
+      + (L.note ? `: “${L.note}” ${fateText(L.fate)}` : "");
+    if (L.note) {
+      out += `<line class="wh" data-look="${li}" data-fate="${esc(f)}" x1="${X(L.secs)}" x2="${X(L.secs)}" y1="${Y.ear + 1}" y2="${Y.ear + ROW.ear}"><title>${esc(tip)}</title></line>`;
+      if (L.fate && L.fate.secs != null && L.fate.secs - L.secs >= 2) {
+        out += `<circle class="fd" data-look="${li}" data-fate="${esc(f)}" cx="${X(L.fate.secs)}" cy="${Y.ear + ROW.ear / 2}" r="2.5"><title>${esc(tip)}</title></circle>`;
+      }
+    } else {
+      out += `<line class="lk${L.error ? " err" : ""}" data-look="${li}" x1="${X(L.secs)}" x2="${X(L.secs)}" y1="${Y.ear + 6}" y2="${Y.ear + ROW.ear}"><title>${esc(tip)}</title></line>`;
+    }
+  });
+
+  // Ian's marks as flags, with the line down through the strips.
+  D.marks.forEach((mk, i) => {
+    if (mk.secs == null) return;
+    const x = PAD_L + mk.secs * pps;
+    out += `<line class="flagline" x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${Y.marks + 2}" y2="${Y.axis}"/>`
+      + `<path class="flag" data-mark="${i}" d="M${x.toFixed(1)} ${Y.marks + 2}h9l-3 4 3 4h-9z"><title>${esc(mss(mk.secs) + " " + mk.text)}</title></path>`
+      + `<text class="flagtext" data-mark="${i}" x="${(x + 11).toFixed(1)}" y="${Y.marks + 11}">${esc(clip(mk.text, 24))}</text>`;
+  });
+  if (pending != null) out += `<line class="pending" x1="${X(pending)}" x2="${X(pending)}" y1="${Y.marks}" y2="${Y.axis}"/>`;
+
+  // The time axis: m:ss since the start.
+  const step = STEPS.find((s) => s * pps >= 64) || 86400;
+  out += `<line class="axis" x1="0" x2="${W}" y1="${Y.axis}" y2="${Y.axis}"/>`;
+  for (let s = 0; s <= dur; s += step) {
+    out += `<line class="axis" x1="${X(s)}" x2="${X(s)}" y1="${Y.axis}" y2="${Y.axis + 4}"/><text class="tick" x="${X(s)}" y="${Y.axis + 15}" text-anchor="${s ? "middle" : "start"}">${mss(s)}</text>`;
+  }
+
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = out;
+  paintSel();
+}
+
+function secsAt(clientX) {
+  return Math.max(0, (clientX - $("chart").getBoundingClientRect().left - PAD_L) / pps);
+}
+
+function setZoom(z) {
+  const wrap = $("wrap");
+  const centre = (wrap.scrollLeft + wrap.clientWidth / 2 - PAD_L) / pps;
+  zoom = Math.max(1, Math.min(64, z));
+  draw();
+  wrap.scrollLeft = Math.max(0, PAD_L + centre * pps - wrap.clientWidth / 2);
+  $("zoom-out").disabled = zoom <= 1;
+}
+
+// --- selection: a point and its line, a look, a mark ---------------------------------------------
+
+function paintSel() {
+  document.querySelectorAll(".sel").forEach((e) => e.classList.remove("sel"));
+  if (!sel) return;
+  const attr = { rec: "data-rec", look: "data-look", mark: "data-mark" }[sel.kind];
+  document.querySelectorAll(`[${attr}="${sel.i}"]`).forEach((e) => e.classList.add("sel"));
+}
+
+function scrollChartTo(secs) {
+  const wrap = $("wrap");
+  const x = PAD_L + secs * pps;
+  if (x < wrap.scrollLeft + 20 || x > wrap.scrollLeft + wrap.clientWidth - 20) wrap.scrollLeft = Math.max(0, x - wrap.clientWidth / 2);
+}
+
+function select(kind, i, from) {
+  sel = { kind, i };
+  paintSel();
+  const det = $("detail");
+  det.hidden = false;
+  if (kind === "rec") {
+    const r = D.records[i];
+    det.innerHTML = recHtml(r);
+    const play = $("play");
+    if (play) play.onclick = () => playFrom(r.live_id, Math.max(0, r.start_s - 1));
+    if (from === "chart") {
+      const li = document.querySelector(`#transcript li[data-rec="${i}"]`);
+      if (li) li.scrollIntoView({ block: "nearest" });
+    } else if (r.secs != null) {
+      scrollChartTo(r.secs);
+    }
+  } else if (kind === "look") {
+    det.innerHTML = lookHtml(D.looks[i]);
+  } else {
+    const m = D.marks[i];
+    det.innerHTML = `<div><b>Mark at ${mss(m.secs)}</b>${m.t ? ` <span class="sub">saved ${esc(when(m.t))}</span>` : ""}</div><div class="said">${esc(m.text)}</div>`;
+    if (from !== "chart") scrollChartTo(m.secs);
+  }
+}
+
+function recHtml(r) {
+  const said = new Set(r.mention || []);
+  const rows = MEASURES.map((m) => {
+    const c = r.change ? r.change[m.key] : null;
+    return `<tr class="${said.has(m.key) ? "hit" : ""}" data-m="${m.key}"><td>${esc(m.label)}</td><td>${fmt(m.key, r[m.key])}</td>`
+      + `<td>${r.norm ? fmt(m.key, r.norm[m.key]) : "–"}</td><td>${fmtChange(m, c)}</td></tr>`;
+  }).join("");
+  const bits = [`${r.pauses == null ? "?" : r.pauses} pause${r.pauses === 1 ? "" : "s"} inside` + (r.longest_pause_ms ? ` (longest ${fmt("longest_pause_ms", r.longest_pause_ms)})` : ""),
+    `${r.hedges || 0} hedge${r.hedges === 1 ? "" : "s"}`, `${r.fillers || 0} filler${r.fillers === 1 ? "" : "s"}`];
+  if ((r.tags || []).length) bits.push("tags " + r.tags.map((t) => `[${t}]`).join(" "));
+  if (r.cut_in) bits.push("cut in");
+  if (r.trailed) bits.push("trailed off");
+  if (r.dur_ms != null) bits.push(`turn ${fmt("dur_ms", r.dur_ms)}`);
+  const norm = r.norm ? `norm from ${r.norm_turns} earlier turn${r.norm_turns === 1 ? "" : "s"}` : `no norm yet (${r.norm_turns || 0} turns of enough words)`;
+  const playable = r.live_id && D.audio[r.live_id] && r.start_s != null;
+  return `<div><b>Turn ${esc(r.turn)}</b> <span class="sub">· ${mss(r.secs)} · ${esc(PARTS[r.part] || r.part)} · from the ${r.source === "recording" ? "recording" : "page"} · ${esc(norm)}</span></div>`
+    + `<div class="said">“${esc(r.text)}”</div>`
+    + `<table><thead><tr><th>Measure</th><th>This turn</th><th>Norm</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<div class="sub">${esc(bits.join(" · "))}${(r.trend || []).length ? ` · three turns running: ${esc(r.trend.join(", "))}` : ""}</div>`
+    + `<div class="note">Note for the earpiece: ${esc(r.note || "–")}</div>`
+    + (playable ? `<button id="play" type="button">Play from ${mss(Math.max(0, r.start_s - 1))}</button>`
+      : `<div class="sub">${r.live_id && D.audio[r.live_id] ? "No session clock for this turn." : "No recording on disk for this turn."}</div>`);
+}
+
+function lookHtml(L) {
+  let out = `<div><b>Look ${esc(L.id)}</b> <span class="sub">· ${mss(L.secs)} · ${esc(L.trigger || "")} · ${esc(L.speaking || "none")} speaking${L.stem && D.visit ? " · " + esc(L.stem) : ""}</span></div>`;
+  if (L.error) return out + `<div class="said">Failed: ${esc(L.error)}</div>`;
+  if (L.read) out += `<div class="sub">${esc(L.read)}</div>`;
+  if (L.next) out += `<div class="sub">Next: ${esc(L.next)}</div>`;
+  if (L.note) {
+    out += `<div class="said">“${esc(L.note)}”</div><div class="sub">${esc(L.note_kind || "")}${L.about ? " · " + esc(L.about) : ""}</div>`
+      + `<div>${esc(fateText(L.fate))}</div>`;
+    if (L.reply) out += `<div class="sub">The guide's next line (ended ${mss(L.reply.secs)}): “${esc(clip(L.reply.text, 240))}”</div>`;
+  }
+  return out;
+}
+
+let playerId = null;
+function playFrom(id, t) {
+  const P = $("player");
+  P.hidden = false;
+  const go = () => { P.currentTime = t; P.play().catch(() => {}); };
+  if (playerId !== id) {
+    playerId = id;
+    P.addEventListener("loadedmetadata", go, { once: true });
+    P.src = `/api/admin/signals/${enc(lid)}/audio/${enc(id)}`;
+    P.load();
+  } else {
+    go();
+  }
+}
+
+// --- marks ----------------------------------------------------------------------------------------
+
+// The conversation a moment of the visit belongs to (the part under way, else the nearest), for its axis.
+function partAt(secs) {
+  const ps = D.parts.filter((p) => p.stem && p.offset != null && p.part !== "records" && p.part !== "library");
+  const inside = ps.filter((p) => p.secs <= secs && secs <= p.end_secs);
+  if (inside.length) return inside[inside.length - 1];
+  const dist = (p) => secs < p.secs ? p.secs - secs : secs - p.end_secs;
+  return ps.slice().sort((a, b) => dist(a) - dist(b))[0] || null;
+}
+
+function openMark(secs) {
+  pending = secs;
+  $("markbox").hidden = false;
+  const p = D.visit ? partAt(secs) : null;
+  $("mark-at").textContent = mss(secs) + (p ? ` (${(TITLES[p.part] || p.label || "").toLowerCase()})` : "");
+  $("mark-msg").textContent = "";
+  draw();
+  $("mark-text").focus();
+}
+
+function closeMark() {
+  pending = null;
+  $("markbox").hidden = true;
+  $("mark-text").value = "";
+  draw();
+}
+
+async function saveMark(e) {
+  e.preventDefault();
+  const text = $("mark-text").value.trim();
+  if (!text || pending == null) return;
+  let stem = session, secs = pending, off = 0;
+  if (D.visit) {
+    const p = partAt(pending);
+    if (!p) { $("mark-msg").textContent = "No conversation here to mark."; return; }
+    stem = p.stem; off = p.offset; secs = pending - off;
+  }
+  try {
+    const got = await api(`/api/admin/signals/${enc(lid)}/${enc(stem)}/mark`, { secs, text });
+    D.marks.push({ ...got.mark, stem, conv_secs: got.mark.secs, secs: off + got.mark.secs });
+    pending = null;
+    $("markbox").hidden = true;
+    $("mark-text").value = "";
+    draw();
+    transcript();
+    select("mark", D.marks.length - 1, "chart");
+  } catch (err) {
+    $("mark-msg").textContent = "Couldn't save: " + err.message;
+  }
+}
+
+// --- the transcript underneath --------------------------------------------------------------------
+
+function eventText(x) {
+  if (x.kind === "note") {
+    const L = x.whisper ? (D.looks || []).find((l) => l.id === x.look && l.note) : null;
+    return x.whisper ? `Earpiece note reached the guide${x.look != null ? ` (look ${x.look})` : ""}: ` + clip(L ? L.note : x.text, 160)
+      : "App note: " + clip(x.text, 160);
+  }
+  if (x.kind === "tool") return "Tool: " + x.name;
+  if (x.kind === "session") return x.ended ? `Voice session ended (${x.ended})` : `New voice session${D.audio[x.live_id] ? " (recording on disk)" : ""}`;
+  return x.text + (x.detail ? ": " + clip(x.detail, 120) : "");
+}
+
+function itemHtml(x) {
+  if (x.kind === "mark") return `<li class="mark" data-mark="${x.i}">${stamp(x)}<div class="body">⚑ Mark: ${esc(x.text)}</div></li>`;
+  if (x.kind === "part") return `<li class="part">${stamp(x)}<div class="body">${esc(x.text)}</div></li>`;
+  if (x.kind === "line") {
+    const r = x.rec != null ? D.records[x.rec] : null;
+    const hit = r && (r.mention || []).length;
+    const badge = r ? `<span class="badge${hit ? " hit" : ""}" title="${esc(r.note || "")}">${hit ? "●" : "○"}</span>` : "";
+    return `<li class="line ${esc(x.who)}${r ? " has-rec" : ""}" data-i="${x.i}"${r ? ` data-rec="${x.rec}"` : ""}>${stamp(x)}`
+      + `<div class="body"><span class="who">${esc(x.speaker || WHO[x.who] || x.who)}</span>${esc(x.text)}${badge}</div></li>`;
+  }
+  return `<li class="event ${esc(x.type || x.kind)}" data-i="${x.i}">${stamp(x)}<div class="body">${esc(eventText(x))}</div></li>`;
+}
+
+function transcript() {
+  const marks = D.marks.map((m, i) => ({ kind: "mark", i, secs: m.secs, text: m.text, clock: "" }))
+    .filter((m) => m.secs != null).sort((a, b) => a.secs - b.secs);
+  const out = [];
+  let k = 0;
+  for (const x of D.items) {
+    while (k < marks.length && x.secs != null && marks[k].secs < x.secs) out.push(marks[k++]);
+    out.push(x);
+  }
+  while (k < marks.length) out.push(marks[k++]);
+  $("transcript").innerHTML = out.map(itemHtml).join("");
+  paintSel();
+}
+
+// --- the views -------------------------------------------------------------------------------------
+
+async function list() {
+  const got = await api(`/api/admin/signals/${enc(lid)}`);
+  $("title").textContent = `Signals: ${got.label}`;
+  document.title = `Signals: ${got.label}`;
+  $("summary").textContent = "How each of their turns sounded, against their own norm: from the recordings (wl signals run) and, with signals.live on, from the page.";
+  const cs = got.conversations;
+  $("msg").textContent = cs.length ? "" : "No conversations yet.";
+  const head = `<p><a id="visit-link" href="?lid=${enc(lid)}&session=visit">The whole visit on one timeline</a></p>`;
+  if (!cs.length) { $("content").innerHTML = head; return; }
+  const rows = cs.map((c) => {
+    const ids = Object.keys(c.audio || {}), on = ids.filter((k) => c.audio[k]).length;
+    const turns = c.turns.recording + c.turns.page
+      ? `${c.turns.recording} from the recording${ids.length === 1 ? "" : "s"} · ${c.turns.page} from the page` : '<span class="sub">none yet</span>';
+    return `<tr data-stem="${esc(c.stem)}"><td data-label="Conversation"><a href="?lid=${enc(lid)}&session=${enc(c.stem)}">${esc(when(c.started))}</a><div class="sub">${esc(TITLES[c.part] || c.part)}</div></td>`
+      + `<td data-label="Turns">${turns}</td><td data-label="Marks">${c.marks}</td>`
+      + `<td data-label="Recordings">${ids.length ? `${on} of ${ids.length} on disk` : '<span class="sub">none</span>'}</td></tr>`;
+  }).join("");
+  $("content").innerHTML = head + `<table><thead><tr><th>Conversation</th><th>Turns measured</th><th>Marks</th><th>Recordings</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function timeline() {
+  const visit = session === "visit";
+  D = await api(`/api/admin/signals/${enc(lid)}/${visit ? "visit" : enc(session)}`);
+  D.visit = visit;
+  $("crumb").innerHTML = `· <a href="?lid=${enc(lid)}">${esc(D.label)}</a>`
+    + (visit ? "" : ` · <a href="?lid=${enc(lid)}&session=visit">whole visit</a>`)
+    + (!visit && D.part === "guide" ? ` · <a href="/admin/earpiece?lid=${enc(lid)}&session=${enc(session)}">earpiece history</a>` : "");
+  $("title").textContent = visit ? `Whole visit: ${D.label}` : `${TITLES[D.part] || "Conversation"}, ${when(D.started)}`;
+  document.title = `Signals: ${D.label}`;
+  const n = D.records.length, nl = (D.looks || []).length;
+  $("summary").textContent = `${n} turn${n === 1 ? "" : "s"} measured · ${D.marks.length} mark${D.marks.length === 1 ? "" : "s"} · ${nl} earpiece look${nl === 1 ? "" : "s"}. `
+    + "Each point is a turn's change from their own norm (the line through each strip). Times: m:ss since the start; a line's time is when it ended. "
+    + "Click a point or a line to see its numbers; click an empty moment to mark it.";
+  $("msg").textContent = n || D.items.length ? "" : "Nothing measured or said in this conversation.";
+  const shades = visit ? ["intro", "guide", "chapter", "debrief"].map((k) => `<span class="swatch s-${k}"></span>${PARTS[k]}`).join("") : "";
+  $("content").innerHTML = `<div class="bar"><span class="legend"><i class="hit">●</i> past a threshold · <i>●</i> within · <i>○</i> before a norm · `
+    + `ticks: earpiece looks, whispers by fate${shades ? " ·" + shades : ""}</span>`
+    + `<span><button id="zoom-out" type="button" aria-label="Zoom out" disabled>−</button> <button id="zoom-in" type="button" aria-label="Zoom in">+</button></span></div>`
+    + `<div class="chart-wrap" id="wrap"><svg id="chart" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Signals timeline"></svg></div>`
+    + `<form id="markbox" hidden autocomplete="off"><span>Mark at <b id="mark-at"></b></span>`
+    + `<input id="mark-text" maxlength="500" placeholder="What you heard (e.g. lost them here)" aria-label="Mark">`
+    + `<button>Save</button><button type="button" id="mark-cancel">Cancel</button><div id="mark-msg"></div></form>`
+    + `<div id="detail" hidden></div><audio id="player" controls preload="none" hidden></audio><ol id="transcript"></ol>`;
+  $("zoom-in").onclick = () => setZoom(zoom * 2);
+  $("zoom-out").onclick = () => setZoom(zoom / 2);
+  $("markbox").addEventListener("submit", saveMark);
+  $("mark-cancel").onclick = closeMark;
+  $("mark-text").addEventListener("keydown", (e) => { if (e.key === "Escape") closeMark(); });
+  $("chart").addEventListener("click", (e) => {
+    const t = e.target.closest("[data-rec],[data-look],[data-mark]");
+    if (!t) return openMark(secsAt(e.clientX));
+    if (t.dataset.rec != null) select("rec", +t.dataset.rec, "chart");
+    else if (t.dataset.look != null) select("look", +t.dataset.look, "chart");
+    else select("mark", +t.dataset.mark, "chart");
+  });
+  $("transcript").addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-rec],li[data-mark]");
+    if (!li) return;
+    if (li.dataset.rec != null) select("rec", +li.dataset.rec, "transcript");
+    else select("mark", +li.dataset.mark, "transcript");
+  });
+  draw();
+  transcript();
+}
+
+let resizeTimer = null;
+addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (D && $("wrap")) draw(); }, 150); });
+
+(session ? timeline() : list()).catch((e) => { $("msg").textContent = "Couldn't load: " + e.message; });
+</script>
+</body>
+</html>

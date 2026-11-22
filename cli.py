@@ -65,6 +65,9 @@ Utilities:
     voices [--search TEXT]       list ElevenLabs models and voices on the account
     voicetest [--voices A,B,C]   narrate voice_test/sample.md in each candidate voice
     deploy                       on the droplet: pull, install, restart (deploy/deploy.sh, DEPLOY.md)
+    signals fetch|run|report [lid] [--all]
+                                 Listener Signals (signals/cli.py): keep the GPT-Live recordings, measure
+                                 each listener turn from them, report what the data says
 
 Options: --force overwrites an existing output; --yes pre-approves the cost guard.
 """
@@ -254,6 +257,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "study":  # the Tester Demo: testers' links and the study report (demo/cli.py)
         from demo.cli import main as study_main
         return study_main(argv[1:])
+    if argv and argv[0] == "signals":  # Listener Signals: recordings, the replay, the report (signals/cli.py)
+        from signals.cli import main as signals_main
+        return signals_main(argv[1:])
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("stage")
     ap.add_argument("run", nargs="?")

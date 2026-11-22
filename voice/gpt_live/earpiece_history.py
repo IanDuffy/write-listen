@@ -8,7 +8,8 @@ Read from a listener's conversation transcripts (<listener>/sessions/<id>.jsonl)
   page's notes (a whisper as delivered is marked, with the look whose note it was), tools, new GPT-Live sessions,
   and each look by the earpiece (voice/gpt_live/director.py "director" rows) with its plan's changes, its note's
   fate on the page ("director_fate" rows, POST /api/live/direct/fate), when the note reached the guide and the
-  guide's next line after it.
+  guide's next line after it, and `heard`: the listener signals line the look was given (null: none, or the flag
+  live.director.signals was off).
 - `plan_changes(prev, plan)`: the plan change rule the page's panel (page/earpiece.js) follows too: items matched
   by text (lowercased, whitespace collapsed); "new" for an item not there before, the new state for one whose state
   changed, null otherwise; items gone are `removed`.
@@ -155,7 +156,7 @@ def timeline_of(rows: list[dict], lid: str, session: str) -> dict:
                     "asked_secs": st["secs"] - round(ms / 1000), "cost_usd": rec.get("cost_usd"),
                     "error": rec.get("error") or None, "read": rec.get("read"), "plan": marked, "removed": removed,
                     "next": rec.get("next"), "changed": rec.get("changed"), "note": rec.get("note"),
-                    "note_kind": rec.get("kind"), "about": rec.get("about"),
+                    "note_kind": rec.get("kind"), "about": rec.get("about"), "heard": rec.get("heard"),
                     "fate": None, "delivered": None, "reply": None}
             items.append(item)
             looks[rec.get("id")] = item

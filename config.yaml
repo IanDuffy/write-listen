@@ -361,6 +361,7 @@ live:
                                 # demo mode it is per tester (tester.json earpiece_view, the admin page) and this is ignored
     signals: false              # each look gets one line of facts about the listener's latest turn (signals.record.note;
                                 # the page measures while this is on, as with signals.live). Off: looks are unchanged
+    signals_wait_ms: 400        # a look waits this long for its turn's record (the line post and the look race)
   continue_minutes: 15          # a page reopened this soon after the reading stopped picks the chapter back up
   unread_ready_minutes: 120     # a chapter written but never begun (they went away while it was made) is offered this long
   page:                         # page/live.js
@@ -648,17 +649,23 @@ signals:
     voice_rms: 150            # the other voice (int16): GPT-Live's silence is digital zero (voice/gpt_live/archive.py)
     min_rms: 200              # the listener's channel: voiced above this and floor_x times its quiet level
     floor_x: 4
+    floor_pct: 10             # its quiet level: this percentile of its non-zero frames while the other voice is quiet
     bleed_x: 3                # while the other voice is voiced, the listener counts only this many times louder than its bleed
+    bleed_tail_ms: 150        # ... and this long after it (the room's echo of it outlasts it a little)
     fill_ms: 150              # quiet shorter than this inside speech is speech
     min_run_ms: 80            # a voiced run shorter than this is a click
-    pitch: {frame_ms: 40, fmin: 75, fmax: 400, voicing: 0.5, min_frames: 10}
+    # pitch spread: f0 per frame_ms by autocorrelation; a frame further than outlier_st from the median is an octave error
+    pitch: {frame_ms: 40, fmin: 75, fmax: 400, voicing: 0.5, min_frames: 10, outlier_st: 8}
     lag_s: 2.5                # a transcript row lands about this long after the speech ends
+    lag_search: [-3, 4]       # ... and the lag that fits a session's rows best is looked for this far either side
+    max_off_s: 6              # a row further than this from every turn is matched to none
   page:                       # page/sig.js, on live.js and interview.js
     tick_ms: 20               # samples the mic and the voice coming in this often (float levels)
     min_rms: 0.01             # the mic: voiced above this and floor_x times the room's level
     floor_x: 4
     out_rms: 0.005            # the voice coming in: voiced above this
-    bleed_x: 3
+    bleed_x: 3                # while the voice coming in is voiced, the mic counts only this many times louder than its bleed
+    bleed_tail_ms: 150        # ... and this long after it
     fill_ms: 150
     min_run_ms: 80
     max_tick_gap_ms: 250      # samples further apart than this (a background tab): the turn's timing is not taken

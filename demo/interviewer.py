@@ -197,6 +197,7 @@ FAREWELL = r"\bthat'?s everything from me\b"  # the end of the farewell (prompts
 
 BACKGROUND: list[threading.Thread] = []  # after-end work (audio, summary): tests join these
 _FILE_LOCK = threading.Lock()
+_SIGNALS_LOCK = threading.Lock()  # Listener Signals: a turn's lines join their text, one at a time
 
 
 def icfg(cfg: dict) -> dict:
@@ -558,8 +559,12 @@ def page_notes(mode: str, values: dict) -> dict:
 
 def page_settings(cfg: dict, mode: str) -> dict:
     I = icfg(cfg)
-    return {**I["page"], "mode": mode, "acts": dict(ACTS), "intro_max_minutes": I["intro_max_minutes"],
-            "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
+    out = {**I["page"], "mode": mode, "acts": dict(ACTS), "intro_max_minutes": I["intro_max_minutes"],
+           "debrief_target_minutes": I["debrief_target_minutes"], "debrief_max_minutes": I["debrief_max_minutes"]}
+    sig = common.sig_settings(cfg)
+    if sig is not None:  # Listener Signals (page/sig.js): only while the page measures; absent, nothing of it runs
+        out["signals"] = sig
+    return out
 
 
 # --- the transcript ---------------------------------------------------------------------------------
@@ -869,6 +874,7 @@ class Line(BaseModel):
     sid: str
     who: str
     text: str = ""
+    sig: dict | None = None   # Listener Signals: how a line of theirs ("in") sounded (page/sig.js), while the page measures
 
 
 class Usage(BaseModel):
@@ -982,7 +988,8 @@ def mount(app, cfg: dict, on_debrief=None) -> None:
 
     @app.get("/interview.js")
     def interview_js() -> Response:
-        return Response(common.with_speaker(INTERVIEW_JS.read_text(encoding="utf-8"), cfg), media_type="text/javascript",
+        text = common.with_sig(INTERVIEW_JS.read_text(encoding="utf-8"), cfg)  # page/sig.js only while the page measures
+        return Response(common.with_speaker(text, cfg), media_type="text/javascript",
                         headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/interview/start")
@@ -1097,7 +1104,24 @@ def mount(app, cfg: dict, on_debrief=None) -> None:
         who = WHO.get(req.who)
         if who and req.text.strip():
             write(s, {"who": who, "text": req.text.strip()})
+            if req.who == "in" and req.sig:
+                record_signals(s, req)
         return {"ok": True}
+
+    def record_signals(s: dict, req: Line) -> None:
+        """How their line sounded, as a turn record in their signals/ folder (never in study/: demo/state.py reads
+        study/*.jsonl as activity); the intro and the debrief count toward their norm with the guide's turns. A
+        failure here never costs the line."""
+        from signals import live as signals_live
+        from signals import record as signals_record
+        if not signals_record.live_on(cfg):
+            return
+        try:
+            with _SIGNALS_LOCK:
+                signals_live.record_line(s["listener"], s["path"].stem, part=s["mode"], live_id=s["live_id"],
+                                         text=req.text, sig=req.sig, cfg=cfg)
+        except Exception as e:  # noqa: BLE001
+            print(f"  interviewer: the line's signals record failed: {type(e).__name__}: {e}")
 
     @app.post("/api/interview/usage")
     def usage(req: Usage) -> dict:

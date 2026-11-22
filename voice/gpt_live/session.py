@@ -256,14 +256,17 @@ def create_webrtc(cfg: dict, session: dict, offer_sdp: str, client=None) -> dict
     return {"id": body["session"]["id"], "sdp": body["transport"]["sdp"]}
 
 
-def recording(cfg: dict, live_id: str, out: Path, client=None) -> Path | None:
+def recording(cfg: dict, live_id: str, out: Path, client=None, *, why: dict | None = None) -> Path | None:
     """Download a stored session's recording (stereo WAV: the listener left, the guide right), or None
-    when there is none (store off, or not ready yet). OpenAI keeps it for 30 days."""
+    when there is none (store off, or not ready yet). OpenAI keeps it for 30 days. `why`, if given, gets
+    {"status": the HTTP status}, so a caller can say why a recording is missing (signals/fetch.py)."""
     import httpx
 
     http = client or httpx
     res = http.get(f"{live_cfg(cfg)['url']}/{live_id}/content", headers={"Authorization": f"Bearer {api_key()}"},
                    timeout=120, follow_redirects=True)
+    if why is not None:
+        why["status"] = res.status_code
     if res.status_code != 200 or not res.content:
         return None
     out.parent.mkdir(parents=True, exist_ok=True)

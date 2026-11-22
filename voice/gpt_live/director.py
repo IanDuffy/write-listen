@@ -47,6 +47,12 @@ min_gap_secs of the last whisper.
 The earpiece view (Ian, 2026-11-20): `view_on` says whether this listener's page loads the panel
 (page/earpiece.js); the page posts each whisper's fate (FATES, FATE_REASONS) as a "director_fate" row, and
 voice/gpt_live/earpiece_history.py builds the admin's timeline from the transcript.
+
+Listener Signals (Ian's build plan, 2026-11-21: the earpiece reads text, so a flat "yeah, it was good" reads the
+same as a warm one): behind live.director.signals (off), `heard` reads the note on the listener's latest turn from
+the conversation's signals file (signals/live.py writes it with each measured line), the look carries it in a
+<listener_signals> block, and the director row records it as "heard" (null when there was none). Off, looks and
+rows are as they were.
 """
 
 from __future__ import annotations
@@ -99,7 +105,7 @@ def settings(cfg: dict) -> dict:
     return {"enabled": False, "every_secs": 15, "every_words": 12, "every_lines": 4, "company_every_secs": 30,
             "silence_secs": [12], "min_gap_secs": 20, "timeout_ms": 6000, "max_calls": 150, "max_usd": 0.5,
             "audio": {"window_ms": 600, "out_rms": 0.01, "min_rms": 0.02, "floor_x": 4}, "view": False,
-            **(cfg["live"].get("director") or {})}
+            "signals": False, "signals_wait_ms": 400, **(cfg["live"].get("director") or {})}
 
 
 def view_on(cfg: dict) -> bool:
@@ -297,8 +303,9 @@ def memory(path: Path) -> tuple[list[dict] | None, str]:
 
 def look(D: dict, *, lines: list[dict], trigger: str, speaking: str, last_who: str | None, silence_secs: float,
          seconds: int, explained: bool, started: bool, profile: str, plan: list[dict] | None,
-         last_read: str) -> str:
-    """One look's user message (prompts/live_director_moment.md). `lines` as lines_from_transcript gives them."""
+         last_read: str, signals: str = "") -> str:
+    """One look's user message (prompts/live_director_moment.md). `lines` as lines_from_transcript gives them.
+    `signals`: the <listener_signals> block (signals_block), or "" for a look exactly as it was without it."""
     if last_who not in ("guide", "listener"):
         last_who = next((x["who"] for x in reversed(lines) if x["who"] in ("guide", "listener")), "guide")
     trigger = trigger if trigger in TRIGGERS else "cadence"
@@ -309,7 +316,7 @@ def look(D: dict, *, lines: list[dict], trigger: str, speaking: str, last_who: s
                        explained="yes" if explained else "no", started="yes" if started else "no",
                        profile=profile.strip() or "(nothing known yet)", plan=plan_text(plan),
                        last_read=last_read or "(first look)", notes=notes_text(lines),
-                       transcript=transcript_text(lines),
+                       transcript=transcript_text(lines), signals=signals,
                        longest=str(max((len((x.get("text") or "").split()) for x in lines if x.get("who") == "listener"),
                                        default=0)))
 
@@ -379,10 +386,36 @@ def spent(session) -> tuple[int, float]:
 FIELDS = ("read", "plan", "next", "changed", "kind", "about", "note")
 
 
+def heard(session, req: dict, D: dict) -> str | None:
+    """The note on the listener's latest turn (signals.record.note, kept on the turn's record in
+    <listener>/signals/<stem>.jsonl by the line route), or None. With the page's `sig_turn` (the turn its look is
+    about) it waits up to signals_wait_ms for that turn's record, since the line post and the look leave the page
+    together and either can land first; a record from an earlier turn gives no note. Without it, the newest page
+    record. The folder is the transcript's: the route's cfg is global, and a tester's folder comes from the request."""
+    from signals import store
+
+    listener, turn = Path(session.transcript).parent.parent, req.get("sig_turn")
+    try:
+        if isinstance(turn, int) and not isinstance(turn, bool):
+            rec = store.wait_turn(listener, session.id, turn, max(0.0, float(D.get("signals_wait_ms") or 0)) / 1000)
+            rec = rec if rec is not None and rec["turn"] >= turn else None
+        else:
+            rec = store.latest(listener, session.id)
+    except (OSError, ValueError):  # no records yet, or not a conversation's file: no note, never a broken look
+        return None
+    note = (rec or {}).get("note")
+    return note.strip() if isinstance(note, str) and note.strip() else None
+
+
+def signals_block(note: str | None) -> str:
+    """The look's {{signals}}: the note in its own block between blank lines, or "" (the look as it was)."""
+    return f"\n<listener_signals>\n{note}\n</listener_signals>\n" if note else ""
+
+
 def ask(cfg: dict, session, req: dict, lock=None) -> dict:
     """The route's work. `req`: {"id", "trigger", "speaking", "silence_ms", "last_who", "recent", "page":
-    {seconds, explained, started, turns}} from the page. `lock`: the conversation lock, held only to read and
-    write the transcript, never during the call."""
+    {seconds, explained, started, turns}, "sig_turn"} from the page. `lock`: the conversation lock, held only to
+    read and write the transcript, never during the call or the wait for the turn's signals."""
     D = settings(cfg)
     rid = req.get("id")
     page = req.get("page") or {}
@@ -394,6 +427,10 @@ def ask(cfg: dict, session, req: dict, lock=None) -> dict:
         return {"id": rid, **NO_WHISPER, "error": "cap"}
     from . import session as live_session
 
+    # Behind live.director.signals: read before the transcript and outside the lock, which the line post carrying
+    # the turn's measurements needs in order to land while this waits for it.
+    signals_on = bool(D.get("signals"))
+    note = heard(session, req, D) if signals_on else None
     with lock if lock is not None else _Null():
         lines = merge_recent(lines_from_transcript(session.transcript), req.get("recent") or [],
                              int(page.get("seconds") or 0) or None)
@@ -410,7 +447,8 @@ def ask(cfg: dict, session, req: dict, lock=None) -> dict:
     speaking = req.get("speaking") if req.get("speaking") in SPEAKING else "none"
     user = look(D, lines=lines, trigger=trigger, speaking=speaking, last_who=req.get("last_who"),
                 silence_secs=float(req.get("silence_ms") or 0) / 1000, seconds=int(page.get("seconds") or 0),
-                explained=explained, started=started, profile=profile, plan=plan, last_read=last_read)
+                explained=explained, started=started, profile=profile, plan=plan, last_read=last_read,
+                signals=signals_block(note))
     fut = _POOL.submit(decide, cfg, session.log_run, user, {"session": session.id, "trigger": trigger})
     try:
         got = fut.result(timeout=float(D["timeout_ms"]) / 1000)
@@ -419,8 +457,11 @@ def ask(cfg: dict, session, req: dict, lock=None) -> dict:
     if known and got.get("about") == "offer":  # never for a listener who knows (the page only sends what comes back)
         got = {**got, **NO_WHISPER}
     rec = {k: got.get(k) for k in FIELDS + ("ms", "cost_usd", "error") if k in got}
+    # "heard": the note the look was given (null: none), only with the flag on, so rows are as they were with it
+    # off. Never under "text" or "note", which the transcript's readers and the earpiece history key on.
+    heard_row = {"heard": note} if signals_on else {}
     with lock if lock is not None else _Null():
-        session.record("director", id=rid, trigger=trigger, speaking=speaking, **rec)
+        session.record("director", id=rid, trigger=trigger, speaking=speaking, **heard_row, **rec)
     out = {"id": rid, **{k: got.get(k) for k in FIELDS if k in got}, **(NO_WHISPER if got.get("error") else {}),
            "ms": got.get("ms"), "cost_usd": got.get("cost_usd", 0.0)}
     if got.get("error"):

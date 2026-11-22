@@ -127,3 +127,41 @@ def test_marks(tmp_path):
             store.add_mark(tmp_path, STEM, 1, bad)
     with pytest.raises(ValueError):
         store.add_mark(tmp_path, STEM, float("nan"), "x")
+
+
+def test_a_reset_listener_folder_is_never_recreated(tmp_path):
+    gone = tmp_path / "t-reset"
+    with pytest.raises(FileNotFoundError):                       # the line routes catch it and carry on
+        live.record_line(gone, STEM, part="guide", live_id="s1", text="Hello there you.", sig=page_sig(0),
+                         cfg={}, now=at(5))
+    with pytest.raises(FileNotFoundError):
+        store.append(gone, STEM, {"source": "page", "turn": 0})
+    with pytest.raises(FileNotFoundError):
+        store.write_recordings(gone, STEM, [])
+    with pytest.raises(FileNotFoundError):
+        store.add_mark(gone, STEM, 1.0, "x")
+    assert not gone.exists()
+
+
+def test_stems_sort_by_when_they_began_whatever_the_prefix(tmp_path):
+    for stem in ("debrief-20261121-103000", "20261121-101500", "intro-20261121-101000"):
+        store.append(tmp_path, stem, {"source": "page", "turn": 0})
+    assert store.stems(tmp_path) == ["intro-20261121-101000", "20261121-101500", "debrief-20261121-103000"]
+
+
+def test_the_norm_reads_only_the_newest_conversations_it_needs(tmp_path, monkeypatch):
+    ten = " ".join(["word"] * 10) + "."
+    for k, stem in enumerate(["20261101-100000", "20261102-100000", "20261103-100000", "20261104-100000"]):
+        for j in range(3):
+            live.record_line(tmp_path, stem, part="guide", live_id=f"s{k}", text=ten, sig=page_sig(j), cfg={},
+                             now=datetime(2026, 11, 1 + k, 10, 0, 10 + j * 10))
+    read = []
+    real = store.records
+    monkeypatch.setattr(store, "records", lambda listener, stem: read.append(stem) or real(listener, stem))
+    got = store.recent(tmp_path, "page", 4, 3)
+    assert read == ["20261104-100000", "20261103-100000", "20261102-100000"]     # 3 + 3 >= 4, then one more
+    assert [r["live_id"] for r in got] == ["s1"] * 3 + ["s2"] * 3 + ["s3"] * 3
+    cfg = {"signals": {"norm_turns": 4}}
+    r = live.record_line(tmp_path, "20261105-100000", part="guide", live_id="s4", text="Fine thanks then.",
+                         sig=page_sig(0), cfg=cfg, now=datetime(2026, 11, 5, 10, 0, 10))
+    assert r["norm_turns"] == 4 and r["norm"]["words"] == 10

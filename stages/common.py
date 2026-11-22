@@ -350,6 +350,29 @@ def with_speaker(js: str, cfg: dict | None = None) -> str:
     return speaker + "\n" + js
 
 
+SIG_JS = ROOT / "page" / "sig.js"
+
+
+def sig_settings(cfg: dict | None) -> dict | None:
+    """page/sig.js's settings (Listener Signals): config.yaml signals.page, with signals.pause_ms and the page's turn
+    rule (live.page.engaged_merge_ms); None unless the page measures (signals.record.live_on: signals.live, or the
+    earpiece's live.director.signals)."""
+    from signals import record
+    if not record.live_on(cfg):
+        return None
+    S = record.settings(cfg)
+    merge = (((cfg or {}).get("live") or {}).get("page") or {}).get("engaged_merge_ms", 1500)
+    return {**(S.get("page") or {}), "pause_ms": S["pause_ms"], "merge_ms": merge}
+
+
+def with_sig(js: str, cfg: dict | None = None) -> str:
+    """page/sig.js ahead of a page script that opens the mic, only while the page measures: off, the script is
+    served exactly as before."""
+    if not js or sig_settings(cfg) is None:
+        return js
+    return SIG_JS.read_text(encoding="utf-8") + "\n" + js
+
+
 # --- prompts ------------------------------------------------------------------
 
 def load_prompt(name: str, **values: str) -> str:

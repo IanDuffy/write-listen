@@ -56,7 +56,7 @@ def record_line(listener: Path, stem: str, *, part: str, live_id: str | None, te
     rec = record.build(sig, joined, stem=stem, part=part, source="page", turn=turn,
                        live_id=live_id or (prev or {}).get("live_id"), t=t, S=S)
     key = (rec["t"] or "", rec["turn"])
-    earlier = [r for r in store.visit(listener, "page")
+    earlier = [r for r in store.recent(listener, "page", int(S["norm_turns"]) + 2, S["min_words"])
                if not (r.get("stem") == stem and r.get("turn") == turn) and (r.get("t") or "", r.get("turn") or 0) < key]
     rec = record.place(rec, earlier, S)
     store.append(listener, stem, rec)

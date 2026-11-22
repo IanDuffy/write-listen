@@ -79,6 +79,7 @@ from faststart import rehearsal
 from faststart import routes as fast_routes
 from overnight import profiles
 from overnight import routes as overnight_routes
+from signals import routes as signals_routes
 from stages import guide, memory, voice
 from stages import seed as seed_stage
 from stages import new as new_stage
@@ -778,6 +779,7 @@ def create_app(pipeline: Pipeline | None = None, cfg: dict | None = None, rememb
     chat = _ChatHere(lambda: here().chat)
     app.add_middleware(TesterScope, cfg=cfg, on_request=queue.ensure_watcher if queue is not None else None)
     demo_routes.mount(app, cfg)  # before the page route: with demo.enabled its GET / wins over the one below
+    signals_routes.mount(app, cfg)  # the admin's Listener Signals timeline (/admin/signals, /api/admin/signals/*)
 
     def stop_for_debrief(ld: Path) -> bool:
         """End demo while the tester's chapter is still being made stops it as the debrief starts (Ian's third
