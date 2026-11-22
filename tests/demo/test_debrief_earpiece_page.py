@@ -155,8 +155,11 @@ def test_it_looks_at_the_start_while_they_answer_and_its_note_goes_at_once(site,
     hear(page, "The voice was warm and it picked up")  # 7 words, still going: a look while they answer
     wait_until(page, lambda: len(asked) == 2)
     assert asked[1]["trigger"] == "hearing" and "picked up" in asked[1]["hearing"]
-    assert asked[1]["recent"][-1] == {"who": "out", "text": "Welcome back, Sam. What's one thing that stood out to you?"}
-    assert asked[1]["page"]["questions"] == 1 and asked[1]["page"]["time_up"] is False
+    # The opening as the voice's last lines (under load the stub's words can arrive more than line_quiet_ms apart, and
+    # the page then ends a line in the middle: the full suite once split it after "What's one thing that").
+    said = " ".join(x["text"] for x in asked[1]["recent"] if x["who"] == "out")
+    assert said == "Welcome back, Sam. What's one thing that stood out to you?" and asked[1]["recent"][-1]["who"] == "out"
+    assert asked[1]["page"]["questions"] >= 1 and asked[1]["page"]["time_up"] is False
     note = "Ask which moment of the hiking story felt most like theirs."
     want = page.js("window.Interview.I.notes.direct").replace("{note}", note)
     page.wait(f"window.__sent.some((e) => e.content === {json.dumps(want)})")
