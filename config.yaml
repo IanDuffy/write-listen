@@ -359,6 +359,8 @@ live:
       pitch_nudge_secs: [150, 240]
     view: false                 # the earpiece panel (page/earpiece.js) on Ian's own page when demo mode is off; in
                                 # demo mode it is per tester (tester.json earpiece_view, the admin page) and this is ignored
+    signals: false              # each look gets one line of facts about the listener's latest turn (signals.record.note;
+                                # the page measures while this is on, as with signals.live). Off: looks are unchanged
   continue_minutes: 15          # a page reopened this soon after the reading stopped picks the chapter back up
   unread_ready_minutes: 120     # a chapter written but never begun (they went away while it was made) is offered this long
   page:                         # page/live.js
@@ -616,6 +618,51 @@ speaker:
   report: true                # tester mode only: each mic open, the Speakerphone step, a device change and the voice's first sound are recorded (audio_route in study/events.jsonl; the admin's transcript shows them)
   report_gap_ms: 5000         # at most one record per reason this often
   switch_timeout_ms: 4000     # the second capture not open by then: the first is kept
+
+# Listener Signals (signals/; Ian's build plan, 2026-11-21; signals/REPORT.md): plain measurements of how each
+# listener turn sounded, each against that listener's own norm (the median of their earlier turns), for the
+# admin's timeline (/admin/signals) and, behind live.director.signals, one line in the earpiece's look. Measured
+# from GPT-Live's recordings (wl signals fetch, then wl signals run) and, with live on, by the page. It measures
+# and never names a feeling; nothing here calls a model. Starting values, to be tuned from the replay.
+# A turn is the listener's lines within live.page.engaged_merge_ms of each other with no other voice between.
+signals:
+  live: false                 # the page measures each spoken turn (page/sig.js) and posts it with the line: guide, intro, debrief
+  min_words: 3                # a turn counts toward the norm with this many words or more
+  min_turns: 3                # the norm needs this many such turns; before that the note says there is none yet
+  norm_turns: 40              # and reads at most this many, the latest (intro, guide and debrief in time order)
+  pause_ms: 700               # a quiet run this long inside a turn is a pause
+  thresholds:                 # a measure is mentioned past these (its change from the norm)
+    words: [0.5, 2.0]         # half their norm or less, twice or more
+    gap_ms: {ratio: 2.0, plus_ms: 800}   # the pause before answering: twice the norm and at least 800 ms longer
+    wps: [0.7, 1.3]
+    pitch_sd_st: 0.6          # pitch spread (semitones) this fraction of the norm or less: a flat voice
+    rms_db: 4.0               # dB above or below (weak evidence: the browser's gain control flattens level)
+  trend: {words: 0.8, gap_ms: 300, wps: 0.9, rms_db: 1.0, pitch_sd_st: 0.9}   # three turns, each step this far the same way
+  hedges: ["i guess", "kind of", "sort of", "i suppose"]
+  fillers: [um, uh, er, erm, hmm]
+  trail_words: [so, but, and, or, "i don't know", "i dunno"]
+  trail_unpunctuated: true    # no sentence end counts as trailing off (GPT-Live doesn't always punctuate: check in the replay)
+  note_words: 30              # the earpiece's line at most
+  recording:                  # signals/measure.py, on the stereo recording (the listener left, the other voice right)
+    frame_ms: 10
+    voice_rms: 150            # the other voice (int16): GPT-Live's silence is digital zero (voice/gpt_live/archive.py)
+    min_rms: 200              # the listener's channel: voiced above this and floor_x times its quiet level
+    floor_x: 4
+    bleed_x: 3                # while the other voice is voiced, the listener counts only this many times louder than its bleed
+    fill_ms: 150              # quiet shorter than this inside speech is speech
+    min_run_ms: 80            # a voiced run shorter than this is a click
+    pitch: {frame_ms: 40, fmin: 75, fmax: 400, voicing: 0.5, min_frames: 10}
+    lag_s: 2.5                # a transcript row lands about this long after the speech ends
+  page:                       # page/sig.js, on live.js and interview.js
+    tick_ms: 20               # samples the mic and the voice coming in this often (float levels)
+    min_rms: 0.01             # the mic: voiced above this and floor_x times the room's level
+    floor_x: 4
+    out_rms: 0.005            # the voice coming in: voiced above this
+    bleed_x: 3
+    fill_ms: 150
+    min_run_ms: 80
+    max_tick_gap_ms: 250      # samples further apart than this (a background tab): the turn's timing is not taken
+    lead_ms: 4000             # speech up to this long before a line's first words counts as that line's
 
 # Tester Demo (docs/tester-demo.md; contracts in docs/tester-demo-design.md). Each part adds its own keys.
 demo:
