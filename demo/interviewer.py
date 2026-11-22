@@ -517,6 +517,7 @@ def instructions(mode: str, values: dict) -> str:
     fields = {k: v for k, v in values.items() if not k.startswith("_")}
     if mode == "debrief":  # a run saved before the farewell (demo/sim_interviewer.py grade) has none
         fields.setdefault("farewell", farewell(fields.get("person")))
+        fields.setdefault("visit", notes()["visit_none"])  # a run saved before 2026-11-22 has none
     text = load_prompt(f"interviewer_{mode}", shared=shared, **fields)
     if live_session.approx_tokens(text) > live_session.INSTRUCTION_TOKENS:
         raise StageError(f"The interviewer's {mode} instructions are too long for GPT-Live.")

@@ -205,7 +205,8 @@ def values_for(p: dict) -> dict:
     if p.get("visit_text"):  # its own piece, from the brief
         m = re.search(r'Title: "([^"]+)"', p["visit_text"])
         ctx = {**ctx, "title": m.group(1) if m else ctx["title"], "summary": ""}
-    return IV.values_from(p["name"], ctx, p["moments"], activity_for(p), visit=p.get("visit_text") or "")
+    visit = "" if p.get("no_visit") else (p.get("visit_text") or "")  # --no-visit: the debrief as before 2026-11-22
+    return IV.values_from(p["name"], ctx, p["moments"], activity_for(p), visit=visit)
 
 
 class Tools:
@@ -697,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
         for i in range(a.runs):
             p = dict(people[i % len(people)])
             if a.no_visit:
-                p.pop("visit_text", None)
+                p["no_visit"] = True  # the interviewer gets no brief; the tester still knows their own visit
             if i >= len(people):
                 p["key"] = f"{p['key']}-{i // len(people) + 1}"
             t = asyncio.run(converse(cfg, p, out, max_turns=a.max_turns or (8 if a.what == "intro" else 10),

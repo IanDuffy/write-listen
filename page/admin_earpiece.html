@@ -74,6 +74,7 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": 
 const q = new URLSearchParams(location.search);
 const lid = q.get("lid") || "own", session = q.get("session");
 const debrief = /^debrief-/.test(session || "");
+const voice = debrief ? "interviewer" : "guide";
 const mss = (s) => (s == null || s < 0) ? "?" : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 const money = (x) => "$" + (x || 0).toFixed(2);
 const when = (iso) => {
@@ -102,10 +103,10 @@ function fateText(f) {
   const at = mss(f.secs);
   if (f.fate === "sent") {
     if (f.inferred) return `Sent at ${at} (from the note in the transcript)`;
-    return f.held_secs ? `Held ${f.held_secs} s, sent at ${at}` : `Sent to the guide at ${at}`;
+    return f.held_secs ? `Held ${f.held_secs} s, sent at ${at}` : `Sent to the ${voice} at ${at}`;
   }
   if (f.fate === "held") return `Held at ${at}, no later fate recorded`;
-  const why = REASONS[f.reason] || f.reason || "";
+  const why = (debrief && f.reason === "moved_on") ? "the interviewer had already taken its turn" : (REASONS[f.reason] || f.reason || "");
   return `Dropped at ${at}: ${esc(why)}${f.detail ? ` (${esc(f.detail)})` : ""}`;
 }
 
@@ -123,7 +124,7 @@ function lookHtml(x) {
     out += `<div class="whisper-note">“${esc(x.note)}”</div><div class="sub">${esc(x.note_kind || "")}${x.about ? " · " + esc(x.about) : ""}</div>`
       + `<div class="fate" data-fate="${esc(x.fate ? x.fate.fate : "")}" data-reason="${esc(x.fate && x.fate.reason || "")}">${fateText(x.fate)}</div>`;
     if (x.delivered && x.reply) {
-      out += `<div class="reply">Guide's next line ended +${x.reply.after_secs} s after it reached the guide: “${esc(x.reply.text.slice(0, 240))}”</div>`;
+      out += `<div class="reply">${debrief ? "Interviewer" : "Guide"}'s next line ended +${x.reply.after_secs} s after it reached the ${voice}: “${esc(x.reply.text.slice(0, 240))}”</div>`;
     }
   }
   return out;

@@ -277,3 +277,58 @@ def test_the_prompts_hold_the_ceiling_and_the_debriefs_own_words():
         raise AssertionError("pitch must be refused")
     except ValueError:
         pass
+
+
+# --- after the review (2026-11-22) -------------------------------------------------------------------------
+
+def test_lines_the_transcript_has_are_not_merged_in_twice(world, cfg, monkeypatch):
+    """The page's recent lines were merged under "guide" against the transcript's "interviewer": nothing matched, so
+    every look saw the debrief twice and counted each question twice (wrapping a question early)."""
+    got = debrief_started(world)
+    sid, c = got["sid"], world.client
+    q = "Welcome back, Sam. What's one thing that stood out to you?"
+    c.post("/api/interview/line", json={"sid": sid, "who": "out", "text": q})
+    c.post("/api/interview/line", json={"sid": sid, "who": "in", "text": "The voice was calm."})
+    calls = answering(monkeypatch, look_json(None))
+    c.post("/api/interview/direct", json={"sid": sid, "id": 1, "trigger": "turn_end",
+                                          "recent": [{"who": "out", "text": q}, {"who": "in", "text": "The voice was calm."}],
+                                          "page": {"questions": 1}})
+    user = calls[0]["messages"][0]["content"]
+    assert user.count("What's one thing that stood out") == 1 and user.count("The voice was calm.") == 1
+    assert "Questions the interviewer has asked so far, its opening included: 1." in user
+    _, recs = rows(world, sid)
+    assert [r for r in recs if r["who"] == "director"][0]["speaking"] == "none"
+    calls = answering(monkeypatch, look_json(None))
+    c.post("/api/interview/direct", json={"sid": sid, "id": 2, "trigger": "hearing", "hearing": "and the part about"})
+    _, recs = rows(world, sid)
+    assert [r for r in recs if r["who"] == "director"][1]["speaking"] == "listener"
+
+
+def test_a_saved_run_without_a_visit_still_has_its_instructions():
+    values = IV.values_from("Sam", {"run": None}, [], None)
+    values.pop("visit"), values.pop("farewell")
+    assert "THEIR VISIT" in IV.instructions("debrief", values)
+
+
+def test_heard_means_words_heard_and_whole_means_read_to_the_end(cfg, tmp_path, monkeypatch):
+    """A cut row with nothing heard (the page logs one whenever a reading stops) is not heard; a part is "heard" only
+    when each of its paragraphs was read whole."""
+    folder = tmp_path / "t-sam"
+    root = a_visit(folder)
+    monkeypatch.setattr(debrief, "_paragraphs", lambda r: [{"id": "s1-p01"}, {"id": "s1-p02"}, {"id": "s2-p01"}])
+    jsonl(root / "live" / "reading.jsonl", [
+        {"id": "s1-p01", "heard": "A sail is a wing"}, {"id": "s1-p02", "heard": "pulled by lift"},
+        {"id": "s2-p01", "heard": "", "cut": True}])
+    text = debrief.visit_brief(folder, cfg)
+    assert '"The Wing on the Water" (heard)' in text and '"The Keel\'s Half" (not heard)' in text
+    jsonl(root / "live" / "reading.jsonl", [
+        {"id": "s1-p01", "heard": "A sail is a wing"}, {"id": "s1-p02", "heard": "pulled", "cut": True}])
+    assert '"The Wing on the Water" (partly heard)' in debrief.visit_brief(folder, cfg)
+
+
+def test_a_note_keeps_their_quoted_words_and_loses_stray_marks():
+    shape = lambda n: debrief_earpiece.shape(look_json(n, about="thread"))["note"]  # noqa: E731
+    assert shape('Ask about "the keel part".') == 'Ask about "the keel part".'
+    assert shape("Ask what 'kind of slow' meant to them") == "Ask what 'kind of slow' meant to them"
+    assert shape('"Ask when it felt slow."') == "Ask when it felt slow."
+    assert shape("Ask when it felt slow.'") == "Ask when it felt slow."

@@ -32,6 +32,7 @@
   const sentTexts = new Set();
   let session = null, down = false, forgotPending = false, seq = 0;
   let prevPlan = null;      // the previous look with a plan in this conversation
+  const plans = new Map();  // ... per conversation: a guide look answered after the debrief began is diffed against its own
 
   const isDebrief = (s) => String(s || "").startsWith("debrief-");
   const voiceOf = (s) => (isDebrief(s) ? "interviewer" : "guide");
@@ -76,7 +77,7 @@
     if (!ev || !ev.type) return;
     switch (ev.type) {
       case "conversation":
-        session = ev.session; down = false; prevPlan = null; forgotPending = false;
+        session = ev.session; down = false; prevPlan = plans.get(ev.session) || null; forgotPending = false;
         add({ kind: "divider", ev, text: isDebrief(ev.session) ? "Debrief"
           : `Conversation ${ev.session || ""}${ev.handoff ? " (handed over)" : ""}` });
         break;
@@ -97,9 +98,11 @@
         if (!it) { it = add({ kind: "look", ev, session: ev.session, id: ev.id, trigger: "?", speaking: "?", fate: null, held: null, reply: null }); looks.set(keyOf(ev.session, ev.id), it); }
         it.state = "done"; it.got = got; it.lookEv = ev;
         if (Array.isArray(got.plan) && got.plan.length) {
-          const ch = planChanges(prevPlan, got.plan);
+          const before = ev.session === session ? prevPlan : (plans.get(ev.session) || null);
+          const ch = planChanges(before, got.plan);
           it.plan = ch.plan; it.removed = ch.removed;
-          prevPlan = got.plan;
+          plans.set(ev.session, got.plan);
+          if (ev.session === session) prevPlan = got.plan;
         }
         break;
       }
@@ -110,6 +113,9 @@
         break;
       }
       case "down":
+        // Only the conversation on screen: the guide's earpiece going down after the debrief began (a late look's
+        // failure, with no session) is not the debrief's.
+        if ((ev.session || null) !== (session || null) && !(ev.session == null && !isDebrief(session))) break;
         down = true;
         add({ kind: "down", ev });
         break;

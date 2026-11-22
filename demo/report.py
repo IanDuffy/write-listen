@@ -86,9 +86,12 @@ def did(cfg: dict, lid: str) -> list[str]:
 
 
 def transcript(p: Path) -> str:
+    from demo import debrief_earpiece
     lines = []
     for rec in state.read_jsonl(p):
         text = str(rec.get("text") or "").strip()
+        if rec.get("who") == "page" and debrief_earpiece.whisper_in(text):
+            continue  # the debrief's earpiece notes (Earpiece history shows them): not what the tester said
         if text:
             lines.append(f"[{str(rec.get('t') or '')[11:19]}] {rec.get('who', '?')}: {text}")
     return "\n".join(lines) or "(empty)"

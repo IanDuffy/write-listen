@@ -120,7 +120,7 @@
       act: null, handover: null, wordsAt: 0, next: null, closing: false, sid: null, liveId: null, cues: {}, closingAsked: 0, farewellAt: 0, said: 0,
       graceAt: 0, graceAct: null, stateNow: null, hang: null, noteAt: 0, noteKind: null, handHeld: false,
       // the debrief's earpiece: the look in flight, its numbering, failures, the last lines, this turn of theirs
-      look: null, lookId: 0, lookQueued: null, lookFails: 0, lookDown: false, recent: [], turn: "", turnOpen: false,
+      look: null, lookId: 0, lookQueued: null, lookFails: 0, lookDown: false, heldNote: null, recent: [], turn: "", turnOpen: false,
       hearAt: 0, hearWords: -1, themSince: false, taken: 0, questions: 0, outStart: 0, inStartAt: 0, view: false });
   }
 
@@ -433,11 +433,22 @@
     remember("out", text);
     if (text.includes("?")) I.questions++;
     emit("line", { who: "out", text, began: I.outStart || t });
-    const stall = rx("stall");
-    const turnLine = (text.includes("?") || words(text) >= (I.S.reply_words || 3)) && !(stall && stall.test(text.replace(/[‘’]/g, "'")));
+    // A stall ("Just a second.") or an invitation to go on with no question ("Sorry, go on.") leaves the turn theirs.
+    const plain = text.replace(/[‘’]/g, "'"), stall = rx("stall"), goOn = rx("go_on");
+    const turnLine = (text.includes("?") || words(text) >= (I.S.reply_words || 3))
+      && !(stall && stall.test(plain)) && !(!text.includes("?") && goOn && goOn.test(plain));
+    const took = turnLine && I.themSince;
     if (turnLine) {
       if (I.themSince) I.taken++;
       I.themSince = false; I.turn = ""; I.turnOpen = false; I.hearAt = 0; I.hearWords = -1;
+    }
+    // A note that came back while the voice was already answering them waited for this line: if it took the turn, the
+    // note was for that turn and is stale; otherwise (a stall, a backchannel) it goes now.
+    if (I.heldNote) {
+      const h = I.heldNote;
+      I.heldNote = null;
+      if (took) fate(h, "dropped", "moved_on");
+      else deliver(h);
     }
   }
 
@@ -492,9 +503,17 @@
     if (!(got.changed && got.note)) return;
     const n = { id: look.id, note: got.note, kind: got.kind || "next_turn", about: got.about || null, askedAt: look.askedAt,
                 taken: look.taken };
+    if (I.taken > n.taken) return fate(n, "dropped", "moved_on");  // the voice took the turn this note was for
+    if (I.heldNote) fate(I.heldNote, "dropped", "replaced");
+    I.heldNote = null;
+    // The voice is answering them right now: its line may be the turn this note was for. It waits for that line.
+    if (I.out.trim() && I.themSince && !notHere()) { I.heldNote = n; return; }
+    deliver(n);
+  }
+
+  function deliver(n) {
     const why = notHere();
     if (why) return fate(n, "dropped", "not_here", why);
-    if (I.taken > n.taken) return fate(n, "dropped", "moved_on");  // the voice took the turn this note was for
     const text = String(I.notes.direct || "").replace("{note}", n.note);
     if (!text || !I.notes.direct) return fate(n, "dropped", "not_here", "no wrapper");
     fate(n, "sent", null, null, { text });
@@ -532,6 +551,13 @@
     if (!I.sid || I.closing) return;
     I.closing = true; I.pending = null;
     send("session.close");
+    if (I.look || I.lookQueued || I.heldNote) {  // the earpiece's look in flight, or a note waiting: the panel is told
+      const lk = I.look, h = I.heldNote;
+      I.look = null; I.lookQueued = null; I.heldNote = null;
+      try { if (lk) lk.ctl.abort(); } catch (e) { /* gone */ }
+      if (h) fate(h, "dropped", "not_here", "closing");
+      if (directOn()) emit("forget", { why: how });
+    }
     const sid = I.sid, pc = I.pc, usage = usageBody(sid), held = heldLines();
     I.pc = null; I.dc = null; I.sid = null;
     setTimeout(() => { try { if (pc) pc.close(); } catch (e) { /* closed */ } }, 300);  // let the close reach it

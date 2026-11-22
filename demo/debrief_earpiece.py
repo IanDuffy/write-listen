@@ -81,8 +81,23 @@ def page_settings(cfg: dict) -> dict:
 def shape(got: dict) -> dict:
     out = director.shape(got, KINDS, ABOUT)
     if out.get("note"):  # a replay's note ended `"pretty interesting".'`: no stray quote marks around it
-        out["note"] = out["note"].strip(" '\"‘’“”")
+        out["note"] = _unquoted(out["note"])
     return out
+
+
+_PAIRS = {"'": "'", "‘": "’", "“": "”", '"': '"'}
+
+
+def _unquoted(n: str) -> str:
+    """The note without a quote mark that wraps it whole or has no partner in it; their quoted words keep theirs."""
+    n = n.strip()
+    if len(n) > 1 and n[0] in _PAIRS and n[-1] == _PAIRS[n[0]] and n[0] not in n[1:-1]:
+        n = n[1:-1].strip()
+    while n and n[-1] in "'’”\"" and not any(o in n[:-1] for o, c in _PAIRS.items() if c == n[-1]):
+        n = n[:-1].rstrip()
+    while n and n[0] in "'‘“\"" and _PAIRS[n[0]] not in n[1:]:
+        n = n[1:].lstrip()
+    return n
 
 
 def parse(text: str) -> dict:
@@ -206,12 +221,14 @@ def ask(cfg: dict, s: dict, req: dict, write, lock=None) -> dict:
         return {"id": rid, **NO_WHISPER, "error": "cap"}
     trigger = req.get("trigger") if req.get("trigger") in TRIGGERS else "turn_end"
     with lock if lock is not None else director._Null():
-        lines = director.merge_recent(lines_from(s["path"]),
+        # merge_recent speaks the guide's names and matches lines by (who, text): both sides as "guide" (a review
+        # found the transcript's "interviewer" lines never matched the page's, so every look saw the debrief twice)
+        server = [{**x, "who": "guide" if x["who"] == "interviewer" else x["who"]} for x in lines_from(s["path"])]
+        lines = director.merge_recent(server,
                                       [{"who": {"interviewer": "guide"}.get(x.get("who"), x.get("who")), "text": x.get("text")}
                                        for x in (req.get("recent") or [])],
                                       int(page.get("seconds") or 0) or None)
         plan, last_read = memory(s["path"])
-    # merge_recent speaks the guide's names: the interviewer's lines come back as "guide"
     lines = [{**x, "who": "interviewer" if x["who"] == "guide" else x["who"]} for x in lines]
     values = s.get("values") or {}
     user = look(lines=lines, trigger=trigger, hearing=str(req.get("hearing") or ""),
@@ -229,7 +246,8 @@ def ask(cfg: dict, s: dict, req: dict, write, lock=None) -> dict:
         got = {**NO_WHISPER, "error": "timeout", "ms": int(D["timeout_ms"]), "cost_usd": 0.0}
     rec = {k: got.get(k) for k in FIELDS + ("ms", "cost_usd", "error") if k in got}
     with lock if lock is not None else director._Null():
-        write(s, {"who": "director", "id": rid, "trigger": trigger, **rec})
+        write(s, {"who": "director", "id": rid, "trigger": trigger,
+                  "speaking": "listener" if str(req.get("hearing") or "").strip() else "none", **rec})
     out = {"id": rid, **{k: got.get(k) for k in FIELDS if k in got}, **(NO_WHISPER if got.get("error") else {}),
            "ms": got.get("ms"), "cost_usd": got.get("cost_usd", 0.0)}
     if got.get("error"):

@@ -491,8 +491,16 @@ def their_lines(listener_dir: Path, since: datetime | None) -> list[str]:
 
 
 def _heard_sections(root: Path) -> dict[int, str]:
-    """{section n: "heard" | "partly heard"} from live/reading.jsonl's paragraph ids (s<n>-p<kk>)."""
-    read = {str(r["id"]) for r in _read_jsonl(root / "live" / "reading.jsonl") if r.get("id")}
+    """{section n: "heard" | "partly heard"} from live/reading.jsonl (paragraph ids s<n>-p<kk>): a paragraph with any
+    words heard counts toward its section, which is "heard" only when every paragraph had a whole (uncut) reading.
+    The page logs a cut row with nothing heard whenever a reading stops (End demo, pause, a tap): that is not heard."""
+    read, whole = set(), set()
+    for r in _read_jsonl(root / "live" / "reading.jsonl"):
+        pid = str(r.get("id") or "")
+        if pid and str(r.get("heard") or "").split():
+            read.add(pid)
+            if not r.get("cut"):
+                whole.add(pid)
     if not read:
         return {}
     by_section: dict[int, set] = {}
@@ -507,7 +515,7 @@ def _heard_sections(root: Path) -> dict[int, str]:
             continue
         n = int(m.group(1))
         every = by_section.get(n)
-        out[n] = "heard" if every and every <= read else "partly heard"
+        out[n] = "heard" if every and every <= whole else "partly heard"
     return out
 
 

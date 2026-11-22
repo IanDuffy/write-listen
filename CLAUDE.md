@@ -785,6 +785,19 @@ in Earpiece history. Design: `docs/debrief-earpiece-design.md`.
   WebSocket upgrades): `python -m demo.sim_interviewer debrief --persona sailor --persona commuter --earpiece` on the
   Mac (testers with a `visit:` bring a brief from `prompts/interviewer_visits.md`; `--no-visit` for the old debrief).
   Not yet heard by Ian.
+- **Review** (five lenses, each finding checked by two skeptics: 17 confirmed, 13 distinct, all fixed with tests):
+  - The recent lines are merged under one name on both sides: every look had seen the debrief twice and counted each
+    question twice.
+  - A note that comes back while the voice is already answering waits for that line (`I.heldNote`): moved_on if it
+    took the turn, sent if it was a stall. An invitation to go on ("Sorry, go on.") never takes the turn.
+  - A look in flight at the close is let go and the panel told (`forget`).
+  - "Heard" in the brief means words heard, and "heard" (whole) means every paragraph read uncut.
+  - The panel keeps plans and the down state per conversation (a guide look answered after End demo had marked the
+    debrief's first plan).
+  - The earpiece's ceiling counts the follow-up as the interviewer does (four).
+  - Notes keep their quoted words; admin words a debrief for the interviewer.
+  - The study report leaves the whispers out.
+  - `--no-visit` keeps the persona's piece.
 
 ## Local setup
 
